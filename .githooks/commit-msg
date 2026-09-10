@@ -1,0 +1,39 @@
+#!/bin/sh
+# Reject anything that is not a valid Conventional Commit, and reject any
+# machine-authorship trailer or footer. This repository publishes under one name.
+set -eu
+
+msg_file=$1
+subject=$(sed -n '1p' "$msg_file")
+
+# Ignore merge, revert and fixup commits git generates itself.
+case "$subject" in
+    "Merge "* | "Revert "* | "fixup!"* | "squash!"*) exit 0 ;;
+esac
+
+fail() { printf '\ncommit-msg: %s\n\n' "$1" >&2; exit 1; }
+
+printf '%s' "$subject" | grep -qE \
+    '^(feat|fix|chore|docs|perf|refactor|test|build|ci|style|revert)(\([a-z0-9._-]+\))?!?: .+' \
+    || fail "not a Conventional Commit:
+  $subject
+
+  expected: type(scope): subject
+  types:    feat fix chore docs perf refactor test build ci style revert
+  example:  fix(theme): clamp lightness before mixing toward foreground"
+
+[ "${#subject}" -le 72 ] || fail "subject is ${#subject} characters; the limit is 72"
+
+case "$subject" in
+    *.) fail "subject ends in a full stop; drop it" ;;
+esac
+
+if grep -qiE '^(co-authored-by|signed-off-by).*(claude|anthropic|copilot|chatgpt|gpt-|codex|cursor|\bai\b)' "$msg_file"; then
+    fail 'attribution trailer naming a model or assistant — remove it'
+fi
+
+if grep -qiE '(generated (with|by) (claude|copilot|chatgpt|cursor|ai))|(🤖)|(made with claude)|(as an ai)' "$msg_file"; then
+    fail 'assistant attribution in the message body — remove it'
+fi
+
+exit 0

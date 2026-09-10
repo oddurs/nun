@@ -1,0 +1,44 @@
+#!/bin/sh
+# The default branch only ever advances through a merged pull request, and a
+# branch is green before it becomes one.
+set -eu
+
+cd "$(git rev-parse --show-toplevel)"
+
+remote_head=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
+default_branch=${remote_head#origin/}
+[ -n "$default_branch" ] || default_branch=main
+
+zero='0000000000000000000000000000000000000000'
+
+# stdin is: <local ref> <local sha> <remote ref> <remote sha>
+while read -r local_ref local_sha remote_ref remote_sha; do
+    [ -n "${remote_ref:-}" ] || continue
+
+    case "${remote_ref#refs/heads/}" in
+        "$default_branch")
+            # A remote sha of all zeros means the ref does not exist yet, so
+            # this push creates the default branch rather than advancing it.
+            # That happens exactly once, when the repository is first published.
+            case "$remote_sha" in
+                "$zero" | '')
+                    printf 'pre-push: creating %s on the remote for the first time\n' "$default_branch"
+                    ;;
+                *)
+                    printf '\npre-push: refusing to push directly to %s\n' "$default_branch" >&2
+                    printf '  it only advances through a merged pull request\n' >&2
+                    printf '  open one instead:  scripts/agent start <type>/<slug>\n\n' >&2
+                    exit 1
+                    ;;
+            esac
+            ;;
+    esac
+
+    # Deleting a ref needs no build.
+    [ "$local_sha" = "$zero" ] && continue
+done
+
+printf 'pre-push: full check\n'
+./scripts/task check
+
+exit 0

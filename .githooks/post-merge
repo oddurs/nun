@@ -1,0 +1,21 @@
+#!/bin/sh
+# Installed by `cairn init --git`.
+#
+# Ids are allocated as one more than the highest in use, which no branch can
+# know, so two branches can each create the same one. Git merges them cleanly —
+# the filenames differ — and leaves a project that fails `cairn check`.
+#
+# This runs once the merge is complete and the items are settled: renumber any
+# collision, then re-derive the roadmap from what is actually there.
+set -e
+command -v cairn >/dev/null 2>&1 || exit 0
+
+cairn renumber --quiet
+cairn render --quiet
+
+# A hook cannot politely amend the merge commit, so anything it changed is left
+# staged for a person to look at and commit.
+if ! git diff --quiet || ! git diff --cached --quiet; then
+  echo "cairn: the merge changed identifiers or the roadmap; review and commit:"
+  git status --short -- "$(git rev-parse --show-toplevel)" | sed "s/^/  /"
+fi

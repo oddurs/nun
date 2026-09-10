@@ -1,0 +1,17 @@
+#!/bin/sh
+# Fast gate. The expensive half (tests, build) runs in pre-push, where the
+# latency is paid once per push instead of once per commit.
+set -eu
+
+cd "$(git rev-parse --show-toplevel)"
+
+printf 'pre-commit: formatting\n'
+./scripts/task fmt:check || {
+    printf '\npre-commit: formatting drift — run `scripts/task fmt` and stage the result\n\n' >&2
+    exit 1
+}
+
+printf 'pre-commit: lint\n'
+./scripts/task lint
+
+exit 0

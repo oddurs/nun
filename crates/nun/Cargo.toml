@@ -1,0 +1,12 @@
+[package]
+name = "nun"
+description = "A mouse-first terminal code editor that inherits your terminal's colors"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,26 @@
+#!/bin/sh
+# One-time local setup. Safe to re-run.
+#
+# Everything here lives outside the tree git clones — hook wiring and merge
+# drivers are per-working-copy — so a fresh clone is not usable until it runs.
+set -eu
+
+cd "$(git rev-parse --show-toplevel)"
+
+printf 'Pointing git at the tracked hooks in .githooks\n'
+git config core.hooksPath .githooks
+chmod +x .githooks/* scripts/* 2>/dev/null || true
+
+if command -v cairn >/dev/null 2>&1; then
+    printf 'Registering the cairn merge driver\n'
+    git config merge.cairn.name 'cairn generated files'
+    git config merge.cairn.driver 'cairn merge-driver %A %O %B %P'
+else
+    printf 'cairn not installed — the roadmap in cairn/ will not merge cleanly\n'
+    printf '  install it to work on the backlog: https://github.com/oddurs/cairn\n'
+fi
+
+printf 'Fetching the toolchain pinned in rust-toolchain.toml\n'
+rustc --version >/dev/null
+
+printf '\nReady. `scripts/task check` to verify, `scripts/agent doctor` for a full report.\n'

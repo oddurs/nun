@@ -1,0 +1,214 @@
+#!/bin/sh
+# One unit of work -> one worktree -> one branch -> one PR.
+#
+# Every subcommand is idempotent, says what it is about to do, and fails with a
+# non-zero exit and an actionable message. Nothing here is nun-specific: the
+# project is reached only through scripts/task.
+set -eu
+
+BRANCH_RE='^(feat|fix|chore|docs|perf|refactor|test)/[a-z0-9][a-z0-9._-]*$'
+
+die() { printf 'agent: %s\n' "$1" >&2; exit 1; }
+say() { printf '\033[2m→\033[0m %s\n' "$1"; }
+ok()  { printf '\033[32m✓\033[0m %s\n' "$1"; }
+bad() { printf '\033[31m✗\033[0m %s\n' "$1"; }
+
+root() { git rev-parse --show-toplevel 2>/dev/null || die 'not inside a git repository'; }
+repo_name() { basename "$(root)"; }
+wt_root() { printf '%s/.worktrees/%s' "$(dirname "$(root)")" "$(repo_name)"; }
+
+default_branch() {
+    _d=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
+    if [ -n "$_d" ]; then printf '%s' "${_d#origin/}"; return; fi
+    _d=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name 2>/dev/null || true)
+    if [ -n "$_d" ]; then printf '%s' "$_d"; return; fi
+    git rev-parse --abbrev-ref HEAD
+}
+
+# Conventional Commits: type(scope)!: subject, subject <= 72 chars, no full stop.
+validate_commit_msg() {
+    _subject=$(printf '%s' "$1" | head -n 1)
+    printf '%s' "$_subject" | grep -qE \
+        '^(feat|fix|chore|docs|perf|refactor|test|build|ci|style|revert)(\([a-z0-9._-]+\))?!?: .+' \
+        || die "commit subject is not a Conventional Commit:
+  $_subject
+  expected: type(scope): subject   e.g. fix(theme): clamp lightness before the mix"
+    [ "${#_subject}" -le 72 ] || die "commit subject is ${#_subject} chars; keep it to 72"
+    case "$_subject" in
+        *.) die "commit subject ends in a full stop; drop it" ;;
+    esac
+}
+
+cmd_doctor() {
+    _fail=0
+    command -v git >/dev/null 2>&1 && ok 'git installed' || { bad 'git not installed'; _fail=1; }
+    command -v gh  >/dev/null 2>&1 && ok 'gh installed'  || { bad 'gh not installed — https://cli.github.com'; _fail=1; }
+    command -v cargo >/dev/null 2>&1 && ok "toolchain $(rustc --version)" \
+        || { bad 'cargo not installed — https://rustup.rs'; _fail=1; }
+
+    if command -v gh >/dev/null 2>&1; then
+        gh auth status >/dev/null 2>&1 && ok "gh authenticated as $(gh api user --jq .login 2>/dev/null)" \
+            || { bad 'gh not authenticated — run: gh auth login'; _fail=1; }
+    fi
+
+    if [ "$(git config core.hooksPath 2>/dev/null || true)" = '.githooks' ]; then
+        ok 'hooks path is .githooks'
+    else
+        bad 'hooks not wired — run: scripts/setup'; _fail=1
+    fi
+
+    for _h in commit-msg pre-commit pre-push; do
+        [ -x ".githooks/$_h" ] && ok "hook $_h executable" \
+            || { bad "hook $_h missing or not executable"; _fail=1; }
+    done
+
+    if [ -z "$(git status --porcelain)" ]; then ok 'working tree clean'
+    else bad 'working tree dirty — commit or stash before starting work'; _fail=1; fi
+
+    _b=$(git rev-parse --abbrev-ref HEAD)
+    _d=$(default_branch)
+    if [ "$(root)" = "$PWD" ] && [ "$_b" != "$_d" ]; then
+        bad "primary checkout is on '$_b'; it should stay on '$_d'"; _fail=1
+    else
+        ok "on branch $_b"
+    fi
+
+    [ "$_fail" -eq 0 ] && printf '\n\033[32mAll good.\033[0m\n' || {
+        printf '\n%s problem(s) above.\n' "$_fail" >&2; exit 1; }
+}
+
+cmd_start() {
+    _branch=${1:-}
+    [ -n "$_branch" ] || die 'usage: scripts/agent start <type>/<slug>'
+    printf '%s' "$_branch" | grep -qE "$BRANCH_RE" || die "invalid branch name: $_branch
+  expected <type>/<slug> where type is one of feat fix chore docs perf refactor test
+  e.g. feat/0007-terminal-colour-probe"
+
+    _dir="$(wt_root)/$_branch"
+    [ -e "$_dir" ] && die "worktree already exists: $_dir
+  resume it with: cd $_dir"
+    git show-ref --quiet --verify "refs/heads/$_branch" && die "branch already exists: $_branch"
+
+    _d=$(default_branch)
+    say "fetching origin"
+    git fetch --quiet origin 2>/dev/null || say 'no remote yet; branching from local HEAD'
+
+    _base="origin/$_d"
+    git rev-parse --quiet --verify "$_base" >/dev/null 2>&1 || _base="$_d"
+
+    say "creating worktree $_dir from $_base"
+    mkdir -p "$(dirname "$_dir")"
+    git worktree add --quiet -b "$_branch" "$_dir" "$_base"
+
+    ok "branch $_branch ready"
+    printf '\n  cd %s\n\n' "$_dir"
+}
+
+cmd_check() { exec "$(root)/scripts/task" check; }
+
+cmd_commit() {
+    [ $# -ge 1 ] || die 'usage: scripts/agent commit "type(scope): subject"'
+    _msg=$1
+    validate_commit_msg "$_msg"
+    say 'committing (hooks run: never --no-verify)'
+    git commit -m "$_msg"
+}
+
+cmd_pr() {
+    _draft=''
+    [ "${1:-}" = '--draft' ] && _draft='--draft'
+
+    _b=$(git rev-parse --abbrev-ref HEAD)
+    _d=$(default_branch)
+    [ "$_b" != "$_d" ] || die "refusing to open a PR from the default branch ($_d)"
+
+    say 'running the full check before pushing'
+    "$(root)/scripts/task" check
+
+    say "pushing $_b"
+    git push -u origin "$_b"
+
+    say 'opening the pull request'
+    # shellcheck disable=SC2086
+    gh pr create --fill --base "$_d" $_draft
+    gh pr view --json url --jq .url
+}
+
+cmd_sync() {
+    _d=$(default_branch)
+    _b=$(git rev-parse --abbrev-ref HEAD)
+    [ "$_b" != "$_d" ] || die "already on $_d; nothing to rebase"
+    say "fetching origin and rebasing $_b onto origin/$_d"
+    git fetch --quiet origin
+    git rebase "origin/$_d"
+    ok "$_b is up to date with origin/$_d"
+}
+
+cmd_done() {
+    _b=$(git rev-parse --abbrev-ref HEAD)
+    _d=$(default_branch)
+    [ "$_b" != "$_d" ] || die "on $_d; run this from inside the worktree you are finishing"
+
+    _state=$(gh pr view "$_b" --json state --jq .state 2>/dev/null || true)
+    [ "$_state" = 'MERGED' ] || die "the PR for $_b is ${_state:-missing}, not MERGED
+  merge it first, or drop the branch by hand if it was abandoned"
+
+    _dir=$(git rev-parse --show-toplevel)
+    say 'returning to the primary checkout'
+    cd "$(git worktree list --porcelain | awk '/^worktree /{print $2; exit}')"
+
+    say "removing worktree $_dir"
+    git worktree remove "$_dir"
+    git branch -D "$_b" >/dev/null 2>&1 || true
+    git worktree prune
+    git fetch --prune --quiet origin 2>/dev/null || true
+    ok "$_b cleaned up"
+    printf '\n  cd %s\n\n' "$(pwd)"
+}
+
+cmd_list() {
+    _d=$(default_branch)
+    git worktree list --porcelain | awk '/^worktree /{w=$2} /^branch /{sub("refs/heads/","",$2); print w"\t"$2}' |
+    while IFS="$(printf '\t')" read -r _path _br; do
+        if [ "$_br" = "$_d" ]; then
+            printf '%-46s %-34s %s\n' "$_path" "$_br" 'primary'
+        else
+            _st=$(gh pr view "$_br" --json state,number --jq '"#\(.number) \(.state)"' 2>/dev/null || echo 'no PR')
+            printf '%-46s %-34s %s\n' "$_path" "$_br" "$_st"
+        fi
+    done
+}
+
+usage() {
+    cat <<'USAGE'
+Usage: scripts/agent <command>
+
+  doctor                Check the environment and report every problem
+  start <type>/<slug>   Create a branch and its own worktree
+  check                 Run the full local check (scripts/task check)
+  commit <message>      Validate the Conventional Commit, then commit
+  pr [--draft]          Check, push, and open the pull request
+  sync                  Rebase this branch onto the default branch
+  done                  Verify the PR merged, then remove branch and worktree
+  list                  Worktrees, their branches, and PR state
+
+Layout:
+  <repo>/                        primary checkout, stays on the default branch
+  ../.worktrees/<repo>/<branch>/ one directory per unit of work
+USAGE
+}
+
+_cmd=${1:-}
+[ $# -gt 0 ] && shift || true
+case "$_cmd" in
+    doctor) cmd_doctor "$@" ;;
+    start)  cmd_start  "$@" ;;
+    check)  cmd_check  "$@" ;;
+    commit) cmd_commit "$@" ;;
+    pr)     cmd_pr     "$@" ;;
+    sync)   cmd_sync   "$@" ;;
+    done)   cmd_done   "$@" ;;
+    list)   cmd_list   "$@" ;;
+    -h | --help | help | '') usage ;;
+    *) printf 'agent: unknown command `%s`\n\n' "$_cmd" >&2; usage >&2; exit 1 ;;
+esac

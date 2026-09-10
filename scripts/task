@@ -1,0 +1,52 @@
+#!/bin/sh
+# The single seam between this project and all automation.
+#
+# CI, the git hooks and scripts/agent know only these target names. Everything
+# stack-specific lives here and nowhere else, so the two can never drift.
+set -eu
+
+usage() {
+    cat <<'USAGE'
+Usage: scripts/task <target>
+
+Targets:
+  fmt        Format the tree in place
+  fmt:check  Verify formatting; non-zero on drift
+  lint       Clippy with warnings denied
+  test       Full test suite
+  build      Compile the workspace
+  check      fmt:check && lint && test && build
+USAGE
+}
+
+case "${1:-}" in
+    fmt)
+        cargo fmt --all
+        ;;
+    fmt:check)
+        cargo fmt --all -- --check
+        ;;
+    lint)
+        cargo clippy --workspace --all-targets --all-features -- -D warnings
+        ;;
+    test)
+        cargo test --workspace --all-targets --all-features
+        ;;
+    build)
+        cargo build --workspace --all-features
+        ;;
+    check)
+        "$0" fmt:check
+        "$0" lint
+        "$0" test
+        "$0" build
+        ;;
+    -h | --help | help | "")
+        usage
+        ;;
+    *)
+        printf 'task: unknown target `%s`\n\n' "$1" >&2
+        usage >&2
+        exit 1
+        ;;
+esac

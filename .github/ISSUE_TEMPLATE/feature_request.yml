@@ -1,0 +1,33 @@
+name: Feature request
+description: Suggest something nun should do
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        nun has a deliberately fenced scope. Before filing, check the `never`
+        list in README.md — modal editing, a theme gallery, a debugger, an
+        extension marketplace and telemetry are settled decisions, not gaps.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you unable to do today? Describe the situation, not the solution.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like instead
+    validations:
+      required: true
+
+  - type: textarea
+    id: mouse
+    attributes:
+      label: How it works with the mouse
+      description: >
+        nun is mouse-first. If your proposal is keyboard-only, say what the
+        click, drag or hover equivalent would be.

@@ -1,0 +1,47 @@
+name: Bug report
+description: Something in nun behaves incorrectly
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you got instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open a file with `nun src/main.rs`
+        2. Drag the tab onto the right edge
+        3. ...
+    validations:
+      required: true
+
+  - type: input
+    id: terminal
+    attributes:
+      label: Terminal
+      description: Name and version. Colours and key handling differ sharply between them.
+      placeholder: Ghostty 1.2.0
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: nun version
+      description: Output of `nun --version`.
+    validations:
+      required: true
+
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      placeholder: macOS 15.5 (arm64)
+    validations:
+      required: true
