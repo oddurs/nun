@@ -41,36 +41,56 @@ validate_commit_msg() {
 
 cmd_doctor() {
     _fail=0
-    command -v git >/dev/null 2>&1 && ok 'git installed' || { bad 'git not installed'; _fail=1; }
-    command -v gh  >/dev/null 2>&1 && ok 'gh installed'  || { bad 'gh not installed — https://cli.github.com'; _fail=1; }
+    command -v git >/dev/null 2>&1 && ok 'git installed' || { bad 'git not installed'; _fail=$((_fail + 1)); }
+    command -v gh  >/dev/null 2>&1 && ok 'gh installed'  || { bad 'gh not installed — https://cli.github.com'; _fail=$((_fail + 1)); }
     command -v cargo >/dev/null 2>&1 && ok "toolchain $(rustc --version)" \
-        || { bad 'cargo not installed — https://rustup.rs'; _fail=1; }
+        || { bad 'cargo not installed — https://rustup.rs'; _fail=$((_fail + 1)); }
 
     if command -v gh >/dev/null 2>&1; then
         gh auth status >/dev/null 2>&1 && ok "gh authenticated as $(gh api user --jq .login 2>/dev/null)" \
-            || { bad 'gh not authenticated — run: gh auth login'; _fail=1; }
+            || { bad 'gh not authenticated — run: gh auth login'; _fail=$((_fail + 1)); }
+    fi
+
+    if command -v cairn >/dev/null 2>&1; then
+        ok "cairn $(cairn --version 2>/dev/null | head -n 1 | cut -d' ' -f2)"
+        if [ "$(git config merge.cairn.driver 2>/dev/null || true)" ]; then
+            ok 'cairn merge driver registered'
+        else
+            bad 'cairn merge driver missing — run: scripts/setup'; _fail=$((_fail + 1))
+        fi
+    else
+        bad 'cairn not installed — the roadmap in cairn/ cannot be read or merged'
+        _fail=$((_fail + 1))
     fi
 
     if [ "$(git config core.hooksPath 2>/dev/null || true)" = '.githooks' ]; then
         ok 'hooks path is .githooks'
     else
-        bad 'hooks not wired — run: scripts/setup'; _fail=1
+        bad 'hooks not wired — run: scripts/setup'; _fail=$((_fail + 1))
     fi
 
     for _h in commit-msg pre-commit pre-push; do
         [ -x ".githooks/$_h" ] && ok "hook $_h executable" \
-            || { bad "hook $_h missing or not executable"; _fail=1; }
+            || { bad "hook $_h missing or not executable"; _fail=$((_fail + 1)); }
     done
 
     if [ -z "$(git status --porcelain)" ]; then ok 'working tree clean'
-    else bad 'working tree dirty — commit or stash before starting work'; _fail=1; fi
+    else bad 'working tree dirty — commit or stash before starting work'; _fail=$((_fail + 1)); fi
 
     _b=$(git rev-parse --abbrev-ref HEAD)
     _d=$(default_branch)
-    if [ "$(root)" = "$PWD" ] && [ "$_b" != "$_d" ]; then
-        bad "primary checkout is on '$_b'; it should stay on '$_d'"; _fail=1
+    # A linked worktree is supposed to be on a feature branch; only the primary
+    # checkout is expected to stay on the default one. They differ in whether
+    # the git dir is the common one.
+    if [ "$(git rev-parse --git-dir)" = "$(git rev-parse --git-common-dir)" ]; then
+        if [ "$_b" != "$_d" ]; then
+            bad "primary checkout is on '$_b'; it should stay on '$_d'"
+            _fail=$((_fail + 1))
+        else
+            ok "on the default branch ($_d)"
+        fi
     else
-        ok "on branch $_b"
+        ok "worktree on $_b"
     fi
 
     [ "$_fail" -eq 0 ] && printf '\n\033[32mAll good.\033[0m\n' || {
