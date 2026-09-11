@@ -12,14 +12,28 @@ will mostly never open.
 Early. The editor is being built one milestone at a time; the roadmap lives in
 [`cairn/`](cairn/) and is the source of truth.
 
-What works today:
+What works today — milestone 1, "buffer and screen":
 
 ```sh
+nun <file>         # open it, edit it, save it
 nun theme dump     # probe this terminal and print the derived ramp as TOML
 ```
 
-Behind it: the rope-backed buffer with undo and multi-cursor selections, the
-OSC palette probe, and the OKLCH role derivation. There is no screen yet.
+You get a full-screen editor with line numbers, a status line, and colours
+derived from your own terminal. Typing, arrow keys and shift-selection, undo and
+redo, select all, page up and down, save, and a quit that asks twice if there
+are unsaved changes. Clicking places the caret and the wheel scrolls; the rest
+of the mouse is milestone 2.
+
+| | |
+|---|---|
+| `Ctrl+S` | Save |
+| `Ctrl+Z` / `Ctrl+Shift+Z` | Undo / redo |
+| `Ctrl+A` | Select all |
+| `Ctrl+Q` | Quit |
+
+Not there yet: the sidebar, tabs, splits, the command palette, syntax
+highlighting, search, language servers and git. Those are milestones 2 to 5.
 
 Do not install this yet.
 

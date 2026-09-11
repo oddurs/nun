@@ -174,6 +174,15 @@ impl Buffer {
         self.path.as_deref()
     }
 
+    /// Give the buffer a path to save to.
+    ///
+    /// Used when opening a file that does not exist yet: there is nothing to
+    /// read, but `save` still needs somewhere to write. No disk stamp is
+    /// recorded, so the first save will not complain that the file changed.
+    pub fn set_path(&mut self, path: impl AsRef<Path>) {
+        self.path = Some(path.as_ref().to_path_buf());
+    }
+
     /// The line ending that will be written on save.
     #[must_use]
     pub const fn line_ending(&self) -> LineEnding {

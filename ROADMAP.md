@@ -4,11 +4,7 @@
 
 ## m1 — Buffer and screen
 
-`#########·` 88% · 7 of 8 done · due 2026-09-24
-
-### planned
-
-- [ ] [`0013`](https://github.com/oddurs/nun/blob/main/cairn/items/0013-open-edit-and-save-a-file-end-to-end.md) Open, edit and save a file end to end <sup>feature · p0</sup>
+`##########` 100% · 8 of 8 done · due 2026-09-24
 
 ### done
 
@@ -18,6 +14,7 @@
 - [x] [`0010`](https://github.com/oddurs/nun/blob/main/cairn/items/0010-derive-the-role-ramp-in-oklch.md) Derive the role ramp in OKLCH <sup>feature · p0</sup>
 - [x] [`0011`](https://github.com/oddurs/nun/blob/main/cairn/items/0011-render-loop-with-damage-tracking.md) Render loop with damage tracking <sup>feature · p0</sup>
 - [x] [`0012`](https://github.com/oddurs/nun/blob/main/cairn/items/0012-headless-render-harness.md) Headless render harness <sup>feature · p1</sup>
+- [x] [`0013`](https://github.com/oddurs/nun/blob/main/cairn/items/0013-open-edit-and-save-a-file-end-to-end.md) Open, edit and save a file end to end <sup>feature · p0</sup>
 - [x] [`0014`](https://github.com/oddurs/nun/blob/main/cairn/items/0014-restore-the-terminal-on-panic-and-signal.md) Restore the terminal on panic and signal <sup>chore · p0</sup>
 
 ## m2 — Mouse and shell
