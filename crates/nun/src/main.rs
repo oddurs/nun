@@ -1,49 +1,125 @@
 //! The `nun` binary.
-//!
-//! Today this is the entry point and nothing more: the editor itself is being
-//! built milestone by milestone, tracked in `cairn/`.
 
+mod app;
 mod terminal;
 
+use std::io;
+use std::path::Path;
+
+use app::{App, Outcome};
+use nun_core::Buffer;
 use nun_theme::{Source, derive};
+use nun_ui::{Capabilities, Events, Palette, Screen, install_panic_hook};
+use ratatui::buffer::Buffer as Cells;
+use ratatui::layout::Rect;
+use ratatui::widgets::Widget;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    print!("{}", run(&args));
-}
 
-/// Render the response to a set of command-line arguments.
-///
-/// Kept separate from `main` so the surface stays testable without a terminal.
-fn run(args: &[String]) -> String {
     match args.first().map(String::as_str) {
-        Some("--version" | "-V") => format!("nun {VERSION}\n"),
-        Some("theme") => theme(args.get(1).map(String::as_str)),
-        Some("--help" | "-h") | None => usage(),
-        Some(other) => format!("nun: unknown argument `{other}`\n\n{}", usage()),
+        Some("--version" | "-V") => println!("nun {VERSION}"),
+        Some("theme") => print!("{}", theme(args.get(1).map(String::as_str))),
+        Some("--help" | "-h") | None => print!("{}", usage()),
+        Some(argument) if argument.starts_with('-') => {
+            eprint!("nun: unknown option `{argument}`\n\n{}", usage());
+            std::process::exit(2);
+        }
+        Some(path) => {
+            if let Err(error) = edit(Path::new(path)) {
+                eprintln!("nun: {error}");
+                std::process::exit(1);
+            }
+        }
     }
 }
 
-fn usage() -> String {
-    format!(
-        "nun {VERSION}\n\
-         A mouse-first terminal code editor.\n\n\
-         Usage: nun [OPTIONS]\n       nun theme dump\n\n\
-         Options:\n  \
-           -h, --help     Print help\n  \
-           -V, --version  Print version\n\n\
-         Commands:\n  \
-           theme dump     Probe this terminal and print the derived ramp as TOML\n"
-    )
+/// Open a file and run the editor over it.
+fn edit(path: &Path) -> io::Result<()> {
+    // Probed before the input reader starts: both want raw bytes from stdin,
+    // and only one of them can have them. A keystroke landing inside the probe
+    // window is dropped, which is a real if small cost of doing it this way.
+    let probe = terminal::probe_palette(terminal::PROBE_TIMEOUT);
+    let palette = Palette::new(derive(&probe));
+
+    let (buffer, report) = if path.exists() {
+        Buffer::load(path)?
+    } else {
+        let mut buffer = Buffer::new();
+        buffer.set_path(path);
+        (buffer, nun_core::LoadReport::default())
+    };
+
+    let mut app = App::new(buffer, palette);
+    if report.lossy {
+        app.warn("This file is not valid UTF-8. Saving it would destroy the original bytes.");
+    } else if report.mixed_line_endings {
+        app.warn("Mixed line endings; saving normalises them to the dominant one.");
+    }
+
+    // Installed before the screen is entered, so a panic anywhere after this
+    // point still puts the terminal back.
+    install_panic_hook();
+
+    let mut screen = Screen::open(Capabilities::default()).map_err(|error| {
+        // The usual cause is no tty at all — piped input, or a CI runner — and
+        // the platform's own message for that is "Device not configured".
+        io::Error::new(error.kind(), format!("nun needs an interactive terminal ({error})"))
+    })?;
+    let events = Events::start()?;
+
+    app.set_viewport(screen.area()?);
+    screen.draw(AppView(&app))?;
+
+    loop {
+        // Take the whole burst before drawing, so holding a key down costs one
+        // frame rather than one frame per repeat.
+        let mut outcome = app.handle(events.next());
+        for event in events.drain() {
+            outcome = combine(outcome, app.handle(event));
+        }
+
+        match outcome {
+            Outcome::Quit => break,
+            Outcome::Suspend => {
+                screen.suspend()?;
+                app.set_viewport(screen.area()?);
+                screen.draw(AppView(&app))?;
+            }
+            Outcome::Redraw => {
+                app.set_viewport(screen.area()?);
+                screen.draw(AppView(&app))?;
+            }
+            Outcome::Continue => {}
+        }
+    }
+
+    screen.close();
+    Ok(())
+}
+
+/// The strongest outcome of a burst wins.
+const fn combine(a: Outcome, b: Outcome) -> Outcome {
+    match (a, b) {
+        (Outcome::Quit, _) | (_, Outcome::Quit) => Outcome::Quit,
+        (Outcome::Suspend, _) | (_, Outcome::Suspend) => Outcome::Suspend,
+        (Outcome::Redraw, _) | (_, Outcome::Redraw) => Outcome::Redraw,
+        _ => Outcome::Continue,
+    }
+}
+
+/// Adapts the editor to ratatui's widget trait.
+struct AppView<'a>(&'a App);
+
+impl Widget for AppView<'_> {
+    fn render(self, area: Rect, cells: &mut Cells) {
+        self.0.render(area, cells);
+    }
 }
 
 /// Probe the terminal and print what was derived from it.
-///
-/// Printed as TOML so it can be pasted straight into `nun.toml` and edited,
-/// which is the escape hatch for anyone who wants to pin a role rather than
-/// inherit it.
 fn theme(subcommand: Option<&str>) -> String {
     match subcommand {
         Some("dump") => {
@@ -64,42 +140,45 @@ fn theme(subcommand: Option<&str>) -> String {
     }
 }
 
+fn usage() -> String {
+    format!(
+        "nun {VERSION}\n\
+         A mouse-first terminal code editor.\n\n\
+         Usage: nun <file>\n       nun theme dump\n\n\
+         Options:\n  \
+           -h, --help     Print help\n  \
+           -V, --version  Print version\n\n\
+         Commands:\n  \
+           theme dump     Probe this terminal and print the derived ramp as TOML\n\n\
+         Keys:\n  \
+           Ctrl+S save   Ctrl+Z undo   Ctrl+Shift+Z redo   Ctrl+A select all   Ctrl+Q quit\n  \
+           Click places the caret; the wheel scrolls.\n"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn args(v: &[&str]) -> Vec<String> {
-        v.iter().map(|s| (*s).to_string()).collect()
-    }
-
-    #[test]
-    fn version_flag_reports_the_package_version() {
-        assert_eq!(run(&args(&["--version"])), format!("nun {VERSION}\n"));
-        assert_eq!(run(&args(&["-V"])), format!("nun {VERSION}\n"));
-    }
-
-    #[test]
-    fn no_arguments_prints_usage() {
-        assert!(run(&[]).contains("Usage: nun"));
-    }
-
     #[test]
     fn theme_without_a_subcommand_says_what_it_expected() {
-        // Deliberately does not touch the terminal, so it is safe in CI.
-        let out = run(&args(&["theme"]));
+        let out = theme(None);
         assert!(out.contains("expected `dump`"));
         assert!(out.contains("Usage: nun theme dump"));
     }
 
     #[test]
-    fn usage_mentions_the_theme_command() {
-        assert!(usage().contains("nun theme dump"));
+    fn usage_documents_the_commands_and_the_mouse() {
+        let usage = usage();
+        assert!(usage.contains("nun theme dump"));
+        assert!(usage.contains("Click places the caret"));
     }
 
     #[test]
-    fn unknown_argument_is_named_and_followed_by_usage() {
-        let out = run(&args(&["--frobnicate"]));
-        assert!(out.contains("unknown argument `--frobnicate`"));
-        assert!(out.contains("Usage: nun"));
+    fn the_strongest_outcome_of_a_burst_wins() {
+        assert_eq!(combine(Outcome::Continue, Outcome::Redraw), Outcome::Redraw);
+        assert_eq!(combine(Outcome::Redraw, Outcome::Quit), Outcome::Quit);
+        assert_eq!(combine(Outcome::Suspend, Outcome::Redraw), Outcome::Suspend);
+        assert_eq!(combine(Outcome::Continue, Outcome::Continue), Outcome::Continue);
     }
 }

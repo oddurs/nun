@@ -734,7 +734,12 @@ name = "nun"
 version = "0.1.0"
 dependencies = [
  "crossterm",
+ "nun-core",
  "nun-theme",
+ "nun-ui",
+ "ratatui",
+ "unicode-segmentation",
+ "unicode-width",
 ]
 
 [[package]]
