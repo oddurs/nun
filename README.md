@@ -83,6 +83,10 @@ Work happens one branch per worktree, driven by `scripts/agent` — see
 [CONTRIBUTING.md](CONTRIBUTING.md). `main` only ever advances through a merged
 pull request.
 
+Automated contributors should read [AGENTS.md](AGENTS.md), which is the
+canonical contract: the workflow, the `scripts/task` seam, the commit
+convention, and the architecture rules that a passing CI run will not catch.
+
 ## Roadmap
 
 Tracked in [cairn](https://github.com/oddurs/cairn), as Markdown files in this
