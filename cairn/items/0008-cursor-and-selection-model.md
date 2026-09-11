@@ -2,12 +2,14 @@
 id: 8
 title: Cursor and selection model
 type: feature
-status: planned
+status: doing
 milestone: m1
+assignee: Oddur Sigurdsson
+claimed: 2026-09-11
 depends_on:
 - 7
 created: 2026-09-10
-updated: 2026-09-10
+updated: 2026-09-11
 priority: p0
 effort: m
 area: core
@@ -31,3 +33,7 @@ one empty range, so there is no separate code path.
 - [ ] Grapheme-cluster movement, not byte or char movement
 - [ ] Sticky column survives vertical movement across short lines
 - [ ] Tested against emoji, combining marks and CJK width
+
+## 2026-09-11
+
+Range holds the sticky column, and PartialEq deliberately ignores it — two ranges covering the same text are the same selection regardless of where vertical movement is aiming.
