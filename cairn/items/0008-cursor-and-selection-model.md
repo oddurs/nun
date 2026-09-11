@@ -2,10 +2,9 @@
 id: 8
 title: Cursor and selection model
 type: feature
-status: doing
+status: done
 milestone: m1
 assignee: Oddur Sigurdsson
-claimed: 2026-09-11
 depends_on:
 - 7
 created: 2026-09-10

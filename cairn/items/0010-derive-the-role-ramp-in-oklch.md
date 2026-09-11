@@ -2,12 +2,13 @@
 id: 10
 title: Derive the role ramp in OKLCH
 type: feature
-status: planned
+status: done
 milestone: m1
+assignee: Oddur Sigurdsson
 depends_on:
 - 9
 created: 2026-09-10
-updated: 2026-09-10
+updated: 2026-09-11
 priority: p0
 effort: m
 area: theme
@@ -35,3 +36,7 @@ never colours.
 - [ ] A low-contrast or near-monochrome terminal palette still yields a usable ramp
 - [ ] `[theme.roles]` overrides one role and leaves the rest derived
 - [ ] Snapshot tests over a corpus of real terminal palettes
+
+## 2026-09-11
+
+Surfaces are derived by stepping until a contrast target is met rather than by a fixed OKLCH lightness delta. A fixed delta cannot work at both ends: 0.042 reads clearly against mid-grey and still rounds to black against pure black.

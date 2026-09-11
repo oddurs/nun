@@ -2,7 +2,7 @@
 id: 7
 title: Rope-backed text buffer with edits and undo
 type: feature
-status: planned
+status: done
 milestone: m1
 created: 2026-09-10
 updated: 2026-09-11

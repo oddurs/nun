@@ -9,10 +9,17 @@ will mostly never open.
 
 ## Status
 
-Early. The workspace, the toolchain and the development workflow are in place;
-the editor is being built one milestone at a time. Today `nun` is a binary that
-prints its version. Everything below describes what is being built and in what
-order — the roadmap lives in [`cairn/`](cairn/) and is the source of truth.
+Early. The editor is being built one milestone at a time; the roadmap lives in
+[`cairn/`](cairn/) and is the source of truth.
+
+What works today:
+
+```sh
+nun theme dump     # probe this terminal and print the derived ramp as TOML
+```
+
+Behind it: the rope-backed buffer with undo and multi-cursor selections, the
+OSC palette probe, and the OKLCH role derivation. There is no screen yet.
 
 Do not install this yet.
 

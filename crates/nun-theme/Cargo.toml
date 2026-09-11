@@ -1,6 +1,6 @@
 [package]
-name = "nun"
-description = "A mouse-first terminal code editor that inherits your terminal's colors"
+name = "nun-theme"
+description = "Terminal palette probing and OKLCH role derivation for nun"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,5 +12,6 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
-crossterm = "0.29.0"
-nun-theme = { version = "0.1.0", path = "../nun-theme" }
+thiserror = "2.0.20"
+
+[dev-dependencies]
