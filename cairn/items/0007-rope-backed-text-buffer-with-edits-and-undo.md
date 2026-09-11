@@ -5,7 +5,7 @@ type: feature
 status: planned
 milestone: m1
 created: 2026-09-10
-updated: 2026-09-10
+updated: 2026-09-11
 priority: p0
 effort: m
 area: core
@@ -31,3 +31,7 @@ with coalescing by time and adjacency, not snapshots.
 - [ ] Line-ending and encoding detected on load, preserved on save
 - [ ] No panics on invalid UTF-8; lossy load is explicit and flagged
 - [ ] Property tests: apply-then-invert restores the original rope
+
+## 2026-09-11
+
+Buffer owns selections rather than leaving them to a caller: an edit has to map them anyway, and splitting the two would mean every edit path threading a Selections in and out. Buffer is effectively the document type.

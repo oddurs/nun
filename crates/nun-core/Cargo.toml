@@ -1,0 +1,22 @@
+[package]
+name = "nun-core"
+description = "Text buffer, edits, undo and selections for nun"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+ropey = { version = "1.6.1", default-features = false, features = ["simd"] }
+thiserror = "2.0.20"
+unicode-segmentation = "1.13.3"
+unicode-width = "0.2.2"
+
+[dev-dependencies]
+proptest = "1.11.0"
+tempfile = "3.27.0"
