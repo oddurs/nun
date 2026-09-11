@@ -2,10 +2,11 @@
 id: 14
 title: Restore the terminal on panic and signal
 type: chore
-status: planned
+status: done
 milestone: m1
+assignee: Oddur Sigurdsson
 created: 2026-09-10
-updated: 2026-09-10
+updated: 2026-09-11
 priority: p0
 effort: s
 area: ui
@@ -29,3 +30,7 @@ screen — then print the panic normally.
 - [ ] SIGTERM and SIGHUP restore the terminal before exiting
 - [ ] SIGTSTP suspends cleanly and resumes with the screen intact
 - [ ] Any pushed keyboard-protocol flags are popped exactly once
+
+## 2026-09-11
+
+TerminalGuard is generic over a TerminalControl trait so exactly-once teardown, reverse ordering, and unwind-on-partial-failure are all asserted against a recording fake with no tty. The panic path additionally uses a process-wide counter so keyboard flags cannot be double-popped.
