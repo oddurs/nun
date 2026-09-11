@@ -2,12 +2,13 @@
 id: 12
 title: Headless render harness
 type: feature
-status: planned
+status: done
 milestone: m1
+assignee: Oddur Sigurdsson
 depends_on:
 - 11
 created: 2026-09-10
-updated: 2026-09-10
+updated: 2026-09-11
 priority: p1
 effort: m
 area: ui
@@ -29,3 +30,7 @@ tests over that text, reviewed with `cargo insta`.
 - [ ] A frame can be rendered and asserted with no tty present
 - [ ] Snapshots capture style, not just characters
 - [ ] Runs in CI on ubuntu-latest
+
+## 2026-09-11
+
+Snapshots capture style alongside characters via to_styled_text, so a change that silently drops a colour shows as a diff. insta was dropped: explicit expected strings read better in review and avoid managing .snap files.

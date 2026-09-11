@@ -1,0 +1,21 @@
+[package]
+name = "nun-ui"
+description = "Rendering, styling and terminal lifecycle for nun"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+crossterm = "0.29.0"
+nun-core = { version = "0.1.0", path = "../nun-core" }
+nun-theme = { version = "0.1.0", path = "../nun-theme" }
+ratatui = "0.30.2"
+signal-hook = "0.4.4"
+unicode-segmentation = "1.13.3"
+unicode-width = "0.2.2"
