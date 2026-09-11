@@ -4,21 +4,21 @@
 
 ## m1 — Buffer and screen
 
-`··········` 0% · 0 of 8 done · due 2026-09-24
+`#####·····` 50% · 4 of 8 done · due 2026-09-24
 
 ### planned
 
-- [ ] [`0007`](https://github.com/oddurs/nun/blob/main/cairn/items/0007-rope-backed-text-buffer-with-edits-and-undo.md) Rope-backed text buffer with edits and undo <sup>feature · p0</sup>
-- [ ] [`0009`](https://github.com/oddurs/nun/blob/main/cairn/items/0009-probe-the-terminal-palette-over-osc.md) Probe the terminal palette over OSC <sup>feature · p0</sup>
-- [ ] [`0010`](https://github.com/oddurs/nun/blob/main/cairn/items/0010-derive-the-role-ramp-in-oklch.md) Derive the role ramp in OKLCH <sup>feature · p0</sup>
 - [ ] [`0011`](https://github.com/oddurs/nun/blob/main/cairn/items/0011-render-loop-with-damage-tracking.md) Render loop with damage tracking <sup>feature · p0</sup>
 - [ ] [`0012`](https://github.com/oddurs/nun/blob/main/cairn/items/0012-headless-render-harness.md) Headless render harness <sup>feature · p1</sup>
 - [ ] [`0013`](https://github.com/oddurs/nun/blob/main/cairn/items/0013-open-edit-and-save-a-file-end-to-end.md) Open, edit and save a file end to end <sup>feature · p0</sup>
 - [ ] [`0014`](https://github.com/oddurs/nun/blob/main/cairn/items/0014-restore-the-terminal-on-panic-and-signal.md) Restore the terminal on panic and signal <sup>chore · p0</sup>
 
-### in progress
+### done
 
-- [ ] [`0008`](https://github.com/oddurs/nun/blob/main/cairn/items/0008-cursor-and-selection-model.md) Cursor and selection model <sup>feature · p0</sup>
+- [x] [`0007`](https://github.com/oddurs/nun/blob/main/cairn/items/0007-rope-backed-text-buffer-with-edits-and-undo.md) Rope-backed text buffer with edits and undo <sup>feature · p0</sup>
+- [x] [`0008`](https://github.com/oddurs/nun/blob/main/cairn/items/0008-cursor-and-selection-model.md) Cursor and selection model <sup>feature · p0</sup>
+- [x] [`0009`](https://github.com/oddurs/nun/blob/main/cairn/items/0009-probe-the-terminal-palette-over-osc.md) Probe the terminal palette over OSC <sup>feature · p0</sup>
+- [x] [`0010`](https://github.com/oddurs/nun/blob/main/cairn/items/0010-derive-the-role-ramp-in-oklch.md) Derive the role ramp in OKLCH <sup>feature · p0</sup>
 
 ## m2 — Mouse and shell
 

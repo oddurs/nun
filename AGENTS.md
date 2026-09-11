@@ -38,14 +38,20 @@ cd ../.worktrees/nun/feat/0007-core-buffer
 
 # ... work ...
 
+cairn close 7                              # before the PR, not after
 scripts/agent check                        # must be green
 scripts/agent commit "feat(core): add the rope-backed buffer"
 scripts/agent pr
 
 # after the PR merges
-cairn close 7
 scripts/agent done                         # from inside the worktree
 ```
+
+**Close the item before opening the PR.** cairn items are files in this
+repository, so a status change only exists once it is committed. Closing after
+the merge writes to a worktree that is about to be deleted and the change is
+lost. Run every `cairn` command inside the worktree for the same reason — never
+in the primary checkout, which must stay clean on the default branch.
 
 `scripts/agent done` deletes the directory you are standing in. It prints the
 path to move back to; it will not `cd` for you.
