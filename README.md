@@ -16,6 +16,7 @@ What works today — milestone 1, "buffer and screen":
 
 ```sh
 nun <file>         # open it, edit it, save it
+nun config         # print the effective configuration and where each value came from
 nun theme dump     # probe this terminal and print the derived ramp as TOML
 ```
 
@@ -32,8 +33,30 @@ of the mouse is milestone 2.
 | `Ctrl+A` | Select all |
 | `Ctrl+Q` | Quit |
 
-Not there yet: the sidebar, tabs, splits, the command palette, syntax
-highlighting, search, language servers and git. Those are milestones 2 to 5.
+Configuration is optional and lives in `~/.config/nun/nun.toml`. Zero config is
+a supported configuration and the one most people should stay on:
+
+```toml
+[editor]
+tab_width = 4
+
+[theme]
+polarity = "auto"        # "dark" or "light" for a translucent background
+
+[theme.roles]
+accent = "#e0a44b"       # nudge one role; the rest stay derived
+
+[ui]
+mouse = true
+```
+
+A bad value names the line and falls back rather than taking the editor down,
+and an unknown key is reported rather than silently ignored. Run `nun config` to
+see what actually took effect.
+
+Not there yet: `nun <directory>`, the sidebar, tabs, splits, the command
+palette, syntax highlighting, search, language servers and git. Those are
+milestones 2 to 5.
 
 Do not install this yet.
 

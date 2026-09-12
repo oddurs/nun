@@ -13,9 +13,13 @@ workspace = true
 
 [dependencies]
 crossterm = "0.29.0"
+nun-config = { version = "0.1.0", path = "../nun-config" }
 nun-core = { version = "0.1.0", path = "../nun-core" }
 nun-theme = { version = "0.1.0", path = "../nun-theme" }
 nun-ui = { version = "0.1.0", path = "../nun-ui" }
 ratatui = "0.30.2"
 unicode-segmentation = "1.13.3"
 unicode-width = "0.2.2"
+
+[dev-dependencies]
+tempfile = "3.27.0"

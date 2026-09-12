@@ -4,7 +4,7 @@
 
 ## m1 — Buffer and screen
 
-`##########` 100% · 8 of 8 done · due 2026-09-24
+`##########` 100% · 10 of 10 done · due 2026-09-24
 
 ### done
 
@@ -16,6 +16,8 @@
 - [x] [`0012`](https://github.com/oddurs/nun/blob/main/cairn/items/0012-headless-render-harness.md) Headless render harness <sup>feature · p1</sup>
 - [x] [`0013`](https://github.com/oddurs/nun/blob/main/cairn/items/0013-open-edit-and-save-a-file-end-to-end.md) Open, edit and save a file end to end <sup>feature · p0</sup>
 - [x] [`0014`](https://github.com/oddurs/nun/blob/main/cairn/items/0014-restore-the-terminal-on-panic-and-signal.md) Restore the terminal on panic and signal <sup>chore · p0</sup>
+- [x] [`0050`](https://github.com/oddurs/nun/blob/main/cairn/items/0050-read-nun-toml-for-the-settings-that-exist.md) Read nun.toml for the settings that exist <sup>feature · p1</sup>
+- [x] [`0051`](https://github.com/oddurs/nun/blob/main/cairn/items/0051-opening-a-directory-reports-a-raw-errno.md) Opening a directory reports a raw errno <sup>bug · p0</sup>
 
 ## m2 — Mouse and shell
 
