@@ -10,7 +10,7 @@
 
 # On-disk format version. cairn refuses to open a project written in a format it
 # does not know, rather than misreading it. See "Compatibility" in the manual.
-format = 2
+format = 3
 
 [project]
 name = "nun"
@@ -114,17 +114,8 @@ board = false             # hide this column on `cairn board`
 [[type]]
 name = "milestone"
 description = "a release, or whatever this project ships"
-
-# A milestone is an item, so `milestone: v0.1` names one by its key. The key is
-# a handle rather than an identity: `id` is still the number.
-[[field]]
-name = "milestone"
-kind = "ref"
-target = "milestone"
-by = "key"
-rollup = true
+groups = "one"
 inverse = "scheduled"
-description = "what this ships in"
 
 [[field]]
 name = "due"
