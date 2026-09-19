@@ -16,7 +16,7 @@ use nun_input::{
     Chords, Clicks, Code, HitMap, Hover, Key, Keymap, Mods, PLATFORM_THRESHOLD, Resolved, Sequence,
 };
 use nun_theme::Role;
-use nun_ui::{EditorView, Event, Palette};
+use nun_ui::{EditorView, Event, Menu, Palette, TreeButton, TreeView};
 use ratatui::buffer::Buffer as Cells;
 use ratatui::layout::Rect;
 use ratatui::widgets::Widget;
@@ -24,6 +24,8 @@ use ratatui::widgets::Widget;
 use crate::commands::Command;
 
 mod pointer;
+mod prompt;
+mod sidebar;
 
 /// What the editor wants the caller to do next.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,6 +70,48 @@ pub enum Target {
     Gutter,
     /// The status line.
     Status,
+    /// The file-tree toggle at the left of the status line.
+    StatusFiles,
+    /// The Undo offered after a file operation.
+    StatusUndo,
+    /// A button of the question in the status line.
+    PromptButton(usize),
+    /// The sidebar's header row.
+    TreeHeader,
+    /// One of the header's buttons.
+    TreeButton(TreeButton),
+    /// A row of the file tree.
+    TreeRow(usize),
+    /// The sidebar below its last row.
+    TreeEmpty,
+    /// The sidebar's right edge, dragged to resize it.
+    SidebarEdge,
+    /// An item of the open menu.
+    MenuItem(usize),
+    /// Everywhere outside the open menu, which a click there closes.
+    MenuOutside,
+}
+
+impl Target {
+    const fn in_sidebar(self) -> bool {
+        matches!(
+            self,
+            Self::TreeHeader
+                | Self::TreeButton(_)
+                | Self::TreeRow(_)
+                | Self::TreeEmpty
+                | Self::SidebarEdge
+        )
+    }
+}
+
+/// What has the keyboard.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Focus {
+    /// The text.
+    Editor,
+    /// The file tree.
+    Sidebar,
 }
 
 /// The running editor.
@@ -94,6 +138,19 @@ pub struct App {
     drag: Option<pointer::Drag>,
     /// Scrolling under a drag held past the edge of the text.
     autoscroll: Option<pointer::Autoscroll>,
+    /// The file tree, when a folder is open.
+    sidebar: Option<sidebar::Sidebar>,
+    focus: Focus,
+    /// A question in the status line.
+    prompt: Option<prompt::Prompt>,
+    /// A menu on screen.
+    menu: Option<sidebar::OpenMenu>,
+    /// Whether the status line offers to undo the file operation it reports.
+    undo_offer: bool,
+    /// Whether that offer is a redo, because the last change was an undo.
+    last_undone: bool,
+    /// A file asked for that should be opened once it has been created.
+    open_when_created: Option<std::path::PathBuf>,
 }
 
 impl App {
@@ -116,6 +173,13 @@ impl App {
             clicks: Clicks::new(PLATFORM_THRESHOLD),
             drag: None,
             autoscroll: None,
+            sidebar: None,
+            focus: Focus::Editor,
+            prompt: None,
+            menu: None,
+            undo_offer: false,
+            last_undone: false,
+            open_when_created: None,
         };
         app.relayout();
         app
@@ -167,6 +231,7 @@ impl App {
 
     /// A key was pressed: whatever message was showing has been seen.
     fn acknowledge(&mut self) {
+        self.undo_offer = false;
         if self.message.take().is_none() {
             self.notices.pop_front();
         }
@@ -183,7 +248,13 @@ impl App {
     /// Where the text and the status line go.
     fn areas(&self) -> (Rect, Rect) {
         let area = self.viewport;
-        let text = Rect { height: area.height.saturating_sub(1), ..area };
+        let beside = self.sidebar_area().map_or(0, |sidebar| sidebar.width);
+        let text = Rect {
+            x: area.x + beside,
+            width: area.width - beside,
+            height: area.height.saturating_sub(1),
+            ..area
+        };
         let status =
             Rect { y: area.bottom().saturating_sub(1), height: area.height.min(1), ..area };
         (text, status)
@@ -205,7 +276,50 @@ impl App {
             false,
         );
         hits.push(cells(status), Target::Status, false);
+        self.layout_sidebar(&mut hits);
+
+        let parts = self.status_parts(status);
+        if let Some(files) = parts.files {
+            hits.push(cells(files), Target::StatusFiles, true);
+        }
+        if let Some(undo) = parts.undo {
+            hits.push(cells(undo), Target::StatusUndo, true);
+        }
+        if let Some(prompt) = &self.prompt {
+            for (index, area) in prompt.button_areas(status).into_iter().enumerate() {
+                if area.width > 0 {
+                    hits.push(cells(area), Target::PromptButton(index), true);
+                }
+            }
+        }
+
+        // The menu sits on top of everything, and everything outside it closes
+        // it: a click beside a menu dismisses it rather than landing below.
+        if let Some(menu) = &self.menu {
+            hits.push(cells(self.viewport), Target::MenuOutside, false);
+            for index in 0..menu.items.len() {
+                let Ok(offset) = u16::try_from(index) else { break };
+                let row = Rect { y: menu.area.y + offset, height: 1, ..menu.area };
+                hits.push(cells(row), Target::MenuItem(index), true);
+            }
+        }
         self.hits = hits;
+    }
+
+    /// Where the status line's own buttons go.
+    fn status_parts(&self, status: Rect) -> StatusParts {
+        if self.prompt.is_some() || status.height == 0 {
+            return StatusParts { files: None, undo: None, text: status.x };
+        }
+        let files = self.sidebar.as_ref().map(|_| Rect { width: 3.min(status.width), ..status });
+        let text = files.map_or(status.x, Rect::right);
+        let undo = self.undo_offer.then(|| {
+            let (left, _) = self.status();
+            let x = text + u16::try_from(left.chars().count() + 2).unwrap_or(u16::MAX);
+            Rect::new(x, status.y, u16::try_from(self.undo_label().len()).unwrap_or(6), 1)
+        });
+        let undo = undo.filter(|undo| undo.right() <= status.right());
+        StatusParts { files, undo, text }
     }
 
     /// Whether anything on screen reacts to the pointer merely passing over it.
@@ -271,10 +385,15 @@ impl App {
         match event {
             Event::Key(key) => self.handle_key(key, now),
             Event::Mouse(mouse) => self.handle_mouse(mouse, now),
+            Event::Paste(text) if self.prompt.is_some() => {
+                self.prompt_paste(&text);
+                Outcome::Redraw
+            }
             Event::Paste(text) => {
                 // A paste is not the second half of a chord.
                 self.chords.cancel();
                 self.acknowledge();
+                self.focus = Focus::Editor;
                 self.buffer.insert(&text);
                 self.follow_caret();
                 Outcome::Redraw
@@ -289,6 +408,8 @@ impl App {
             Event::Signal(nun_ui::Signal::Terminate | nun_ui::Signal::Hangup) | Event::Closed => {
                 Outcome::Quit
             }
+            Event::Files { dir, error } => self.files_changed(&dir, error),
+            Event::Workspace(done) => self.job_done(done),
             Event::Focus(true) => Outcome::Continue,
             // The pointer may be anywhere by the time focus comes back.
             Event::Focus(false) => {
@@ -305,6 +426,12 @@ impl App {
             return Outcome::Continue;
         }
         self.end_drag();
+        if self.prompt.is_some() {
+            return self.prompt_key(&event);
+        }
+        if self.menu.take().is_some() && event.code == KeyCode::Esc {
+            return Outcome::Redraw;
+        }
         let Some(key) = to_key(&event) else { return Outcome::Continue };
 
         let mut outcome = Outcome::Continue;
@@ -326,6 +453,19 @@ impl App {
             // The status line shows the chord so far.
             Resolved::Pending => Outcome::Redraw,
             Resolved::Unbound(keys) if keys.len() == 1 => match event {
+                Some(event) if self.focus == Focus::Sidebar => {
+                    self.acknowledge();
+                    match self.sidebar_key(event) {
+                        // The tree had no use for it: it is text, so the text
+                        // takes the keyboard and types it rather than
+                        // swallowing the keystroke.
+                        Outcome::Continue => {
+                            self.focus = Focus::Editor;
+                            self.edit(event)
+                        }
+                        outcome => outcome,
+                    }
+                }
                 Some(event) => self.edit(event),
                 None => Outcome::Continue,
             },
@@ -338,16 +478,33 @@ impl App {
     }
 
     /// Run a command.
+    ///
+    /// The layout is rebuilt afterwards: a command can open the sidebar, put a
+    /// question in the status line or leave a toast, and the hit regions have
+    /// to match what will be drawn.
     pub fn run(&mut self, command: Command) -> Outcome {
+        let outcome = self.run_command(command);
+        if outcome == Outcome::Redraw {
+            self.relayout();
+        }
+        outcome
+    }
+
+    fn run_command(&mut self, command: Command) -> Outcome {
         // Anything but a second quit clears a pending quit confirmation.
         if command != Command::Quit {
             self.quit_confirmed = false;
         }
         self.acknowledge();
 
+        let sidebar = self.focus == Focus::Sidebar;
         match command {
             Command::Quit => return self.request_quit(),
             Command::Save => return self.save(),
+            // Undo means the thing that has the keyboard: with the tree
+            // focused, the last file operation.
+            Command::Undo if sidebar => return self.undo_file_op(),
+            Command::Redo if sidebar => return self.redo_file_op(),
             Command::Undo => {
                 self.buffer.undo();
             }
@@ -355,6 +512,12 @@ impl App {
                 self.buffer.redo();
             }
             Command::SelectAll => self.buffer.select_all(),
+            Command::ToggleSidebar => return self.toggle_sidebar(),
+            Command::NewFile => return self.ask_new(false),
+            Command::NewFolder => return self.ask_new(true),
+            Command::Rename => return self.ask_rename(),
+            Command::Delete => return self.delete_selected(),
+            Command::ToggleIgnored => return self.toggle_ignored(),
         }
         self.follow_caret();
         Outcome::Redraw
@@ -419,7 +582,13 @@ impl App {
         let crossing = self.hover.update(hit.filter(|hit| hit.hover).map(|hit| hit.target), now);
         let hovered = if crossing.is_none() { Outcome::Continue } else { Outcome::Redraw };
 
+        let target = hit.map(|hit| hit.target);
         match mouse.kind {
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+                if target.is_some_and(Target::in_sidebar) =>
+            {
+                self.sidebar_scroll(mouse.kind == MouseEventKind::ScrollDown)
+            }
             MouseEventKind::ScrollUp => {
                 self.scroll = self.scroll.saturating_sub(3);
                 Outcome::Redraw
@@ -433,18 +602,74 @@ impl App {
                 // Reaching for the mouse abandons a half-typed chord, so the
                 // next key is typed rather than taken as its second half.
                 self.chords.cancel();
-                self.acknowledge();
                 self.quit_confirmed = false;
-                match hit {
-                    Some(hit) => self.press(mouse, hit.target, now),
-                    None => Outcome::Redraw,
+                let Some(target) = target else { return Outcome::Redraw };
+                self.click(mouse, target, now)
+            }
+            MouseEventKind::Down(MouseButton::Right) => {
+                self.menu = None;
+                match target {
+                    Some(target) if target.in_sidebar() => self.sidebar_menu(mouse, target),
+                    _ => hovered,
                 }
             }
             MouseEventKind::Drag(MouseButton::Left) => {
-                self.drag_to(mouse.column, mouse.row, now).and(hovered)
+                match self.sidebar_drag(mouse.column, mouse.row) {
+                    Some(outcome) => outcome,
+                    None => self.drag_to(mouse.column, mouse.row, now),
+                }
+                .and(hovered)
             }
-            MouseEventKind::Up(MouseButton::Left) => self.release(mouse).and(hovered),
+            MouseEventKind::Up(MouseButton::Left) => match self.sidebar_release() {
+                Some(outcome) => outcome,
+                None => self.release(mouse),
+            }
+            .and(hovered),
             _ => hovered,
+        }
+    }
+
+    /// The left button went down on `target`.
+    fn click(
+        &mut self,
+        mouse: crossterm::event::MouseEvent,
+        target: Target,
+        now: Instant,
+    ) -> Outcome {
+        // A menu or a question on screen takes the click first.
+        if let Some(menu) = self.menu.take() {
+            if let Target::MenuItem(index) = target {
+                return self.run(menu.commands[index]);
+            }
+            return Outcome::Redraw;
+        }
+        if let Target::PromptButton(index) = target
+            && let Some(answer) = self.prompt.as_ref().map(|prompt| prompt.buttons[index].1)
+        {
+            return self.answer(answer);
+        }
+        if self.prompt.is_some() {
+            // Clicking elsewhere does not answer the question; it stays up.
+            return Outcome::Continue;
+        }
+
+        match target {
+            // The same button both ways: after an undo it offers the redo.
+            Target::StatusUndo if self.last_undone => self.redo_file_op(),
+            Target::StatusUndo => self.undo_file_op(),
+            Target::StatusFiles => {
+                self.acknowledge();
+                self.toggle_sidebar()
+            }
+            target if target.in_sidebar() => {
+                self.acknowledge();
+                self.sidebar_press(mouse, target)
+            }
+            _ => {
+                self.acknowledge();
+                self.focus = Focus::Editor;
+                self.press(mouse, target, now)
+            }
         }
     }
 
@@ -504,6 +729,12 @@ impl App {
         Outcome::Redraw
     }
 
+    /// What the button beside a file-operation message offers: undoing it, or
+    /// putting back what was just undone.
+    const fn undo_label(&self) -> &'static str {
+        if self.last_undone { " Redo " } else { " Undo " }
+    }
+
     /// How to ask for `command` from the keyboard, as the status line says it.
     fn binding_for(&self, command: Command) -> String {
         self.keymap
@@ -543,21 +774,81 @@ impl App {
         (left, right)
     }
 
-    /// Draw the editor and its status line.
+    /// Draw the editor, the sidebar, the status line, and any menu.
     pub fn render(&self, area: Rect, cells: &mut Cells) {
-        let text_area = Rect { height: area.height.saturating_sub(1), ..area };
+        // Drawn into whatever rectangle the caller gives, which is the
+        // viewport in the editor and a fixed grid in the tests.
+        let beside = self.sidebar_area().map_or(0, |sidebar| sidebar.width).min(area.width);
+        let text_area = Rect {
+            x: area.x + beside,
+            width: area.width - beside,
+            height: area.height.saturating_sub(1),
+            ..area
+        };
+        let status =
+            Rect { y: area.bottom().saturating_sub(1), height: area.height.min(1), ..area };
         EditorView::new(&self.buffer, &self.palette)
             .scrolled_to(self.scroll)
             .with_drop_marker(self.drop_marker())
             .render(text_area, cells);
 
-        if area.height == 0 {
-            return;
+        self.render_sidebar(cells);
+
+        if status.height > 0 {
+            self.render_status(status, cells);
         }
-        self.render_status(Rect { y: area.bottom() - 1, height: 1, ..area }, cells);
+
+        if let Some(menu) = &self.menu {
+            let hovered = match self.hover.current() {
+                Some(Target::MenuItem(index)) => Some(index),
+                _ => None,
+            };
+            Menu::new(&menu.items, &self.palette).hovered(hovered).render(menu.area, cells);
+        }
+    }
+
+    fn render_sidebar(&self, cells: &mut Cells) {
+        let (Some(sidebar), Some(area), Some(tree)) =
+            (self.sidebar.as_ref(), self.sidebar_area(), self.tree_area())
+        else {
+            return;
+        };
+        let title = sidebar.tree.root().file_name().map_or_else(
+            || sidebar.tree.root().display().to_string(),
+            |name| name.to_string_lossy().into_owned(),
+        );
+        let (hovered, button) = match self.hover.current() {
+            Some(Target::TreeRow(row)) => (Some(row), None),
+            Some(Target::TreeButton(button)) => (None, Some(button)),
+            _ => (None, None),
+        };
+        TreeView::new(&title, sidebar.tree.rows(), &self.palette)
+            .scrolled_to(sidebar.scroll)
+            .selected(sidebar.selected)
+            .hovered(hovered)
+            .hovered_button(button)
+            .drop_target(sidebar.drag.and_then(|drag| drag.target))
+            .showing_ignored(sidebar.tree.show_ignored())
+            .focused(self.focus == Focus::Sidebar)
+            .render(tree, cells);
+
+        // The divider, which is also the handle for resizing.
+        let edge = area.right().saturating_sub(1);
+        let style = if sidebar.resizing || self.hover.current() == Some(Target::SidebarEdge) {
+            self.palette.fg(Role::LineStrong)
+        } else {
+            self.palette.fg(Role::Line)
+        };
+        for y in area.top()..area.bottom() {
+            cells[(edge, y)].set_char('│').set_style(style);
+        }
     }
 
     fn render_status(&self, area: Rect, cells: &mut Cells) {
+        if let Some(prompt) = &self.prompt {
+            self.render_prompt(prompt, area, cells);
+            return;
+        }
         let style = if self.shown_message().is_some() || !self.chords.pending().is_empty() {
             self.palette.on(Role::Accent, Role::OnAccent)
         } else {
@@ -568,18 +859,81 @@ impl App {
             cells[(x, area.y)].set_char(' ').set_style(style);
         }
 
+        let parts = self.status_parts(area);
+        let button = |target: Target| {
+            if self.hover.current() == Some(target) {
+                self.palette.on(Role::Accent, Role::OnAccent)
+            } else {
+                self.palette.on(Role::Overlay, Role::Text)
+            }
+        };
+        if let Some(files) = parts.files {
+            let glyph = if self.sidebar_area().is_some() { " ◧ " } else { " ▯ " };
+            write_at(cells, files, files.x, glyph, button(Target::StatusFiles));
+        }
+
         let (left, right) = self.status();
-        write_at(cells, area, area.left(), &left, style);
+        write_at(cells, area, parts.text, &left, style);
+        if let Some(undo) = parts.undo {
+            write_at(cells, undo, undo.x, self.undo_label(), button(Target::StatusUndo));
+        }
 
         let width = u16::try_from(right.chars().count()).unwrap_or(0);
         // Dropped entirely rather than overlapping when the two halves would
         // collide on a narrow terminal.
+        let used = parts.undo.map_or_else(
+            || parts.text + u16::try_from(left.chars().count()).unwrap_or(0),
+            Rect::right,
+        );
         if let Some(start) = area.right().checked_sub(width + 1)
-            && start > area.left() + u16::try_from(left.chars().count()).unwrap_or(0)
+            && start > used
         {
             write_at(cells, area, start, &right, style);
         }
     }
+
+    fn render_prompt(&self, prompt: &prompt::Prompt, area: Rect, cells: &mut Cells) {
+        let style = self.palette.on(Role::Accent, Role::OnAccent);
+        for x in area.left()..area.right() {
+            cells[(x, area.y)].set_char(' ').set_style(style);
+        }
+        let text = prompt.text();
+        write_at(cells, area, area.x, &text, style);
+        // The field's caret, just after what has been typed.
+        if prompt.field.is_some() {
+            let x = area.x
+                + u16::try_from(unicode_width::UnicodeWidthStr::width(text.as_str())).unwrap_or(0);
+            if x < area.right() {
+                cells[(x, area.y)]
+                    .set_char(' ')
+                    .set_style(self.palette.on(Role::Ground, Role::Text));
+            }
+        }
+        for (index, (label, _)) in prompt.buttons.iter().enumerate() {
+            let Some(button) =
+                prompt.button_areas(area).get(index).copied().filter(|b| b.width > 0)
+            else {
+                continue;
+            };
+            let style = if self.hover.current() == Some(Target::PromptButton(index)) {
+                self.palette.on(Role::Ground, Role::Accent)
+            } else {
+                self.palette.on(Role::Overlay, Role::Text)
+            };
+            write_at(cells, button, button.x, &format!(" {label} "), style);
+        }
+    }
+}
+
+/// Where the status line's parts go.
+#[derive(Debug, Clone, Copy)]
+struct StatusParts {
+    /// The file-tree toggle, when a folder is open.
+    files: Option<Rect>,
+    /// The Undo button after a file operation.
+    undo: Option<Rect>,
+    /// Where the text starts.
+    text: u16,
 }
 
 /// A terminal keystroke as a key the keymap understands.

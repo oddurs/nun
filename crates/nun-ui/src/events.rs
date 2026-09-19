@@ -27,6 +27,15 @@ pub enum Event {
     Focus(bool),
     /// A signal was delivered.
     Signal(Signal),
+    /// A filesystem job the editor asked for is done.
+    Workspace(nun_workspace::Done),
+    /// Something changed inside a watched directory, or watching one failed.
+    Files {
+        /// The directory whose contents changed.
+        dir: std::path::PathBuf,
+        /// Why the directory could not be watched, when that is the news.
+        error: Option<String>,
+    },
     /// The terminal closed, or reading from it failed.
     Closed,
 }

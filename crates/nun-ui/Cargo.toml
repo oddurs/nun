@@ -15,6 +15,7 @@ workspace = true
 crossterm = "0.29.0"
 nun-core = { version = "0.1.0", path = "../nun-core" }
 nun-theme = { version = "0.1.0", path = "../nun-theme" }
+nun-workspace = { version = "0.1.0", path = "../nun-workspace" }
 ratatui = "0.30.2"
 signal-hook = "0.4.4"
 unicode-segmentation = "1.13.3"

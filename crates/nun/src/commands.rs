@@ -28,11 +28,35 @@ pub enum Command {
     SelectAll,
     /// Leave, asking first when something is unsaved.
     Quit,
+    /// Show the file tree, focus it, or hide it.
+    ToggleSidebar,
+    /// Create a file in the selected folder.
+    NewFile,
+    /// Create a folder in the selected folder.
+    NewFolder,
+    /// Rename the selected file or folder.
+    Rename,
+    /// Move the selected file or folder to the trash, undoably.
+    Delete,
+    /// Show or hide files the ignore rules leave out.
+    ToggleIgnored,
 }
 
 impl Command {
     /// Every command, in the order `nun keys` lists them.
-    pub const ALL: &[Self] = &[Self::Save, Self::Undo, Self::Redo, Self::SelectAll, Self::Quit];
+    pub const ALL: &[Self] = &[
+        Self::Save,
+        Self::Undo,
+        Self::Redo,
+        Self::SelectAll,
+        Self::Quit,
+        Self::ToggleSidebar,
+        Self::NewFile,
+        Self::NewFolder,
+        Self::Rename,
+        Self::Delete,
+        Self::ToggleIgnored,
+    ];
 
     /// The name used in `[keys]` in `nun.toml`.
     #[must_use]
@@ -43,6 +67,12 @@ impl Command {
             Self::Redo => "edit.redo",
             Self::SelectAll => "edit.select_all",
             Self::Quit => "app.quit",
+            Self::ToggleSidebar => "view.toggle_sidebar",
+            Self::NewFile => "files.new_file",
+            Self::NewFolder => "files.new_folder",
+            Self::Rename => "files.rename",
+            Self::Delete => "files.delete",
+            Self::ToggleIgnored => "files.toggle_ignored",
         }
     }
 
@@ -55,6 +85,12 @@ impl Command {
             Self::Redo => "Redo",
             Self::SelectAll => "Select all",
             Self::Quit => "Quit",
+            Self::ToggleSidebar => "Toggle the file tree",
+            Self::NewFile => "New file",
+            Self::NewFolder => "New folder",
+            Self::Rename => "Rename",
+            Self::Delete => "Delete",
+            Self::ToggleIgnored => "Show or hide ignored files",
         }
     }
 
@@ -82,6 +118,14 @@ const BASIC: &[(&str, Command)] = &[
     ("ctrl+a", Command::SelectAll),
     ("ctrl+q", Command::Quit),
     ("ctrl+w", Command::Quit),
+    ("ctrl+b", Command::ToggleSidebar),
+    // File operations are chords on Ctrl+K rather than Alt bindings: on a Mac,
+    // Option types characters unless the terminal is set to send it as Meta.
+    ("ctrl+k n", Command::NewFile),
+    ("ctrl+k shift+n", Command::NewFolder),
+    ("f2", Command::Rename),
+    ("ctrl+k delete", Command::Delete),
+    ("ctrl+k i", Command::ToggleIgnored),
 ];
 
 /// Bindings that need the Kitty keyboard protocol, added over [`BASIC`].
@@ -95,6 +139,7 @@ const FULL: &[(&str, Command)] = &[
     ("cmd+a", Command::SelectAll),
     ("cmd+q", Command::Quit),
     ("cmd+w", Command::Quit),
+    ("cmd+b", Command::ToggleSidebar),
 ];
 
 /// The default bindings for `set`.

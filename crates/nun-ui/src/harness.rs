@@ -54,18 +54,31 @@ impl Harness {
     }
 
     /// The visible text, one line per row, trailing spaces trimmed.
+    ///
+    /// A double-width character covers the cell after it, which the terminal
+    /// never draws on its own; it is skipped here too, so `日本` reads as
+    /// `日本` and not with a space inside each character.
     #[must_use]
     pub fn to_text(&self) -> String {
         let cells = self.cells();
         let area = cells.area();
         (0..area.height)
             .map(|y| {
-                let row: String =
-                    (0..area.width).map(|x| cells[(x, y)].symbol().to_string()).collect();
+                let mut row = String::new();
+                for x in visible_columns(cells, area.width, y) {
+                    row.push_str(cells[(x, y)].symbol());
+                }
                 row.trim_end().to_string()
             })
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    /// The cells a terminal would actually draw on row `y`: every column,
+    /// except those covered by the double-width character before them.
+    #[must_use]
+    pub fn visible_cells(&self, y: u16) -> Vec<u16> {
+        visible_columns(self.cells(), self.area().width, y)
     }
 
     /// The text with a parallel grid of one-character style keys beneath it.
@@ -110,6 +123,18 @@ impl Harness {
     pub fn snapshot(&self) -> Cells {
         self.cells().clone()
     }
+}
+
+fn visible_columns(cells: &Cells, width: u16, y: u16) -> Vec<u16> {
+    use unicode_width::UnicodeWidthStr;
+    let mut columns = Vec::new();
+    let mut x = 0;
+    while x < width {
+        columns.push(x);
+        let step = u16::try_from(cells[(x, y)].symbol().width().max(1)).unwrap_or(1);
+        x = x.saturating_add(step);
+    }
+    columns
 }
 
 /// Rows that differ between two frames.

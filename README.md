@@ -12,10 +12,12 @@ will mostly never open.
 Early. The editor is being built one milestone at a time; the roadmap lives in
 [`cairn/`](cairn/) and is the source of truth.
 
-What works today — milestone 1, "buffer and screen":
+What works today — milestone 1 and most of milestone 2, "mouse and shell":
 
 ```sh
 nun <file>         # open it, edit it, save it
+nun <folder>       # open it with the file tree beside it
+nun keys           # every command and the keys bound to it
 nun config         # print the effective configuration and where each value came from
 nun theme dump     # probe this terminal and print the derived ramp as TOML
 ```
@@ -64,9 +66,18 @@ A bad value names the line and falls back rather than taking the editor down,
 and an unknown key is reported rather than silently ignored. Run `nun config` to
 see what actually took effect.
 
-Not there yet: `nun <directory>`, the sidebar, tabs, splits, the command
-palette, syntax highlighting, search, language servers and git. Those are
-milestones 2 to 5.
+The file tree sits beside the editor. Click a file to open it, click a folder
+to unfold it, drag a file onto a folder to move it there. The header's buttons
+make a file or a folder, and show the files your ignore rules leave out. A
+right-click offers rename and delete, and every one of those can be undone
+from the message it leaves behind, delete included — deleted files go to
+nun's own trash, not to nowhere. Anything another program changes on disk
+shows up without a refresh. `Ctrl+B` shows and hides it, and so does the
+button at the left of the status line.
+
+Not there yet: tabs, splits, the command palette, syntax highlighting, search,
+language servers and git. Those are the rest of milestone 2 and milestones 3
+to 5.
 
 Do not install this yet.
 

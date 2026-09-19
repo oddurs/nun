@@ -5,7 +5,7 @@ mod commands;
 mod terminal;
 
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use app::{App, Outcome};
@@ -56,7 +56,11 @@ fn edit(path: &Path) -> io::Result<()> {
     let (ramp, role_problems) = build_ramp(&startup.palette, &settings);
     let palette = Palette::new(ramp);
 
-    let (mut buffer, report) = open(path)?;
+    // A folder opens the file tree with an empty buffer beside it; a file
+    // opens the file, with the tree rooted at the folder it is in.
+    let folder = path.is_dir();
+    let (mut buffer, report) =
+        if folder { (Buffer::new(), LoadReport::default()) } else { open(path)? };
     buffer.set_tab_width(settings.config.tab_width);
 
     let set = key_set(&settings, startup.kitty_keyboard);
@@ -82,6 +86,27 @@ fn edit(path: &Path) -> io::Result<()> {
         io::Error::new(error.kind(), format!("nun needs an interactive terminal ({error})"))
     })?;
     let events = Events::start()?;
+
+    // Everything the file tree does happens off this thread and comes back
+    // through the same channel as the keyboard, so the main thread stays the
+    // only thing that touches the tree.
+    let sender = events.sender();
+    app.open_folder(
+        workspace_root(path, folder),
+        nun_workspace::trash_or_temp(),
+        folder,
+        Box::new(move |done| {
+            let _ = sender.send(nun_ui::Event::Workspace(done));
+        }),
+    );
+
+    let sender = events.sender();
+    match nun_workspace::Watcher::new(Box::new(move |change| {
+        let _ = sender.send(nun_ui::Event::Files { dir: change.dir, error: change.watch_error });
+    })) {
+        Ok(watcher) => app.attach_watcher(watcher),
+        Err(error) => app.warn(format!("The file tree will not update on its own: {error}")),
+    }
 
     app.set_viewport(screen.area()?);
     screen.draw(AppView(&app))?;
@@ -124,19 +149,14 @@ fn edit(path: &Path) -> io::Result<()> {
 
 /// Open the path, or say clearly why not.
 ///
-/// Every failure names the path. A directory gets a real answer rather than an
-/// errno, because `nun .` is the first thing anyone types.
-fn open(path: &Path) -> io::Result<(Buffer, LoadReport)> {
+/// Every failure names the path.
+pub(crate) fn open(path: &Path) -> io::Result<(Buffer, LoadReport)> {
     let shown = path.display();
 
     if path.is_dir() {
         return Err(io::Error::new(
             io::ErrorKind::IsADirectory,
-            format!(
-                "{shown} is a directory. nun opens one file at a time for now — \
-                 the file tree and the project palette are milestone 2.\n\
-                 Try `nun {shown}/<file>`."
-            ),
+            format!("{shown} is a directory, not a file."),
         ));
     }
 
@@ -184,6 +204,22 @@ fn build_ramp(probe: &Probe, settings: &Loaded) -> (Ramp, Vec<String>) {
         }
     }
     (ramp, problems)
+}
+
+/// The folder the file tree is rooted at.
+///
+/// A folder argument is its own root. A file is shown in the folder it is in,
+/// which is where the rest of its project is.
+fn workspace_root(path: &Path, folder: bool) -> PathBuf {
+    let root = if folder {
+        path.to_path_buf()
+    } else {
+        let parent = path.parent().filter(|parent| !parent.as_os_str().is_empty());
+        parent.map_or_else(|| PathBuf::from("."), Path::to_path_buf)
+    };
+    // Spelled out in full, so the sidebar is headed by the folder's name
+    // rather than by `.`, and so watching and revealing compare like for like.
+    root.canonicalize().unwrap_or(root)
 }
 
 /// Which key set to use: the full one only when the config allows it and the
@@ -287,7 +323,7 @@ fn usage() -> String {
     format!(
         "nun {VERSION}\n\
          A mouse-first terminal code editor.\n\n\
-         Usage: nun <file>\n       nun config\n       nun keys\n       nun theme dump\n\n\
+         Usage: nun <file>\n       nun <folder>\n       nun config\n       nun keys\n       nun theme dump\n\n\
          Options:\n  \
            -h, --help     Print help\n  \
            -V, --version  Print version\n\n\
@@ -324,13 +360,30 @@ mod tests {
     }
 
     #[test]
-    fn opening_a_directory_explains_rather_than_reporting_an_errno() {
+    fn opening_a_directory_as_a_file_says_so_without_an_errno() {
         let error = open(Path::new(".")).unwrap_err();
         let message = error.to_string();
         assert!(message.contains("is a directory"), "{message}");
-        assert!(message.contains("milestone 2"), "it must say why: {message}");
-        assert!(message.contains("Try `nun"), "and what to do instead: {message}");
         assert!(!message.contains("os error"), "an errno is not an explanation: {message}");
+    }
+
+    #[test]
+    fn a_file_roots_the_tree_at_the_folder_it_is_in() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().canonicalize().unwrap();
+        std::fs::create_dir(real.join("src")).unwrap();
+        std::fs::write(real.join("src/main.rs"), "").unwrap();
+
+        assert_eq!(workspace_root(&real.join("src/main.rs"), false), real.join("src"));
+        assert_eq!(workspace_root(&real, true), real);
+        assert_eq!(
+            workspace_root(Path::new("notes.txt"), false),
+            Path::new(".").canonicalize().unwrap(),
+            "a bare file name means the folder nun was started in"
+        );
+        // A folder that is not there keeps the name it was given, so the
+        // error the tree shows names what the user typed.
+        assert_eq!(workspace_root(Path::new("nowhere"), true), PathBuf::from("nowhere"));
     }
 
     #[test]
