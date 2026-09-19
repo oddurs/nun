@@ -67,16 +67,16 @@ impl App {
         let alt = mouse.modifiers.contains(KeyModifiers::ALT);
         let count = self.clicks.press(column, row, now);
         let at = self.pointer_position(column, row);
-        let primary = self.buffer.selections().primary();
+        let primary = self.doc().buffer.selections().primary();
 
         let mode = match target {
             Target::Gutter => {
-                let line = self.buffer.line_of(at);
-                let (from, to) = self.buffer.line_range(line);
+                let line = self.doc().buffer.line_of(at);
+                let (from, to) = self.doc().buffer.line_range(line);
                 if shift {
                     // Extend by whole lines from the line the anchor is on.
                     let (anchor_from, anchor_to) =
-                        self.buffer.line_range(self.buffer.line_of(primary.anchor));
+                        self.doc().buffer.line_range(self.doc().buffer.line_of(primary.anchor));
                     Mode::Line { from: anchor_from, to: anchor_to }
                 } else {
                     Mode::Line { from, to }
@@ -85,7 +85,7 @@ impl App {
             // The selections already there stay; the drag adds to them.
             Target::Text if alt => Mode::Column {
                 anchor: self.pointer_column(column, row),
-                keep: self.buffer.selections().ranges().to_vec(),
+                keep: self.doc().buffer.selections().ranges().to_vec(),
             },
             Target::Text if shift => Mode::Char { anchor: primary.anchor },
             Target::Text
@@ -104,11 +104,11 @@ impl App {
             }
             Target::Text => match count {
                 2 => {
-                    let (from, to) = self.buffer.word_range(at);
+                    let (from, to) = self.doc().buffer.word_range(at);
                     Mode::Word { from, to }
                 }
                 3 => {
-                    let (from, to) = self.buffer.line_range(self.buffer.line_of(at));
+                    let (from, to) = self.doc().buffer.line_range(self.doc().buffer.line_of(at));
                     Mode::Line { from, to }
                 }
                 _ => Mode::Char { anchor: at },
@@ -130,17 +130,18 @@ impl App {
 
         match &mut drag.mode {
             Mode::Char { anchor } => {
-                self.buffer.set_selections(Selections::single(Range::new(*anchor, at)));
+                self.doc_mut().buffer.set_selections(Selections::single(Range::new(*anchor, at)));
             }
             Mode::Word { from, to } => {
-                let (word_from, word_to) = self.buffer.word_range(at);
+                let (word_from, word_to) = self.doc().buffer.word_range(at);
                 let range = extend_by_unit(*from, *to, word_from, word_to);
-                self.buffer.set_selections(Selections::single(range));
+                self.doc_mut().buffer.set_selections(Selections::single(range));
             }
             Mode::Line { from, to } => {
-                let (line_from, line_to) = self.buffer.line_range(self.buffer.line_of(at));
+                let (line_from, line_to) =
+                    self.doc().buffer.line_range(self.doc().buffer.line_of(at));
                 let range = extend_by_unit(*from, *to, line_from, line_to);
-                self.buffer.set_selections(Selections::single(range));
+                self.doc_mut().buffer.set_selections(Selections::single(range));
             }
             Mode::Column { anchor, keep } => {
                 let head = self.pointer_column(column, row);
@@ -154,9 +155,9 @@ impl App {
                 } else {
                     // Once it moves it is a column selection, which stands on
                     // its own, as it does in every editor that has one.
-                    self.buffer.column_selection(*anchor, head)
+                    self.doc().buffer.column_selection(*anchor, head)
                 };
-                self.buffer.set_selections(selections);
+                self.doc_mut().buffer.set_selections(selections);
             }
             Mode::Move { press, drop, .. } => {
                 if drop.is_some() || (column, row) != *press {
@@ -179,14 +180,14 @@ impl App {
             match drop {
                 Some(dest) => {
                     let copy = mouse.modifiers.contains(KeyModifiers::CONTROL);
-                    self.buffer.move_text(from, to, dest, copy);
+                    self.doc_mut().buffer.move_text(from, to, dest, copy);
                 }
                 // Pressed on the selection and let go without moving: an
                 // ordinary click, which places the caret there.
-                None => self.buffer.set_selections(Selections::single(Range::caret(at))),
+                None => self.doc_mut().buffer.set_selections(Selections::single(Range::caret(at))),
             }
         }
-        self.buffer.commit_undo_group();
+        self.doc_mut().buffer.commit_undo_group();
         self.follow_caret();
         Outcome::Redraw
     }
@@ -246,9 +247,9 @@ impl App {
         }
 
         if scroll.up {
-            self.scroll -= 1;
+            self.doc_mut().scroll -= 1;
         } else {
-            self.scroll += 1;
+            self.doc_mut().scroll += 1;
         }
         self.autoscroll = Some(Autoscroll { next: now + scroll.interval, ..scroll });
         if !self.can_scroll(scroll.up) {
@@ -272,13 +273,13 @@ impl App {
 
     /// Whether the view can scroll one more line in that direction.
     fn can_scroll(&self, up: bool) -> bool {
-        if up { self.scroll > 0 } else { self.scroll < self.max_scroll() }
+        if up { self.doc().scroll > 0 } else { self.doc().scroll < self.max_scroll() }
     }
 
     /// The furthest down autoscroll goes: the last line at the bottom of the
     /// view, not the top — there is nothing below it to select.
     fn max_scroll(&self) -> usize {
-        self.buffer.len_lines().saturating_sub(self.text_height())
+        self.doc().buffer.len_lines().saturating_sub(self.text_height())
     }
 
     /// The buffer position under the pointer, clamped into the text: above
@@ -289,7 +290,7 @@ impl App {
         let gutter = self.gutter_width();
         let column = column.max(text.left() + gutter);
         let row = row.clamp(text.top(), text.bottom().saturating_sub(1).max(text.top()));
-        self.position_at(column, row).unwrap_or_else(|| self.buffer.len_chars())
+        self.position_at(column, row).unwrap_or_else(|| self.doc().buffer.len_chars())
     }
 
     /// The `(line, display column)` under the pointer, for column selection.
@@ -299,8 +300,8 @@ impl App {
         let (text, _) = self.areas();
         let gutter = self.gutter_width();
         let row = row.clamp(text.top(), text.bottom().saturating_sub(1).max(text.top()));
-        let last = self.buffer.len_lines().saturating_sub(1);
-        let line = (self.scroll + usize::from(row - text.top())).min(last);
+        let last = self.doc().buffer.len_lines().saturating_sub(1);
+        let line = (self.doc().scroll + usize::from(row - text.top())).min(last);
         let column = usize::from(column.saturating_sub(text.left() + gutter));
         (line, column)
     }

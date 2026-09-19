@@ -17,6 +17,7 @@ mod menu;
 mod screen;
 mod signals;
 mod style;
+mod tabs;
 mod tree;
 mod view;
 
@@ -29,5 +30,6 @@ pub use menu::{Menu, MenuItem};
 pub use screen::Screen;
 pub use signals::{Signal, suspend_self, watch as watch_signals};
 pub use style::Palette;
+pub use tabs::{Tab, TabStrip};
 pub use tree::{TreeButton, TreeView};
 pub use view::EditorView;

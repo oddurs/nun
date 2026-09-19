@@ -75,7 +75,12 @@ nun's own trash, not to nowhere. Anything another program changes on disk
 shows up without a refresh. `Ctrl+B` shows and hides it, and so does the
 button at the left of the status line.
 
-Not there yet: tabs, splits, the command palette, syntax highlighting, search,
+Open files are tabs. Click one to go to it, drag one along the strip to
+reorder it, close it with its cross or the middle button, and closing one with
+unsaved changes asks first. Two files with the same name say which folder
+they are in.
+
+Not there yet: splits, the command palette, syntax highlighting, search,
 language servers and git. Those are the rest of milestone 2 and milestones 3
 to 5.
 

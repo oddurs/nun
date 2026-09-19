@@ -580,7 +580,8 @@ impl App {
     fn op_target(&self) -> Option<PathBuf> {
         let sidebar = self.sidebar.as_ref()?;
         sidebar.selected_path().or_else(|| {
-            self.buffer
+            self.doc()
+                .buffer
                 .path()
                 .filter(|path| path.starts_with(sidebar.tree.root()))
                 .map(Path::to_path_buf)
@@ -627,11 +628,11 @@ impl App {
         | nun_workspace::Operation::Move { from, to } = &change.operation
         {
             let (from, to) = if change.undone { (to, from) } else { (from, to) };
-            if let Some(open) = self.buffer.path().map(Path::to_path_buf)
+            if let Some(open) = self.doc().buffer.path().map(Path::to_path_buf)
                 && let Ok(rest) = open.strip_prefix(from)
             {
                 let moved = if rest.as_os_str().is_empty() { to.clone() } else { to.join(rest) };
-                self.buffer.set_path(moved);
+                self.doc_mut().buffer.set_path(moved);
             }
         }
 
@@ -663,46 +664,20 @@ impl App {
 
     // ── opening files ───────────────────────────────────────────────────────
 
-    /// Open `path` in the editor, asking first if the open buffer has
-    /// unsaved changes.
+    /// Open `path` in the editor.
     pub(super) fn open_file(&mut self, path: &Path) {
-        if self.buffer.path() == Some(path) {
-            return;
-        }
-        if self.buffer.is_modified() {
-            let name = super::display_path(self.buffer.path());
-            self.prompt =
-                Some(Prompt::unsaved(Purpose::UnsavedThenOpen(path.to_path_buf()), &name));
-            return;
-        }
-        self.load(path);
+        self.open_in_tab(path);
     }
 
-    /// Replace the buffer with the file at `path`.
-    pub(super) fn load(&mut self, path: &Path) {
-        match crate::open(path) {
-            Ok((mut buffer, report)) => {
-                buffer.set_tab_width(self.buffer.tab_width());
-                self.buffer = buffer;
-                self.scroll = 0;
-                self.end_drag();
-                if report.lossy {
-                    self.message = Some(
-                        "This file is not valid UTF-8. Saving it would destroy the original bytes."
-                            .into(),
-                    );
-                }
-                let visible = self.tree_area().map_or(0, TreeView::visible_rows);
-                if let Some(sidebar) = self.sidebar.as_mut() {
-                    sidebar.selected = sidebar.tree.reveal(path);
-                    sidebar.reveal_after = sidebar.selected.is_none().then(|| path.to_path_buf());
-                    sidebar.request_listings();
-                    sidebar.sync_watches();
-                    sidebar.follow_selection(visible);
-                }
-            }
-            Err(error) => self.message = Some(error.to_string()),
-        }
+    /// Select `path` in the tree, unfolding what is needed to show it.
+    pub(super) fn reveal_in_tree(&mut self, path: &Path) {
+        let visible = self.tree_area().map_or(0, TreeView::visible_rows);
+        let Some(sidebar) = self.sidebar.as_mut() else { return };
+        sidebar.selected = sidebar.tree.reveal(path);
+        sidebar.reveal_after = sidebar.selected.is_none().then(|| path.to_path_buf());
+        sidebar.request_listings();
+        sidebar.sync_watches();
+        sidebar.follow_selection(visible);
     }
 
     /// Attach a folder, for `nun <folder>` and for opening a file inside one.
@@ -714,7 +689,7 @@ impl App {
         report: Box<dyn Fn(Done) + Send + 'static>,
     ) {
         let mut sidebar = Sidebar::new(root, trash, visible, report);
-        sidebar.reveal_after = self.buffer.path().map(Path::to_path_buf);
+        sidebar.reveal_after = self.doc().buffer.path().map(Path::to_path_buf);
         sidebar.request_listings();
         if visible {
             // Nothing is selected to begin with, so a new file goes to the
@@ -1123,56 +1098,48 @@ mod tests {
         assert!(!dir.path().join("src/src").exists());
     }
 
-    // ── unsaved changes ─────────────────────────────────────────────────────
+    // ── tabs ────────────────────────────────────────────────────────────────
 
     #[test]
-    fn opening_another_file_with_unsaved_changes_asks_first() {
+    fn opening_another_file_keeps_the_first_with_its_changes() {
         let dir = project();
         let mut t = Tester::new(&dir);
-        let row = t.row_of("README.md");
-        t.click(3, row);
+        let readme = t.row_of("README.md");
+        t.click(3, readme);
         t.key(KeyCode::Char('x'));
-        assert!(t.app.buffer().is_modified());
 
-        let row = t.row_of("TODO.md");
-        t.click(3, row);
-        assert!(t.app.prompt.is_some(), "it asks rather than throwing the changes away");
+        let todo = t.row_of("TODO.md");
+        t.click(3, todo);
+        assert!(t.app.prompt.is_none(), "nothing to ask: the first file is still open");
+        assert_eq!(t.app.open_paths().len(), 2);
+        assert_eq!(t.app.buffer().path(), Some(dir.path().join("TODO.md").as_path()));
+
+        // Back to the first, changes and all.
+        t.run(Command::PreviousTab);
+        assert_eq!(t.app.buffer().text().to_string(), "x# hi\n");
+    }
+
+    #[test]
+    fn clicking_a_file_that_is_already_open_goes_to_its_tab() {
+        let dir = project();
+        let mut t = Tester::new(&dir);
+        let readme = t.row_of("README.md");
+        let todo = t.row_of("TODO.md");
+        t.click(3, readme);
+        t.click(3, todo);
+        t.click(3, readme);
+
+        assert_eq!(t.app.open_paths().len(), 2, "not opened twice");
         assert_eq!(t.app.buffer().path(), Some(dir.path().join("README.md").as_path()));
     }
 
     #[test]
-    fn saving_from_the_prompt_then_opens_the_other_file() {
+    fn the_first_file_takes_the_place_of_the_empty_buffer() {
         let dir = project();
         let mut t = Tester::new(&dir);
-        let row = t.row_of("README.md");
-        t.click(3, row);
-        t.key(KeyCode::Char('x'));
-
-        let row = t.row_of("TODO.md");
-        t.click(3, row);
-        // Answer with the keyboard: Enter is the first button, Save.
-        t.key(KeyCode::Enter);
-        assert_eq!(fs::read_to_string(dir.path().join("README.md")).unwrap(), "x# hi\n");
-    }
-
-    #[test]
-    fn discarding_the_changes_opens_the_other_file() {
-        let dir = project();
-        let mut t = Tester::new(&dir);
-        let todo_row = t.row_of("TODO.md");
-        let row = t.row_of("README.md");
-        t.click(3, row);
-        t.key(KeyCode::Char('x'));
-        t.click(3, todo_row);
-
-        let prompt = t.app.prompt.as_ref().unwrap().clone();
-        let discard = prompt.button_areas(t.app.areas().1)[1];
-        t.click(discard.x + 1, discard.y);
-        assert_eq!(
-            fs::read_to_string(dir.path().join("README.md")).unwrap(),
-            "# hi\n",
-            "not saved"
-        );
+        let readme = t.row_of("README.md");
+        t.click(3, readme);
+        assert_eq!(t.app.open_paths().len(), 1, "no empty tab left beside it");
     }
 
     // ── the keyboard ────────────────────────────────────────────────────────

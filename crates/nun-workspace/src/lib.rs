@@ -25,12 +25,14 @@
 //! directories.
 
 pub mod jobs;
+pub mod labels;
 pub mod ops;
 mod order;
 pub mod tree;
 pub mod watch;
 
 pub use jobs::{Done, Job, Jobs, trash_or_temp};
+pub use labels::{UNNAMED, tab_labels};
 pub use ops::{Change, FsHistory, OpError, Operation, default_trash_dir};
 pub use order::compare_names;
 pub use tree::{Entry, FileTree, Kind, Row, list_dir};
