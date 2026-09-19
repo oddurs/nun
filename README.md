@@ -29,9 +29,13 @@ of the mouse is milestone 2.
 | | |
 |---|---|
 | `Ctrl+S` | Save |
-| `Ctrl+Z` / `Ctrl+Shift+Z` | Undo / redo |
+| `Ctrl+Z` / `Ctrl+Y` | Undo / redo (`Ctrl+Shift+Z` too, where the terminal can report it) |
 | `Ctrl+A` | Select all |
 | `Ctrl+Q` | Quit |
+
+`nun keys` lists every binding, including the `Cmd` set a terminal with the
+Kitty keyboard protocol adds; the same list is in [`docs/keys.md`](docs/keys.md).
+Add your own under `[keys]` in `nun.toml`.
 
 Configuration is optional and lives in `~/.config/nun/nun.toml`. Zero config is
 a supported configuration and the one most people should stay on:

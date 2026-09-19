@@ -1,6 +1,7 @@
 //! The `nun` binary.
 
 mod app;
+mod commands;
 mod terminal;
 
 use std::io;
@@ -8,6 +9,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use app::{App, Outcome};
+use commands::KeySet;
 use nun_config::{Loaded, Polarity};
 use nun_core::{Buffer, LoadReport};
 use nun_theme::{Probe, Ramp, Rgb, Role, Source, derive, derive_with_polarity};
@@ -25,6 +27,7 @@ fn main() {
         Some("--version" | "-V") => println!("nun {VERSION}"),
         Some("theme") => print!("{}", theme(args.get(1).map(String::as_str))),
         Some("config") => print!("{}", nun_config::load().describe()),
+        Some("keys") => print!("{}", commands::reference()),
         Some("--help" | "-h") | None => print!("{}", usage()),
         Some(argument) if argument.starts_with('-') => {
             eprint!("nun: unknown option `{argument}`\n\n{}", usage());
@@ -43,28 +46,34 @@ fn main() {
 fn edit(path: &Path) -> io::Result<()> {
     let settings = nun_config::load();
 
+    // Installed before anything touches the terminal, the probe included, so a
+    // panic anywhere after this point still puts it back.
+    install_panic_hook();
+
     // Probed before the input reader starts: both want raw bytes from stdin,
-    // and only one of them can have them. A keystroke landing inside the probe
-    // window is dropped, which is a real if small cost of doing it this way.
-    let probe = terminal::probe_palette(terminal::PROBE_TIMEOUT);
-    let (ramp, role_problems) = build_ramp(&probe, &settings);
+    // and only one of them can have them.
+    let startup = terminal::probe(terminal::PROBE_TIMEOUT);
+    let (ramp, role_problems) = build_ramp(&startup.palette, &settings);
     let palette = Palette::new(ramp);
 
     let (mut buffer, report) = open(path)?;
     buffer.set_tab_width(settings.config.tab_width);
 
-    let mut app = App::new(buffer, palette);
-    // Only the first is shown: the status line holds one message, and the rest
-    // are visible through `nun config`.
-    if let Some(warning) = warnings(report, &settings, &role_problems).into_iter().next() {
+    let set = key_set(&settings, startup.kitty_keyboard);
+    let (keymap, key_problems) = commands::keymap(set, &settings.config.keys);
+    let problems = [role_problems, key_problems].concat();
+
+    let mut app = App::new(buffer, palette, keymap);
+    // Only the first is shown: the rest are visible through `nun config`, and a
+    // queue of config complaints would bury the editor under them.
+    if let Some(warning) = warnings(report, &settings, &problems).into_iter().next() {
         app.warn(warning);
     }
+    if let Some(notice) = key_set_notice(&settings, startup.kitty_keyboard) {
+        app.warn(notice);
+    }
 
-    // Installed before the screen is entered, so a panic anywhere after this
-    // point still puts the terminal back.
-    install_panic_hook();
-
-    let mut screen = Screen::open(capabilities(&settings)).map_err(|error| {
+    let mut screen = Screen::open(capabilities(&settings, set)).map_err(|error| {
         // The usual cause is no tty at all — piped input, or a CI runner — and
         // the platform's own message for that is "Device not configured".
         io::Error::new(error.kind(), format!("nun needs an interactive terminal ({error})"))
@@ -84,7 +93,7 @@ fn edit(path: &Path) -> io::Result<()> {
         // Take the whole burst before drawing, so holding a key down costs one
         // frame rather than one frame per repeat.
         for event in events.drain() {
-            outcome = combine(outcome, app.handle(event));
+            outcome = outcome.and(app.handle(event));
         }
 
         match outcome {
@@ -174,12 +183,43 @@ fn build_ramp(probe: &Probe, settings: &Loaded) -> (Ramp, Vec<String>) {
     (ramp, problems)
 }
 
+/// Which key set to use: the full one only when the config allows it and the
+/// terminal said it speaks the protocol.
+fn key_set(settings: &Loaded, kitty_keyboard: Option<bool>) -> KeySet {
+    if settings.config.keyboard_enhancement && kitty_keyboard == Some(true) {
+        KeySet::Full
+    } else {
+        KeySet::Basic
+    }
+}
+
+/// What to say, once, about falling back to the basic key set.
+///
+/// It says what was actually found out: a terminal that said no, and one that
+/// did not answer in time, are different problems with different fixes.
+/// Nothing when the user turned the protocol off themselves: they know.
+fn key_set_notice(settings: &Loaded, kitty_keyboard: Option<bool>) -> Option<String> {
+    if !settings.config.keyboard_enhancement {
+        return None;
+    }
+    let why = match kitty_keyboard {
+        Some(true) => return None,
+        Some(false) => "This terminal has no Kitty keyboard protocol",
+        None => "The terminal did not say whether it has the Kitty keyboard protocol",
+    };
+    Some(format!("{why}, so nun is using the basic key set. `nun keys` lists it (docs/keys.md)."))
+}
+
 /// Which terminal features to turn on.
-fn capabilities(settings: &Loaded) -> Capabilities {
+///
+/// The keyboard flags are pushed only when the terminal said it understands
+/// them. Pushing them anyway would be harmless on most terminals, but "most"
+/// is an assumption, and capabilities here are detected, never assumed.
+fn capabilities(settings: &Loaded, set: KeySet) -> Capabilities {
     Capabilities {
         alternate_screen: settings.config.alternate_screen,
         mouse: settings.config.mouse,
-        keyboard_enhancement: settings.config.keyboard_enhancement,
+        keyboard_enhancement: set == KeySet::Full,
         hide_cursor: true,
     }
 }
@@ -204,16 +244,6 @@ fn warnings(report: LoadReport, settings: &Loaded, role_problems: &[String]) -> 
     warnings
 }
 
-/// The strongest outcome of a burst wins.
-const fn combine(a: Outcome, b: Outcome) -> Outcome {
-    match (a, b) {
-        (Outcome::Quit, _) | (_, Outcome::Quit) => Outcome::Quit,
-        (Outcome::Suspend, _) | (_, Outcome::Suspend) => Outcome::Suspend,
-        (Outcome::Redraw, _) | (_, Outcome::Redraw) => Outcome::Redraw,
-        _ => Outcome::Continue,
-    }
-}
-
 /// Adapts the editor to ratatui's widget trait.
 struct AppView<'a>(&'a App);
 
@@ -227,14 +257,20 @@ impl Widget for AppView<'_> {
 fn theme(subcommand: Option<&str>) -> String {
     match subcommand {
         Some("dump") => {
-            let probe = terminal::probe_palette(terminal::PROBE_TIMEOUT);
+            let startup = terminal::probe(terminal::PROBE_TIMEOUT);
+            let probe = startup.palette;
+            let keyboard = match startup.kitty_keyboard {
+                Some(true) => "Kitty keyboard protocol: yes; the full key set is used",
+                Some(false) => "Kitty keyboard protocol: no; the basic key set is used",
+                None => "Kitty keyboard protocol: no answer in time; the basic key set is used",
+            };
             let source = match probe.source {
                 Source::Terminal => "probed from this terminal",
                 Source::ColorFgBg => "no reply; polarity taken from COLORFGBG",
                 Source::Builtin => "no reply; nun's built-in neutrals",
             };
             format!(
-                "# {source}\n# background {}  foreground {}\n{}",
+                "# {source}\n# {keyboard}\n# background {}  foreground {}\n{}",
                 probe.background.to_hex(),
                 probe.foreground.to_hex(),
                 derive(&probe).to_toml()
@@ -248,15 +284,17 @@ fn usage() -> String {
     format!(
         "nun {VERSION}\n\
          A mouse-first terminal code editor.\n\n\
-         Usage: nun <file>\n       nun config\n       nun theme dump\n\n\
+         Usage: nun <file>\n       nun config\n       nun keys\n       nun theme dump\n\n\
          Options:\n  \
            -h, --help     Print help\n  \
            -V, --version  Print version\n\n\
          Commands:\n  \
            config         Print the effective configuration and where it came from\n  \
+           keys           List every command and the keys bound to it\n  \
            theme dump     Probe this terminal and print the derived ramp as TOML\n\n\
          Keys:\n  \
-           Ctrl+S save   Ctrl+Z undo   Ctrl+Shift+Z redo   Ctrl+A select all   Ctrl+Q quit\n  \
+           Ctrl+S save   Ctrl+Z undo   Ctrl+Y redo   Ctrl+A select all   Ctrl+Q quit\n  \
+           `nun keys` lists them all, and the Cmd bindings a Kitty-protocol terminal adds.\n  \
            Click places the caret; the wheel scrolls.\n"
     )
 }
@@ -348,10 +386,46 @@ mod tests {
         settings.config.mouse = false;
         settings.config.keyboard_enhancement = false;
 
-        let capabilities = capabilities(&settings);
+        let capabilities = capabilities(&settings, key_set(&settings, Some(true)));
         assert!(!capabilities.mouse);
         assert!(!capabilities.keyboard_enhancement);
         assert!(capabilities.alternate_screen, "untouched settings keep their default");
+    }
+
+    #[test]
+    fn the_full_key_set_needs_the_terminal_and_the_config_to_agree() {
+        let settings = Loaded::defaults();
+        assert_eq!(key_set(&settings, Some(true)), KeySet::Full);
+        assert_eq!(key_set(&settings, Some(false)), KeySet::Basic);
+        assert_eq!(key_set(&settings, None), KeySet::Basic, "detected, never assumed");
+
+        let mut off = Loaded::defaults();
+        off.config.keyboard_enhancement = false;
+        assert_eq!(key_set(&off, Some(true)), KeySet::Basic, "the user turned it off");
+    }
+
+    #[test]
+    fn keyboard_flags_are_only_pushed_to_a_terminal_that_said_it_understands_them() {
+        let settings = Loaded::defaults();
+        assert!(capabilities(&settings, KeySet::Full).keyboard_enhancement);
+        assert!(!capabilities(&settings, KeySet::Basic).keyboard_enhancement);
+    }
+
+    #[test]
+    fn falling_back_is_announced_once_and_points_at_the_list() {
+        let settings = Loaded::defaults();
+        let notice = key_set_notice(&settings, Some(false)).unwrap();
+        assert!(notice.contains("has no Kitty keyboard protocol"), "{notice}");
+        assert!(notice.contains("basic key set"), "{notice}");
+        assert!(notice.contains("nun keys"), "the notice links to the degraded set: {notice}");
+        assert_eq!(key_set_notice(&settings, Some(true)), None);
+
+        let silent = key_set_notice(&settings, None).unwrap();
+        assert!(silent.contains("did not say"), "silence is not a no: {silent}");
+
+        let mut off = Loaded::defaults();
+        off.config.keyboard_enhancement = false;
+        assert_eq!(key_set_notice(&off, Some(false)), None, "they chose it; nothing to say");
     }
 
     #[test]
@@ -374,9 +448,9 @@ mod tests {
 
     #[test]
     fn the_strongest_outcome_of_a_burst_wins() {
-        assert_eq!(combine(Outcome::Continue, Outcome::Redraw), Outcome::Redraw);
-        assert_eq!(combine(Outcome::Redraw, Outcome::Quit), Outcome::Quit);
-        assert_eq!(combine(Outcome::Suspend, Outcome::Redraw), Outcome::Suspend);
-        assert_eq!(combine(Outcome::Continue, Outcome::Continue), Outcome::Continue);
+        assert_eq!(Outcome::Continue.and(Outcome::Redraw), Outcome::Redraw);
+        assert_eq!(Outcome::Redraw.and(Outcome::Quit), Outcome::Quit);
+        assert_eq!(Outcome::Suspend.and(Outcome::Redraw), Outcome::Suspend);
+        assert_eq!(Outcome::Continue.and(Outcome::Continue), Outcome::Continue);
     }
 }

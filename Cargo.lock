@@ -750,6 +750,7 @@ dependencies = [
  "nun-theme",
  "nun-ui",
  "ratatui",
+ "rustix",
  "tempfile",
  "unicode-segmentation",
  "unicode-width",

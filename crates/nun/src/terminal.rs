@@ -1,84 +1,109 @@
-//! The terminal side of the colour probe.
+//! The terminal side of the start-up probe.
 //!
-//! `nun-theme` is deliberately free of I/O: it says what to write and parses
-//! what comes back. This is the other half — raw mode, the write, the bounded
-//! wait, and putting the terminal back afterwards.
+//! `nun-theme` and `nun-input` are deliberately free of I/O: they say what to
+//! write and parse what comes back. This is the other half — raw mode, one
+//! write carrying every question, a bounded wait, and putting the terminal
+//! back afterwards.
 
-use std::io::{Read as _, Write as _};
-use std::sync::mpsc;
-use std::thread;
+use std::io::Write as _;
 use std::time::{Duration, Instant};
 
-use crossterm::terminal;
+use nun_input::{KEYBOARD_QUERY, KeyboardProbe};
 use nun_theme::{Probe, ProbeSession};
+use nun_ui::{Capabilities, CrosstermControl, TerminalGuard};
 
 /// How long to wait for a terminal that may never answer.
 ///
 /// Long enough for a local terminal to reply and short enough that a terminal
-/// which ignores OSC queries does not visibly delay start-up.
+/// which ignores the queries does not visibly delay start-up. Most never wait
+/// this long: the device-attributes reply closes the probe as soon as it lands.
 pub const PROBE_TIMEOUT: Duration = Duration::from_millis(120);
 
-/// Ask the terminal for its palette, falling back when it will not say.
+/// What the terminal said about itself.
+#[derive(Debug, Clone)]
+pub struct Startup {
+    /// Its palette, or the fallback where it would not say.
+    pub palette: Probe,
+    /// Whether it speaks the Kitty keyboard protocol: `Some(false)` when it
+    /// said no, `None` when it did not answer in time. Either way nun cannot
+    /// rely on keys only the protocol reports, but they are different things to
+    /// tell the user.
+    pub kitty_keyboard: Option<bool>,
+}
+
+/// Ask the terminal for its palette and its keyboard protocol in one round
+/// trip, falling back where it will not say.
 ///
-/// Fallback order matches the design: what the terminal answered, then
+/// Palette fallback order matches the design: what the terminal answered, then
 /// `COLORFGBG` for the polarity alone, then nun's built-in neutrals.
 ///
 /// This enters raw mode for the duration and restores it before returning,
 /// including on the error paths.
-pub fn probe_palette(timeout: Duration) -> Probe {
+pub fn probe(timeout: Duration) -> Startup {
     let fallback = fallback_probe();
+    let nothing = Startup { palette: fallback.clone(), kitty_keyboard: None };
 
+    // A probe needs a terminal on stdin to answer it; piped input has none.
+    if !rustix::termios::isatty(std::io::stdin()) {
+        return nothing;
+    }
     // Without raw mode the reply is line-buffered and echoed, so it would both
-    // arrive too late and be printed to the screen.
-    let Ok(()) = terminal::enable_raw_mode() else {
-        return fallback;
+    // arrive too late and be printed to the screen. The guard puts it back on
+    // every path out of here, a panic in a reply parser included.
+    let Ok(guard) = TerminalGuard::enter(CrosstermControl, Capabilities::none()) else {
+        return nothing;
     };
-    let probe = probe_in_raw_mode(timeout, &fallback);
-    let _ = terminal::disable_raw_mode();
-    probe
+    let startup = probe_in_raw_mode(timeout, &fallback);
+    drop(guard);
+    startup.unwrap_or(nothing)
 }
 
-fn probe_in_raw_mode(timeout: Duration, fallback: &Probe) -> Probe {
-    let mut session = ProbeSession::new();
+fn probe_in_raw_mode(timeout: Duration, fallback: &Probe) -> Option<Startup> {
+    let mut colours = ProbeSession::new();
+    let mut keyboard = KeyboardProbe::new();
 
+    // One write, in this order: the colour queries, the keyboard query, and
+    // last the device-attributes sentinel. Replies come back in the order
+    // asked, so the sentinel's reply means every other reply is in.
     let mut stdout = std::io::stdout();
-    if stdout.write_all(session.request().as_bytes()).is_err() || stdout.flush().is_err() {
-        return fallback.clone();
-    }
+    let request = format!("{}{KEYBOARD_QUERY}", colours.request());
+    stdout.write_all(request.as_bytes()).ok()?;
+    stdout.flush().ok()?;
 
-    // stdin has no portable read-with-deadline, so the read lives on its own
-    // thread and the deadline is enforced on the channel. The thread is left to
-    // finish on its own; this path is only reached by a one-shot command that
-    // exits immediately afterwards.
-    let (sender, receiver) = mpsc::channel();
-    thread::spawn(move || {
-        let mut stdin = std::io::stdin();
-        let mut buffer = [0u8; 1024];
-        while let Ok(count) = stdin.read(&mut buffer) {
-            if count == 0 || sender.send(buffer[..count].to_vec()).is_err() {
-                break;
-            }
-        }
-    });
-
+    let stdin = std::io::stdin();
     let deadline = Instant::now() + timeout;
-    while Instant::now() < deadline {
+    let mut buffer = [0u8; 1024];
+
+    while !keyboard.is_complete() {
         let remaining = deadline.saturating_duration_since(Instant::now());
-        match receiver.recv_timeout(remaining) {
-            Ok(bytes) => {
-                // Anything that was not a reply is real input. A one-shot probe
-                // has nowhere to put it; the editor's own probe will hand it to
-                // the input layer instead.
-                let _ = session.feed(&bytes);
-                if session.is_complete() {
-                    break;
-                }
-            }
-            Err(_) => break,
+        if remaining.is_zero() || !readable(&stdin, remaining) {
+            break;
         }
+        // Read the descriptor directly. std's stdin buffers, and anything it
+        // buffered past the replies would be invisible to the input reader
+        // that takes over from here.
+        let Ok(count) = rustix::io::read(&stdin, &mut buffer) else { break };
+        if count == 0 {
+            break;
+        }
+        // Anything that was not a reply is real input. The probe runs before
+        // the editor's input reader starts, so a keystroke landing inside this
+        // window is dropped: a real if small cost, and the window closes as
+        // soon as the terminal has answered.
+        let rest = colours.feed(&buffer[..count]);
+        let _ = keyboard.feed(&rest);
     }
 
-    session.finish(fallback)
+    Some(Startup { palette: colours.finish(fallback), kitty_keyboard: keyboard.supported() })
+}
+
+/// Wait up to `timeout` for `stdin` to have something to read.
+fn readable(stdin: &std::io::Stdin, timeout: Duration) -> bool {
+    use rustix::event::{PollFd, PollFlags, Timespec, poll};
+
+    let Ok(timeout) = Timespec::try_from(timeout) else { return false };
+    let mut fds = [PollFd::new(stdin, PollFlags::IN)];
+    matches!(poll(&mut fds, Some(&timeout)), Ok(n) if n > 0)
 }
 
 /// What to use when the terminal says nothing.

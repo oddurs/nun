@@ -174,3 +174,33 @@ fn the_user_path_follows_xdg_when_it_is_set() {
     let path = nun_config::user_config_path().expect("HOME is always set in a test run");
     assert!(path.ends_with("nun/nun.toml"), "{}", path.display());
 }
+
+#[test]
+fn key_bindings_are_read_as_written() {
+    let (loaded, _) =
+        load_text("[keys]\n\"ctrl+k ctrl+s\" = \"file.save\"\n\"cmd+p\" = \"palette.files\"\n");
+    assert!(loaded.problems.is_empty(), "{:?}", loaded.problems);
+    assert_eq!(loaded.config.keys.get("ctrl+k ctrl+s").map(String::as_str), Some("file.save"));
+    assert_eq!(loaded.config.keys.len(), 2);
+}
+
+#[test]
+fn key_bindings_from_a_later_file_add_to_an_earlier_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let first = dir.path().join("a.toml");
+    let second = dir.path().join("b.toml");
+    std::fs::write(&first, "[keys]\n\"ctrl+1\" = \"file.save\"\n").unwrap();
+    std::fs::write(&second, "[keys]\n\"ctrl+2\" = \"edit.undo\"\n").unwrap();
+
+    let mut loaded = Loaded::defaults();
+    apply_file(&mut loaded, &first);
+    apply_file(&mut loaded, &second);
+    assert_eq!(loaded.config.keys.len(), 2);
+}
+
+#[test]
+fn describe_lists_the_key_bindings() {
+    let (loaded, _) = load_text("[keys]\n\"ctrl+k ctrl+s\" = \"file.save\"\n");
+    assert!(loaded.describe().contains("\"ctrl+k ctrl+s\" = \"file.save\""));
+    assert!(Loaded::defaults().describe().contains("nun keys"));
+}

@@ -81,6 +81,11 @@ pub struct Config {
     pub alternate_screen: bool,
     /// Negotiate the Kitty keyboard protocol.
     pub keyboard_enhancement: bool,
+    /// Key bindings added over the defaults: key sequence to command id.
+    ///
+    /// Kept as text here. Which sequences and commands exist is the binary's
+    /// business, and it reports anything it cannot use as a problem.
+    pub keys: BTreeMap<String, String>,
 }
 
 impl Default for Config {
@@ -92,6 +97,7 @@ impl Default for Config {
             mouse: true,
             alternate_screen: true,
             keyboard_enhancement: true,
+            keys: BTreeMap::new(),
         }
     }
 }
@@ -154,6 +160,15 @@ impl Loaded {
             ("keyboard_enhancement", c.keyboard_enhancement),
         ] {
             let _ = writeln!(out, "{key} = {value}{}", self.note(key));
+        }
+
+        if c.keys.is_empty() {
+            let _ = writeln!(out, "\n# [keys] — none added; the defaults are listed by `nun keys`");
+        } else {
+            let _ = writeln!(out, "\n[keys]{}", self.note("keys"));
+            for (sequence, command) in &c.keys {
+                let _ = writeln!(out, "{sequence:?} = {command:?}");
+            }
         }
 
         if !self.problems.is_empty() {
@@ -235,6 +250,7 @@ struct RawConfig {
     editor: Option<RawEditor>,
     theme: Option<RawTheme>,
     ui: Option<RawUi>,
+    keys: Option<BTreeMap<String, String>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -302,6 +318,13 @@ impl RawConfig {
                 loaded.config.keyboard_enhancement = value;
                 set("keyboard_enhancement");
             }
+        }
+
+        if let Some(keys) = self.keys {
+            // Added to, not replaced: a later layer's bindings sit over an
+            // earlier layer's, the same way both sit over the defaults.
+            loaded.config.keys.extend(keys);
+            set("keys");
         }
     }
 }
