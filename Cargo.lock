@@ -790,6 +790,7 @@ dependencies = [
  "nun-core",
  "nun-theme",
  "ratatui",
+ "rustix",
  "signal-hook 0.4.4",
  "unicode-segmentation",
  "unicode-width",

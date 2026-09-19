@@ -19,3 +19,6 @@ ratatui = "0.30.2"
 signal-hook = "0.4.4"
 unicode-segmentation = "1.13.3"
 unicode-width = "0.2.2"
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1.4", features = ["std", "termios"] }
