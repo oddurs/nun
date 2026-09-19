@@ -5,18 +5,21 @@
 //! behaviour testable without a tty, which is how the keymap and the scrolling
 //! are checked below.
 
+use std::collections::VecDeque;
+use std::time::{Duration, Instant};
+
 use crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
 };
-use std::time::{Duration, Instant};
-
 use nun_core::{Buffer, Range, SaveError, Selections};
-use nun_input::{HitMap, Hover};
+use nun_input::{Chords, Code, HitMap, Hover, Key, Keymap, Mods, Resolved, Sequence};
 use nun_theme::Role;
 use nun_ui::{EditorView, Event, Palette};
 use ratatui::buffer::Buffer as Cells;
 use ratatui::layout::Rect;
 use ratatui::widgets::Widget;
+
+use crate::commands::Command;
 
 /// What the editor wants the caller to do next.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,6 +33,24 @@ pub enum Outcome {
     /// Shut down.
     Quit,
 }
+
+impl Outcome {
+    /// The stronger of two outcomes, for when several events are handled
+    /// before one frame: a quit anywhere in a burst wins, then a suspend, then
+    /// a redraw.
+    #[must_use]
+    pub const fn and(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::Quit, _) | (_, Self::Quit) => Self::Quit,
+            (Self::Suspend, _) | (_, Self::Suspend) => Self::Suspend,
+            (Self::Redraw, _) | (_, Self::Redraw) => Self::Redraw,
+            _ => Self::Continue,
+        }
+    }
+}
+
+/// How long an unfinished chord waits for its next key.
+const CHORD_TIMEOUT: Duration = Duration::from_millis(1000);
 
 /// How long the pointer rests on a hover target before its dwell fires.
 const HOVER_DWELL: Duration = Duration::from_millis(500);
@@ -52,8 +73,13 @@ pub struct App {
     palette: Palette,
     scroll: usize,
     viewport: Rect,
+    /// A transient message, shown until the next key.
     message: Option<String>,
+    /// Things worth saying once, shown one at a time after `message`.
+    notices: VecDeque<String>,
     quit_confirmed: bool,
+    keymap: Keymap<Command>,
+    chords: Chords,
     /// What is where, as of the last layout.
     hits: HitMap<Target>,
     /// Which hover target the pointer is over.
@@ -61,9 +87,9 @@ pub struct App {
 }
 
 impl App {
-    /// An editor over `buffer`.
+    /// An editor over `buffer`, driven by `keymap`.
     #[must_use]
-    pub fn new(buffer: Buffer, palette: Palette) -> Self {
+    pub fn new(buffer: Buffer, palette: Palette, keymap: Keymap<Command>) -> Self {
         let viewport = Rect::new(0, 0, 80, 24);
         let mut app = Self {
             buffer,
@@ -71,7 +97,10 @@ impl App {
             scroll: 0,
             viewport,
             message: None,
+            notices: VecDeque::new(),
             quit_confirmed: false,
+            keymap,
+            chords: Chords::new(CHORD_TIMEOUT),
             hits: HitMap::new(cells(viewport)),
             hover: Hover::new(HOVER_DWELL),
         };
@@ -95,12 +124,28 @@ impl App {
     /// The transient message shown in the status line, if any.
     #[cfg(test)]
     pub fn message(&self) -> Option<&str> {
-        self.message.as_deref()
+        self.shown_message()
     }
 
-    /// Show a message in the status line until the next keypress.
+    /// Say something once in the status line.
+    ///
+    /// Notices queue: each stays until a key is pressed, then the next one
+    /// shows. The status line holds one message, and a notice that is
+    /// immediately replaced by another was never really said.
     pub fn warn(&mut self, message: impl Into<String>) {
-        self.message = Some(message.into());
+        self.notices.push_back(message.into());
+    }
+
+    /// The message the status line is showing, if any.
+    fn shown_message(&self) -> Option<&str> {
+        self.message.as_deref().or_else(|| self.notices.front().map(String::as_str))
+    }
+
+    /// A key was pressed: whatever message was showing has been seen.
+    fn acknowledge(&mut self) {
+        if self.message.take().is_none() {
+            self.notices.pop_front();
+        }
     }
 
     /// Tell the editor how much room it has.
@@ -148,20 +193,32 @@ impl App {
 
     /// When the editor next needs waking with no input, if ever.
     pub fn deadline(&self) -> Option<Instant> {
-        self.hover.deadline()
+        [self.hover.deadline(), self.chords.deadline()].into_iter().flatten().min()
     }
 
     /// A deadline passed with no input.
     pub fn tick(&mut self, now: Instant) -> Outcome {
-        // Nothing reacts to a dwell yet; the first hover card is milestone 4.
-        // Taking it keeps the deadline from firing again.
-        match self.hover.dwell(now) {
-            Some(_) => {
-                self.relayout();
+        let chord = match self.chords.expire(&self.keymap, now) {
+            Some(Resolved::Unbound(keys)) => {
+                self.message = Some(format!("{} is not bound to anything", Sequence(&keys)));
                 Outcome::Redraw
             }
+            Some(resolved) => self.resolved(resolved, None),
             None => Outcome::Continue,
+        };
+
+        // Nothing reacts to a dwell yet; the first hover card is milestone 4.
+        // Taking it keeps the deadline from firing again.
+        let dwell = match self.hover.dwell(now) {
+            Some(_) => Outcome::Redraw,
+            None => Outcome::Continue,
+        };
+
+        let outcome = chord.and(dwell);
+        if outcome == Outcome::Redraw {
+            self.relayout();
         }
+        outcome
     }
 
     /// How many lines of text fit, leaving a row for the status line.
@@ -187,10 +244,12 @@ impl App {
 
     fn dispatch(&mut self, event: Event, now: Instant) -> Outcome {
         match event {
-            Event::Key(key) => self.handle_key(key),
+            Event::Key(key) => self.handle_key(key, now),
             Event::Mouse(mouse) => self.handle_mouse(mouse, now),
             Event::Paste(text) => {
-                self.message = None;
+                // A paste is not the second half of a chord.
+                self.chords.cancel();
+                self.acknowledge();
                 self.buffer.insert(&text);
                 self.follow_caret();
                 Outcome::Redraw
@@ -217,70 +276,109 @@ impl App {
         }
     }
 
-    #[allow(clippy::too_many_lines)] // A keymap is a flat list; splitting it hides it.
-    fn handle_key(&mut self, key: KeyEvent) -> Outcome {
+    fn handle_key(&mut self, event: KeyEvent, now: Instant) -> Outcome {
         // With the Kitty protocol negotiated the terminal reports releases and
         // repeats too. Acting on all three would type every character twice.
-        if key.kind == KeyEventKind::Release {
+        if event.kind == KeyEventKind::Release {
             return Outcome::Continue;
         }
+        let Some(key) = to_key(&event) else { return Outcome::Continue };
 
-        let control = key.modifiers.contains(KeyModifiers::CONTROL);
-        let shift = key.modifiers.contains(KeyModifiers::SHIFT);
-        let quitting = matches!(key.code, KeyCode::Char('q' | 'w')) && control;
+        let mut outcome = Outcome::Continue;
+        for resolved in self.chords.feed(&self.keymap, key, now) {
+            outcome = outcome.and(self.resolved(resolved, Some(&event)));
+        }
+        outcome
+    }
 
-        // Any key that is not another quit attempt clears the confirmation.
-        if !quitting {
+    /// Act on what a keystroke, or a chord timing out, resolved to.
+    ///
+    /// `event` is the keystroke itself, when there is one: an unbound single
+    /// key is always the one just pressed, and it is typed from the event as
+    /// the terminal reported it, so layouts, Caps Lock and Option-composed
+    /// characters come through untouched.
+    fn resolved(&mut self, resolved: Resolved<Command>, event: Option<&KeyEvent>) -> Outcome {
+        match resolved {
+            Resolved::Command(command) => self.run(command),
+            // The status line shows the chord so far.
+            Resolved::Pending => Outcome::Redraw,
+            Resolved::Unbound(keys) if keys.len() == 1 => match event {
+                Some(event) => self.edit(event),
+                None => Outcome::Continue,
+            },
+            Resolved::Unbound(keys) => {
+                self.acknowledge();
+                self.message = Some(format!("{} is not bound to anything", Sequence(&keys)));
+                Outcome::Redraw
+            }
+        }
+    }
+
+    /// Run a command.
+    pub fn run(&mut self, command: Command) -> Outcome {
+        // Anything but a second quit clears a pending quit confirmation.
+        if command != Command::Quit {
             self.quit_confirmed = false;
         }
-        self.message = None;
+        self.acknowledge();
 
-        match (key.code, control) {
-            (KeyCode::Char('q' | 'w'), true) => return self.request_quit(),
-            (KeyCode::Char('s'), true) => return self.save(),
-            (KeyCode::Char('z'), true) if shift => {
-                self.buffer.redo();
-            }
-            (KeyCode::Char('z'), true) => {
+        match command {
+            Command::Quit => return self.request_quit(),
+            Command::Save => return self.save(),
+            Command::Undo => {
                 self.buffer.undo();
             }
-            (KeyCode::Char('y'), true) => {
+            Command::Redo => {
                 self.buffer.redo();
             }
-            (KeyCode::Char('a'), true) => self.buffer.select_all(),
+            Command::SelectAll => self.buffer.select_all(),
+        }
+        self.follow_caret();
+        Outcome::Redraw
+    }
 
-            (KeyCode::Char(ch), false) => {
+    /// An editing key: typing, moving, deleting. Not rebindable.
+    fn edit(&mut self, key: &KeyEvent) -> Outcome {
+        self.quit_confirmed = false;
+        self.acknowledge();
+
+        let control = key.modifiers.contains(KeyModifiers::CONTROL)
+            || key.modifiers.contains(KeyModifiers::SUPER);
+        let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+
+        match key.code {
+            KeyCode::Char(ch) if !control => {
                 let mut text = [0u8; 4];
                 self.buffer.insert(ch.encode_utf8(&mut text));
             }
-            (KeyCode::Enter, _) => self.buffer.insert("\n"),
-            (KeyCode::Tab, _) => self.buffer.insert("\t"),
-            (KeyCode::Backspace, _) => self.buffer.delete_backward(),
-            (KeyCode::Delete, _) => self.buffer.delete_forward(),
+            KeyCode::Enter => self.buffer.insert("\n"),
+            KeyCode::Tab => self.buffer.insert("\t"),
+            KeyCode::Backspace => self.buffer.delete_backward(),
+            KeyCode::Delete => self.buffer.delete_forward(),
 
-            (KeyCode::Left, _) => self.buffer.move_left(shift),
-            (KeyCode::Right, _) => self.buffer.move_right(shift),
-            (KeyCode::Up, _) => self.buffer.move_up(shift),
-            (KeyCode::Down, _) => self.buffer.move_down(shift),
-            (KeyCode::Home, _) => self.buffer.move_line_start(shift),
-            (KeyCode::End, _) => self.buffer.move_line_end(shift),
-            (KeyCode::PageUp, _) => {
+            KeyCode::Left => self.buffer.move_left(shift),
+            KeyCode::Right => self.buffer.move_right(shift),
+            KeyCode::Up => self.buffer.move_up(shift),
+            KeyCode::Down => self.buffer.move_down(shift),
+            KeyCode::Home => self.buffer.move_line_start(shift),
+            KeyCode::End => self.buffer.move_line_end(shift),
+            KeyCode::PageUp => {
                 for _ in 0..self.text_height() {
                     self.buffer.move_up(shift);
                 }
             }
-            (KeyCode::PageDown, _) => {
+            KeyCode::PageDown => {
                 for _ in 0..self.text_height() {
                     self.buffer.move_down(shift);
                 }
             }
-            (KeyCode::Esc, _) => {
-                let mut selections = self.buffer.selections().clone();
-                selections.collapse_to_primary();
-                let head = selections.primary().head;
+            KeyCode::Esc => {
+                let head = self.buffer.selections().primary().head;
                 self.buffer.set_selections(Selections::single(Range::caret(head)));
             }
-            _ => return Outcome::Continue,
+            // An unbound Ctrl chord, or a key nun does not use. The message it
+            // may have cleared still needs a redraw.
+            _ => return Outcome::Redraw,
         }
 
         self.follow_caret();
@@ -309,7 +407,10 @@ impl App {
                 Outcome::Redraw
             }
             MouseEventKind::Down(MouseButton::Left) => {
-                self.message = None;
+                // Reaching for the mouse abandons a half-typed chord, so the
+                // next key is typed rather than taken as its second half.
+                self.chords.cancel();
+                self.acknowledge();
                 if hit.is_some_and(|hit| hit.target == Target::Text)
                     && let Some(position) = self.position_at(mouse.column, mouse.row)
                 {
@@ -347,8 +448,10 @@ impl App {
     fn request_quit(&mut self) -> Outcome {
         if self.buffer.is_modified() && !self.quit_confirmed {
             self.quit_confirmed = true;
+            let save = self.binding_for(Command::Save);
+            let quit = self.binding_for(Command::Quit);
             self.message =
-                Some("Unsaved changes. Ctrl+S to save, or Ctrl+Q again to discard.".into());
+                Some(format!("Unsaved changes. {save} to save, or {quit} again to discard."));
             return Outcome::Redraw;
         }
         Outcome::Quit
@@ -375,16 +478,27 @@ impl App {
         Outcome::Redraw
     }
 
+    /// How to ask for `command` from the keyboard, as the status line says it.
+    fn binding_for(&self, command: Command) -> String {
+        self.keymap
+            .sequences_for(&command)
+            .first()
+            .map_or_else(|| command.title().to_string(), |keys| Sequence(keys).to_string())
+    }
+
     /// The status line's text, left and right halves.
     #[must_use]
     pub fn status(&self) -> (String, String) {
-        let left = self.message.clone().unwrap_or_else(|| {
-            format!(
-                "{}{}",
-                display_path(self.buffer.path()),
-                if self.buffer.is_modified() { " •" } else { "" }
-            )
-        });
+        let pending = self.chords.pending();
+        let chord = (!pending.is_empty()).then(|| format!("{} …", Sequence(pending)));
+        let left =
+            chord.or_else(|| self.shown_message().map(str::to_string)).unwrap_or_else(|| {
+                format!(
+                    "{}{}",
+                    display_path(self.buffer.path()),
+                    if self.buffer.is_modified() { " •" } else { "" }
+                )
+            });
 
         let caret = self.buffer.selections().primary().head;
         let line = self.buffer.line_of(caret);
@@ -417,7 +531,7 @@ impl App {
     }
 
     fn render_status(&self, area: Rect, cells: &mut Cells) {
-        let style = if self.message.is_some() {
+        let style = if self.shown_message().is_some() || !self.chords.pending().is_empty() {
             self.palette.on(Role::Accent, Role::OnAccent)
         } else {
             self.palette.on(Role::Raised, Role::Dim)
@@ -439,6 +553,47 @@ impl App {
             write_at(cells, area, start, &right, style);
         }
     }
+}
+
+/// A terminal keystroke as a key the keymap understands.
+///
+/// `None` for keys nun has no use for: media keys, lone modifiers, Caps Lock.
+fn to_key(event: &KeyEvent) -> Option<Key> {
+    let code = match event.code {
+        KeyCode::Char(ch) => Code::Char(ch),
+        KeyCode::F(n) => Code::F(n),
+        KeyCode::Enter => Code::Enter,
+        KeyCode::Tab | KeyCode::BackTab => Code::Tab,
+        KeyCode::Backspace => Code::Backspace,
+        KeyCode::Delete => Code::Delete,
+        KeyCode::Insert => Code::Insert,
+        KeyCode::Esc => Code::Esc,
+        KeyCode::Left => Code::Left,
+        KeyCode::Right => Code::Right,
+        KeyCode::Up => Code::Up,
+        KeyCode::Down => Code::Down,
+        KeyCode::Home => Code::Home,
+        KeyCode::End => Code::End,
+        KeyCode::PageUp => Code::PageUp,
+        KeyCode::PageDown => Code::PageDown,
+        _ => return None,
+    };
+
+    let mut mods = Mods::NONE;
+    for (flag, modifier) in [
+        (KeyModifiers::CONTROL, Mods::CTRL),
+        (KeyModifiers::ALT, Mods::ALT),
+        (KeyModifiers::SHIFT, Mods::SHIFT),
+        (KeyModifiers::SUPER, Mods::CMD),
+    ] {
+        if event.modifiers.contains(flag) {
+            mods |= modifier;
+        }
+    }
+    if event.code == KeyCode::BackTab {
+        mods |= Mods::SHIFT;
+    }
+    Some(Key::new(code, mods))
 }
 
 /// ratatui's rectangle as nun-input's.
@@ -479,9 +634,16 @@ mod tests {
     use nun_theme::{Probe, derive};
     use ratatui::style::Color;
 
+    fn app_with(buffer: Buffer) -> App {
+        App::new(
+            buffer,
+            Palette::new(derive(&Probe::builtin_dark())),
+            crate::commands::defaults(crate::commands::KeySet::Full),
+        )
+    }
+
     fn app_over(text: &str) -> App {
-        let mut app =
-            App::new(Buffer::from_text(text), Palette::new(derive(&Probe::builtin_dark())));
+        let mut app = app_with(Buffer::from_text(text));
         app.set_viewport(Rect::new(0, 0, 40, 6));
         app
     }
@@ -562,6 +724,116 @@ mod tests {
         assert_eq!(text_of(&app), "abc", "Ctrl+Y redoes too");
     }
 
+    fn app_with_bindings(text: &str, user: &[(&str, &str)]) -> App {
+        let user = user.iter().map(|(k, v)| ((*k).to_string(), (*v).to_string())).collect();
+        let (keymap, problems) = crate::commands::keymap(crate::commands::KeySet::Full, &user);
+        assert!(problems.is_empty(), "{problems:?}");
+        let mut app =
+            App::new(Buffer::from_text(text), Palette::new(derive(&Probe::builtin_dark())), keymap);
+        app.set_viewport(Rect::new(0, 0, 40, 6));
+        app
+    }
+
+    fn ctrl(ch: char) -> Event {
+        chord(KeyCode::Char(ch), KeyModifiers::CONTROL)
+    }
+
+    #[test]
+    fn a_chord_shows_itself_while_it_waits_and_runs_when_finished() {
+        let mut app = app_with_bindings("abc", &[("ctrl+k ctrl+a", "edit.select_all")]);
+        let now = Instant::now();
+
+        assert_eq!(app.handle_at(ctrl('k'), now), Outcome::Redraw);
+        assert!(app.status().0.starts_with("Ctrl+K"), "{:?}", app.status());
+        assert!(app.deadline().is_some(), "waiting for the second key");
+
+        app.handle_at(ctrl('a'), now);
+        assert_eq!(app.buffer().selections().primary().len(), 3);
+        assert_eq!(app.deadline(), None);
+        assert!(!app.status().0.starts_with("Ctrl+K"));
+    }
+
+    #[test]
+    fn a_chord_nobody_finishes_times_out_and_says_so() {
+        let mut app = app_with_bindings("abc", &[("ctrl+k ctrl+a", "edit.select_all")]);
+        let now = Instant::now();
+        app.handle_at(ctrl('k'), now);
+
+        let deadline = app.deadline().unwrap();
+        assert_eq!(app.tick(deadline), Outcome::Redraw);
+        assert_eq!(app.message(), Some("Ctrl+K is not bound to anything"));
+        assert_eq!(app.deadline(), None);
+        assert!(app.buffer().selections().primary().is_empty(), "nothing ran");
+    }
+
+    #[test]
+    fn a_chord_times_out_to_its_prefix_binding() {
+        let mut app = app_with_bindings(
+            "abc",
+            &[("ctrl+k", "edit.select_all"), ("ctrl+k ctrl+z", "edit.undo")],
+        );
+        let now = Instant::now();
+        app.handle_at(ctrl('k'), now);
+        let deadline = app.deadline().unwrap();
+        app.tick(deadline);
+        assert_eq!(app.buffer().selections().primary().len(), 3, "the prefix binding ran");
+    }
+
+    #[test]
+    fn typing_after_a_chord_prefix_does_not_type() {
+        let mut app = app_with_bindings("", &[("ctrl+k ctrl+a", "edit.select_all")]);
+        app.handle(ctrl('k'));
+        app.handle(key(KeyCode::Char('x')));
+        assert_eq!(text_of(&app), "", "the x finished (and broke) the chord");
+        assert_eq!(app.message(), Some("Ctrl+K X is not bound to anything"));
+    }
+
+    #[test]
+    fn a_click_abandons_a_half_typed_chord() {
+        let mut app = app_with_bindings("", &[("ctrl+k ctrl+a", "edit.select_all")]);
+        app.handle(ctrl('k'));
+        app.handle(click(3, 0));
+        app.handle(key(KeyCode::Char('x')));
+        assert_eq!(text_of(&app), "x", "typed, not taken as the chord's second key");
+        assert_eq!(app.deadline(), None);
+    }
+
+    #[test]
+    fn a_rebound_key_does_the_new_thing() {
+        let mut app = app_with_bindings("abc", &[("ctrl+s", "edit.select_all")]);
+        app.handle(ctrl('s'));
+        assert_eq!(app.buffer().selections().primary().len(), 3);
+    }
+
+    #[test]
+    fn cmd_bindings_work_when_the_terminal_reports_cmd() {
+        let mut app = app_over("abc");
+        app.handle(chord(KeyCode::Char('a'), KeyModifiers::SUPER));
+        assert_eq!(app.buffer().selections().primary().len(), 3);
+    }
+
+    #[test]
+    fn notices_are_shown_one_at_a_time() {
+        let mut app = app_over("");
+        app.warn("first");
+        app.warn("second");
+        assert_eq!(app.message(), Some("first"));
+        app.handle(key(KeyCode::Right));
+        assert_eq!(app.message(), Some("second"));
+        app.handle(key(KeyCode::Right));
+        assert_eq!(app.message(), None);
+    }
+
+    #[test]
+    fn the_quit_prompt_names_the_keys_actually_bound() {
+        let mut app = app_with_bindings("", &[]);
+        app.handle(key(KeyCode::Char('x')));
+        app.handle(ctrl('q'));
+        let message = app.message().unwrap();
+        assert!(message.contains("Ctrl+S to save"), "{message}");
+        assert!(message.contains("Ctrl+Q again"), "{message}");
+    }
+
     #[test]
     fn select_all_then_type_replaces_everything() {
         let mut app = app_over("old content");
@@ -627,7 +899,7 @@ mod tests {
     #[test]
     fn a_lossy_file_refuses_to_save_rather_than_destroying_it() {
         let (buffer, _) = Buffer::from_bytes(&[0x68, 0xff]);
-        let mut app = App::new(buffer, Palette::new(derive(&Probe::builtin_dark())));
+        let mut app = app_with(buffer);
         app.set_viewport(Rect::new(0, 0, 40, 6));
 
         app.handle(chord(KeyCode::Char('s'), KeyModifiers::CONTROL));
@@ -717,10 +989,7 @@ mod tests {
     fn a_click_past_column_223_lands_where_it_was_made() {
         // The legacy mouse encoding tops out at column 223. SGR does not, and
         // nothing between the terminal and the buffer may narrow it again.
-        let mut app = App::new(
-            Buffer::from_text(&"x".repeat(400)),
-            Palette::new(derive(&Probe::builtin_dark())),
-        );
+        let mut app = app_with(Buffer::from_text(&"x".repeat(400)));
         app.set_viewport(Rect::new(0, 0, 420, 6));
 
         app.handle(click(3 + 300, 0));
@@ -729,10 +998,7 @@ mod tests {
 
     #[test]
     fn a_click_below_row_223_lands_where_it_was_made() {
-        let mut app = App::new(
-            Buffer::from_text(&"line\n".repeat(400)),
-            Palette::new(derive(&Probe::builtin_dark())),
-        );
+        let mut app = app_with(Buffer::from_text(&"line\n".repeat(400)));
         app.set_viewport(Rect::new(0, 0, 40, 302));
 
         // Three digits of line number plus two columns of padding.
@@ -823,14 +1089,14 @@ mod tests {
             vec![Range::caret(0), Range::caret(2), Range::caret(4)],
             0,
         ));
-        let app = App::new(buffer, Palette::new(derive(&Probe::builtin_dark())));
+        let app = app_with(buffer);
         assert!(app.status().1.contains("3 carets"));
     }
 
     #[test]
     fn the_status_line_reports_crlf_when_that_is_what_will_be_written() {
         let (buffer, _) = Buffer::from_bytes(b"one\r\ntwo\r\n");
-        let app = App::new(buffer, Palette::new(derive(&Probe::builtin_dark())));
+        let app = app_with(buffer);
         assert!(app.status().1.contains("CRLF"));
     }
 

@@ -2,10 +2,11 @@
 id: 22
 title: Keymap resolution and Kitty protocol negotiation
 type: feature
-status: backlog
+status: done
 milestone: m2
+assignee: Oddur Sigurdsson
 created: 2026-09-10
-updated: 2026-09-10
+updated: 2026-09-19
 priority: p0
 effort: m
 area: input
@@ -28,8 +29,12 @@ in `[keys]` are additive over the defaults.
 
 ## Acceptance criteria
 
-- [ ] Capability is detected, never assumed from $TERM
-- [ ] Both binding sets are complete; no command is reachable in only one
-- [ ] Chords time out and fall back to the prefix binding
-- [ ] Flags are popped on every exit path
-- [ ] The degraded set is documented, and the notice links to it
+- [x] Capability is detected, never assumed from $TERM
+- [x] Both binding sets are complete; no command is reachable in only one
+- [x] Chords time out and fall back to the prefix binding
+- [x] Flags are popped on every exit path
+- [x] The degraded set is documented, and the notice links to it
+
+## 2026-09-19
+
+Detection is CSI ? u followed by a DA1 sentinel in the same write as the palette probe; the sentinel's reply ends the probe, so a terminal that answers is not held to the timeout. The full set is the basic set plus Cmd and the Ctrl+Shift chords, so completeness holds by construction and a test checks it. Commands are keyboard-only until the palette (0021) lands as their mouse path.
