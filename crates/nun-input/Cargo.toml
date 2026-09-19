@@ -1,0 +1,15 @@
+[package]
+name = "nun-input"
+description = "Hit-testing, pointer gestures and keymap resolution for nun"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+proptest = "1.11.0"

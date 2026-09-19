@@ -8,7 +8,10 @@
 use crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
 };
+use std::time::{Duration, Instant};
+
 use nun_core::{Buffer, Range, SaveError, Selections};
+use nun_input::{HitMap, Hover};
 use nun_theme::Role;
 use nun_ui::{EditorView, Event, Palette};
 use ratatui::buffer::Buffer as Cells;
@@ -28,6 +31,20 @@ pub enum Outcome {
     Quit,
 }
 
+/// How long the pointer rests on a hover target before its dwell fires.
+const HOVER_DWELL: Duration = Duration::from_millis(500);
+
+/// Everything on screen a pointer can land on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Target {
+    /// The text of the buffer.
+    Text,
+    /// The line-number gutter beside it.
+    Gutter,
+    /// The status line.
+    Status,
+}
+
 /// The running editor.
 #[derive(Debug)]
 pub struct App {
@@ -37,20 +54,29 @@ pub struct App {
     viewport: Rect,
     message: Option<String>,
     quit_confirmed: bool,
+    /// What is where, as of the last layout.
+    hits: HitMap<Target>,
+    /// Which hover target the pointer is over.
+    hover: Hover<Target>,
 }
 
 impl App {
     /// An editor over `buffer`.
     #[must_use]
     pub fn new(buffer: Buffer, palette: Palette) -> Self {
-        Self {
+        let viewport = Rect::new(0, 0, 80, 24);
+        let mut app = Self {
             buffer,
             palette,
             scroll: 0,
-            viewport: Rect::new(0, 0, 80, 24),
+            viewport,
             message: None,
             quit_confirmed: false,
-        }
+            hits: HitMap::new(cells(viewport)),
+            hover: Hover::new(HOVER_DWELL),
+        };
+        app.relayout();
+        app
     }
 
     /// The buffer. Only the tests read it; `render` and `status` use the field
@@ -78,8 +104,64 @@ impl App {
     }
 
     /// Tell the editor how much room it has.
-    pub const fn set_viewport(&mut self, viewport: Rect) {
-        self.viewport = viewport;
+    pub fn set_viewport(&mut self, viewport: Rect) {
+        if viewport != self.viewport {
+            self.viewport = viewport;
+            self.relayout();
+        }
+    }
+
+    /// Where the text and the status line go.
+    fn areas(&self) -> (Rect, Rect) {
+        let area = self.viewport;
+        let text = Rect { height: area.height.saturating_sub(1), ..area };
+        let status =
+            Rect { y: area.bottom().saturating_sub(1), height: area.height.min(1), ..area };
+        (text, status)
+    }
+
+    /// Record what is where, for resolving the pointer.
+    ///
+    /// Regions are pushed in paint order, so anything drawn on top — an overlay,
+    /// a menu — is pushed later and captures the pointer above what is beneath.
+    fn relayout(&mut self) {
+        let (text, status) = self.areas();
+        let gutter = EditorView::new(&self.buffer, &self.palette).gutter_width().min(text.width);
+
+        let mut hits = HitMap::new(cells(self.viewport));
+        hits.push(cells(Rect { width: gutter, ..text }), Target::Gutter, false);
+        hits.push(
+            cells(Rect { x: text.x + gutter, width: text.width - gutter, ..text }),
+            Target::Text,
+            false,
+        );
+        hits.push(cells(status), Target::Status, false);
+        self.hits = hits;
+    }
+
+    /// Whether anything on screen reacts to the pointer merely passing over it.
+    ///
+    /// The terminal's any-motion reporting is turned on only while this holds.
+    pub const fn wants_motion(&self) -> bool {
+        self.hits.has_hover_targets()
+    }
+
+    /// When the editor next needs waking with no input, if ever.
+    pub fn deadline(&self) -> Option<Instant> {
+        self.hover.deadline()
+    }
+
+    /// A deadline passed with no input.
+    pub fn tick(&mut self, now: Instant) -> Outcome {
+        // Nothing reacts to a dwell yet; the first hover card is milestone 4.
+        // Taking it keeps the deadline from firing again.
+        match self.hover.dwell(now) {
+            Some(_) => {
+                self.relayout();
+                Outcome::Redraw
+            }
+            None => Outcome::Continue,
+        }
     }
 
     /// How many lines of text fit, leaving a row for the status line.
@@ -89,9 +171,24 @@ impl App {
 
     /// Handle one event.
     pub fn handle(&mut self, event: Event) -> Outcome {
+        self.handle_at(event, Instant::now())
+    }
+
+    /// Handle one event that arrived at `now`.
+    pub fn handle_at(&mut self, event: Event, now: Instant) -> Outcome {
+        let outcome = self.dispatch(event, now);
+        if outcome == Outcome::Redraw {
+            // The gutter widens as lines are added, and later milestones lay out
+            // far more than this; anything that redraws may have moved things.
+            self.relayout();
+        }
+        outcome
+    }
+
+    fn dispatch(&mut self, event: Event, now: Instant) -> Outcome {
         match event {
             Event::Key(key) => self.handle_key(key),
-            Event::Mouse(mouse) => self.handle_mouse(mouse),
+            Event::Mouse(mouse) => self.handle_mouse(mouse, now),
             Event::Paste(text) => {
                 self.message = None;
                 self.buffer.insert(&text);
@@ -99,7 +196,7 @@ impl App {
                 Outcome::Redraw
             }
             Event::Resize(width, height) => {
-                self.viewport = Rect::new(0, 0, width, height);
+                self.set_viewport(Rect::new(0, 0, width, height));
                 self.follow_caret();
                 Outcome::Redraw
             }
@@ -108,7 +205,15 @@ impl App {
             Event::Signal(nun_ui::Signal::Terminate | nun_ui::Signal::Hangup) | Event::Closed => {
                 Outcome::Quit
             }
-            Event::Focus(_) => Outcome::Continue,
+            Event::Focus(true) => Outcome::Continue,
+            // The pointer may be anywhere by the time focus comes back.
+            Event::Focus(false) => {
+                if self.hover.clear(now).is_none() {
+                    Outcome::Continue
+                } else {
+                    Outcome::Redraw
+                }
+            }
         }
     }
 
@@ -185,7 +290,14 @@ impl App {
     /// Mouse support here is deliberately minimal — click to place the caret and
     /// the wheel to scroll. The full gesture set is cairn `0015` to `0017`; this
     /// is enough that nothing shipped so far is keyboard-only.
-    fn handle_mouse(&mut self, mouse: crossterm::event::MouseEvent) -> Outcome {
+    fn handle_mouse(&mut self, mouse: crossterm::event::MouseEvent, now: Instant) -> Outcome {
+        let hit = self.hits.at(mouse.column, mouse.row);
+
+        // Hover follows every report, whatever else the event does, so leaving
+        // a target by dragging out of it is still a leave.
+        let crossing = self.hover.update(hit.filter(|hit| hit.hover).map(|hit| hit.target), now);
+        let hovered = if crossing.is_none() { Outcome::Continue } else { Outcome::Redraw };
+
         match mouse.kind {
             MouseEventKind::ScrollUp => {
                 self.scroll = self.scroll.saturating_sub(3);
@@ -198,44 +310,24 @@ impl App {
             }
             MouseEventKind::Down(MouseButton::Left) => {
                 self.message = None;
-                if let Some(position) = self.position_at(mouse.column, mouse.row) {
+                if hit.is_some_and(|hit| hit.target == Target::Text)
+                    && let Some(position) = self.position_at(mouse.column, mouse.row)
+                {
                     self.buffer.set_selections(Selections::single(Range::caret(position)));
                 }
                 Outcome::Redraw
             }
-            _ => Outcome::Continue,
+            _ => hovered,
         }
     }
 
-    /// Which char index a screen cell corresponds to.
+    /// Which char index a screen cell in the text region corresponds to.
     fn position_at(&self, column: u16, row: u16) -> Option<usize> {
-        let gutter = EditorView::new(&self.buffer, &self.palette).gutter_width();
-        if column < gutter || row as usize >= self.text_height() {
-            return None;
-        }
-
-        let line = (self.scroll + row as usize).min(self.buffer.len_lines().saturating_sub(1));
-        let target = (column - gutter) as usize;
-        let text = self.buffer.line_text(line);
-        let text = text.strip_suffix('\n').unwrap_or(&text);
-
-        // Walk the line by display width so a click past a wide character lands
-        // after it rather than inside it.
-        let mut column_offset = 0usize;
-        let mut chars = 0usize;
-        for cluster in unicode_segmentation::UnicodeSegmentation::graphemes(text, true) {
-            let width = if cluster == "\t" {
-                self.buffer.tab_width() - (column_offset % self.buffer.tab_width())
-            } else {
-                unicode_width::UnicodeWidthStr::width(cluster).max(1)
-            };
-            if column_offset + width > target {
-                break;
-            }
-            column_offset += width;
-            chars += cluster.chars().count();
-        }
-        Some(self.buffer.line_start(line) + chars)
+        // The view measures from the left edge of the gutter, not the text.
+        let (area, _) = self.areas();
+        EditorView::new(&self.buffer, &self.palette)
+            .scrolled_to(self.scroll)
+            .position_at(area, column, row)
     }
 
     /// Scroll the minimum distance needed to keep the caret on screen.
@@ -347,6 +439,11 @@ impl App {
             write_at(cells, area, start, &right, style);
         }
     }
+}
+
+/// ratatui's rectangle as nun-input's.
+const fn cells(area: Rect) -> nun_input::Rect {
+    nun_input::Rect::new(area.x, area.y, area.width, area.height)
 }
 
 fn write_at(cells: &mut Cells, area: Rect, start: u16, text: &str, style: ratatui::style::Style) {
@@ -656,6 +753,30 @@ mod tests {
             modifiers: KeyModifiers::NONE,
         });
         assert_eq!(app.handle(motion), Outcome::Continue);
+    }
+
+    #[test]
+    fn clicking_the_status_line_does_not_reach_the_text_beneath_it() {
+        // Viewport is six rows: five of text and the status line on row 5. The
+        // buffer is long enough that row 5 would otherwise be a line of text.
+        let mut app = app_over(&"line\n".repeat(20));
+        app.handle(click(5, 5));
+        assert_eq!(app.buffer().selections().primary().head, 0);
+    }
+
+    #[test]
+    fn a_resize_moves_the_status_line_and_the_clicks_follow_it() {
+        let mut app = app_over(&"line\n".repeat(20));
+        app.handle(Event::Resize(40, 10));
+        app.handle(click(3 + 1, 5));
+        assert_eq!(app.buffer().line_of(app.buffer().selections().primary().head), 5);
+    }
+
+    #[test]
+    fn an_idle_editor_has_nothing_to_wake_up_for() {
+        let app = app_over("hello");
+        assert_eq!(app.deadline(), None);
+        assert!(!app.wants_motion(), "nothing on screen reacts to hover yet");
     }
 
     #[test]

@@ -268,3 +268,120 @@ fn a_full_frame_of_a_large_file_stays_well_inside_the_budget() {
         "a 120x50 frame took {per_frame:?}, which leaves nothing for the rest of the budget"
     );
 }
+
+// ── cell to buffer position ─────────────────────────────────────────────────
+
+/// Where `position_at` lands for each text column of line 0, gutter excluded.
+fn positions(text: &str, columns: u16) -> Vec<Option<usize>> {
+    let buffer = Buffer::from_text(text);
+    let palette = palette();
+    let view = EditorView::new(&buffer, &palette);
+    let gutter = view.gutter_width();
+    let area = ratatui::layout::Rect::new(0, 0, gutter + columns + 4, 3);
+    (0..columns).map(|column| view.position_at(area, gutter + column, 0)).collect()
+}
+
+#[test]
+fn the_gutter_is_not_a_buffer_position() {
+    let buffer = Buffer::from_text("hello");
+    let palette = palette();
+    let area = ratatui::layout::Rect::new(0, 0, 20, 3);
+    assert_eq!(EditorView::new(&buffer, &palette).position_at(area, 0, 0), None);
+}
+
+#[test]
+fn every_cell_of_an_expanded_tab_lands_on_the_tab() {
+    // Tab width 4: `a` in column 0, the tab fills 1 to 3, `b` is column 4.
+    let at = positions("a\tb", 6);
+    assert_eq!(at, vec![Some(0), Some(1), Some(1), Some(1), Some(2), Some(3)]);
+}
+
+#[test]
+fn both_cells_of_a_wide_character_land_on_it() {
+    let at = positions("日本x", 6);
+    assert_eq!(at, vec![Some(0), Some(0), Some(1), Some(1), Some(2), Some(3)]);
+}
+
+#[test]
+fn a_combining_mark_is_one_cell_with_its_base() {
+    // `e` and U+0301 are one cluster of two chars in one column.
+    let at = positions("e\u{301}x", 3);
+    assert_eq!(at, vec![Some(0), Some(2), Some(3)]);
+}
+
+#[test]
+fn a_joined_emoji_is_one_target_not_a_row_of_codepoints() {
+    let family = "👩\u{200d}👩\u{200d}👧";
+    let chars = family.chars().count();
+    let at = positions(&format!("{family}x"), 3);
+    assert_eq!(at, vec![Some(0), Some(0), Some(chars)]);
+}
+
+#[test]
+fn a_click_past_the_end_of_a_line_lands_at_its_end_not_on_the_next() {
+    let at = positions("ab\ncd", 5);
+    assert_eq!(at[4], Some(2), "the end of line 0, before its newline");
+}
+
+#[test]
+fn a_click_below_the_last_line_lands_on_the_last_line() {
+    let buffer = Buffer::from_text("one\ntwo");
+    let palette = palette();
+    let area = ratatui::layout::Rect::new(0, 0, 20, 10);
+    let view = EditorView::new(&buffer, &palette);
+    assert_eq!(view.position_at(area, view.gutter_width(), 8), Some(4));
+}
+
+#[test]
+fn scrolling_shifts_which_line_a_row_means() {
+    let buffer = Buffer::from_text("zero\none\ntwo\n");
+    let palette = palette();
+    let area = ratatui::layout::Rect::new(0, 0, 20, 3);
+    let view = EditorView::new(&buffer, &palette).scrolled_to(2);
+    assert_eq!(view.position_at(area, view.gutter_width(), 0), Some(9));
+}
+
+#[test]
+fn an_area_offset_from_the_origin_is_measured_from_its_own_corner() {
+    // A second pane starts part-way across the screen.
+    let buffer = Buffer::from_text("abc");
+    let palette = palette();
+    let area = ratatui::layout::Rect::new(30, 5, 20, 3);
+    let view = EditorView::new(&buffer, &palette);
+    let gutter = view.gutter_width();
+    assert_eq!(view.position_at(area, 30 + gutter + 1, 5), Some(1));
+    assert_eq!(view.position_at(area, 29, 5), None, "left of the area");
+    assert_eq!(view.position_at(area, 30 + gutter, 4), None, "above it");
+}
+
+mod mapping {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// Clusters that each break an ASCII-only assumption somewhere.
+    const PIECES: &[&str] =
+        &["a", "\t", "日", "e\u{301}", "👩\u{200d}👩\u{200d}👧", "🇮🇸", "\u{7}", " ", "é", "ｗ"];
+
+    proptest! {
+        /// Clicking the first cell of every cluster lands exactly on that
+        /// cluster, as measured by nun-core's own column arithmetic.
+        #[test]
+        fn clicking_where_a_cluster_is_drawn_lands_on_it(
+            picks in prop::collection::vec(0..PIECES.len(), 0..16),
+        ) {
+            let text: String = picks.iter().map(|&i| PIECES[i]).collect();
+            let buffer = Buffer::from_text(&text);
+            let palette = palette();
+            let view = EditorView::new(&buffer, &palette);
+            let gutter = view.gutter_width();
+            let area = ratatui::layout::Rect::new(0, 0, 200, 3);
+
+            let mut position = 0;
+            for &i in &picks {
+                let column = u16::try_from(buffer.column_of(position)).unwrap();
+                prop_assert_eq!(view.position_at(area, gutter + column, 0), Some(position));
+                position += PIECES[i].chars().count();
+            }
+        }
+    }
+}

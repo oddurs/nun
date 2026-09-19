@@ -21,11 +21,10 @@
 
 ## m2 — Mouse and shell
 
-`###·······` 22% · 2 of 9 done · due 2026-10-08
+`####······` 33% · 3 of 9 done · due 2026-10-08
 
 ### backlog
 
-- [ ] [`0016`](https://github.com/oddurs/nun/blob/main/cairn/items/0016-hit-testing-and-hover.md) Hit-testing and hover <sup>feature · p0</sup>
 - [ ] [`0017`](https://github.com/oddurs/nun/blob/main/cairn/items/0017-click-drag-and-multi-click-selection.md) Click, drag and multi-click selection <sup>feature · p0</sup>
 - [ ] [`0018`](https://github.com/oddurs/nun/blob/main/cairn/items/0018-file-tree-sidebar.md) File tree sidebar <sup>feature · p0</sup>
 - [ ] [`0019`](https://github.com/oddurs/nun/blob/main/cairn/items/0019-tabs.md) Tabs <sup>feature · p1</sup>
@@ -36,6 +35,7 @@
 ### done
 
 - [x] [`0015`](https://github.com/oddurs/nun/blob/main/cairn/items/0015-mouse-event-plumbing.md) Mouse event plumbing <sup>feature · p0</sup>
+- [x] [`0016`](https://github.com/oddurs/nun/blob/main/cairn/items/0016-hit-testing-and-hover.md) Hit-testing and hover <sup>feature · p0</sup>
 - [x] [`0052`](https://github.com/oddurs/nun/blob/main/cairn/items/0052-flush-pending-mouse-input-before-leaving-raw-mode.md) Flush pending mouse input before leaving raw mode <sup>bug · p1</sup>
 
 ## m3 — Understanding the code

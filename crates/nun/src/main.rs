@@ -5,6 +5,7 @@ mod terminal;
 
 use std::io;
 use std::path::Path;
+use std::time::Instant;
 
 use app::{App, Outcome};
 use nun_config::{Loaded, Polarity};
@@ -74,9 +75,14 @@ fn edit(path: &Path) -> io::Result<()> {
     screen.draw(AppView(&app))?;
 
     loop {
+        // Sleep until input arrives or something pending falls due, whichever
+        // is first. With nothing pending there is no deadline and no wakeup.
+        let mut outcome = match events.next_before(app.deadline()) {
+            Some(event) => app.handle(event),
+            None => app.tick(Instant::now()),
+        };
         // Take the whole burst before drawing, so holding a key down costs one
         // frame rather than one frame per repeat.
-        let mut outcome = app.handle(events.next());
         for event in events.drain() {
             outcome = combine(outcome, app.handle(event));
         }
@@ -94,6 +100,10 @@ fn edit(path: &Path) -> io::Result<()> {
             }
             Outcome::Continue => {}
         }
+
+        // Any-motion reporting only while something on screen reacts to hover.
+        // A failure here costs hover, not the session.
+        let _ = screen.track_motion(app.wants_motion());
     }
 
     screen.close();
