@@ -18,6 +18,9 @@ pub struct Screen {
     terminal: Terminal<CrosstermBackend<Stdout>>,
     guard: TerminalGuard<CrosstermControl>,
     capabilities: Capabilities,
+    /// Whether the caller wants any-motion tracking, kept so a resume from
+    /// suspend can put it back.
+    motion_wanted: bool,
 }
 
 impl Screen {
@@ -29,7 +32,7 @@ impl Screen {
     pub fn open(capabilities: Capabilities) -> io::Result<Self> {
         let guard = TerminalGuard::enter(CrosstermControl, capabilities)?;
         let terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
-        Ok(Self { terminal, guard, capabilities })
+        Ok(Self { terminal, guard, capabilities, motion_wanted: false })
     }
 
     /// Draw one frame.
@@ -43,6 +46,21 @@ impl Screen {
     pub fn draw(&mut self, widget: impl Widget) -> io::Result<()> {
         self.terminal.draw(|frame| frame.render_widget(widget, frame.area()))?;
         Ok(())
+    }
+
+    /// Report pointer motion with no button held, for as long as something on
+    /// screen reacts to hover.
+    ///
+    /// Call it with the current answer as often as is convenient — once per
+    /// frame is fine — because only a change is written to the terminal. See
+    /// [`TerminalGuard::track_motion`].
+    ///
+    /// # Errors
+    ///
+    /// If writing to the terminal fails.
+    pub fn track_motion(&mut self, on: bool) -> io::Result<()> {
+        self.motion_wanted = on;
+        self.guard.track_motion(on)
     }
 
     /// The drawable area.
@@ -81,6 +99,10 @@ impl Screen {
         crate::signals::suspend_self();
         // Execution resumes here on SIGCONT.
         self.guard = TerminalGuard::enter(CrosstermControl, self.capabilities)?;
+        // Hover is optional. If it cannot be put back, the guard records it as
+        // off and the next `track_motion` call tries again; it is not a reason
+        // to end the session.
+        let _ = self.guard.track_motion(self.motion_wanted);
         self.terminal.clear()?;
         Ok(())
     }

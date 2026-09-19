@@ -21,11 +21,10 @@
 
 ## m2 — Mouse and shell
 
-`··········` 0% · 0 of 8 done · due 2026-10-08
+`##········` 11% · 1 of 9 done · due 2026-10-08
 
 ### backlog
 
-- [ ] [`0015`](https://github.com/oddurs/nun/blob/main/cairn/items/0015-mouse-event-plumbing.md) Mouse event plumbing <sup>feature · p0</sup>
 - [ ] [`0016`](https://github.com/oddurs/nun/blob/main/cairn/items/0016-hit-testing-and-hover.md) Hit-testing and hover <sup>feature · p0</sup>
 - [ ] [`0017`](https://github.com/oddurs/nun/blob/main/cairn/items/0017-click-drag-and-multi-click-selection.md) Click, drag and multi-click selection <sup>feature · p0</sup>
 - [ ] [`0018`](https://github.com/oddurs/nun/blob/main/cairn/items/0018-file-tree-sidebar.md) File tree sidebar <sup>feature · p0</sup>
@@ -33,6 +32,11 @@
 - [ ] [`0020`](https://github.com/oddurs/nun/blob/main/cairn/items/0020-splits-and-drag-to-split.md) Splits and drag-to-split <sup>feature · p1</sup>
 - [ ] [`0021`](https://github.com/oddurs/nun/blob/main/cairn/items/0021-command-palette.md) Command palette <sup>feature · p0</sup>
 - [ ] [`0022`](https://github.com/oddurs/nun/blob/main/cairn/items/0022-keymap-resolution-and-kitty-protocol-negotiation.md) Keymap resolution and Kitty protocol negotiation <sup>feature · p0</sup>
+- [ ] [`0052`](https://github.com/oddurs/nun/blob/main/cairn/items/0052-flush-pending-mouse-input-before-leaving-raw-mode.md) Flush pending mouse input before leaving raw mode <sup>bug · p1</sup>
+
+### done
+
+- [x] [`0015`](https://github.com/oddurs/nun/blob/main/cairn/items/0015-mouse-event-plumbing.md) Mouse event plumbing <sup>feature · p0</sup>
 
 ## m3 — Understanding the code
 
