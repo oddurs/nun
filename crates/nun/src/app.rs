@@ -16,13 +16,14 @@ use nun_input::{
     Chords, Clicks, Code, HitMap, Hover, Key, Keymap, Mods, PLATFORM_THRESHOLD, Resolved, Sequence,
 };
 use nun_theme::Role;
-use nun_ui::{EditorView, Event, Menu, Palette, TabStrip, TreeButton, TreeView};
+use nun_ui::{EditorView, Event, Menu, Palette, TreeButton, TreeView};
 use ratatui::buffer::Buffer as Cells;
 use ratatui::layout::Rect;
 use ratatui::widgets::Widget;
 
 use crate::commands::Command;
 
+mod panes;
 mod pointer;
 mod prompt;
 mod sidebar;
@@ -71,12 +72,14 @@ pub enum Target {
     Gutter,
     /// The status line.
     Status,
-    /// A tab.
-    Tab(usize),
+    /// A tab: which pane, and which tab of it.
+    Tab(usize, usize),
     /// A tab's close cross.
-    TabClose(usize),
+    TabClose(usize, usize),
     /// The tab strip beside the tabs.
     TabStrip,
+    /// The divider between two panes, by its index in the layout's list.
+    Divider(usize),
     /// The file-tree toggle at the left of the status line.
     StatusFiles,
     /// The Undo offered after a file operation.
@@ -103,7 +106,7 @@ pub enum Target {
 
 impl Target {
     const fn in_tabs(self) -> bool {
-        matches!(self, Self::Tab(_) | Self::TabClose(_) | Self::TabStrip)
+        matches!(self, Self::Tab(..) | Self::TabClose(..) | Self::TabStrip)
     }
 
     const fn in_sidebar(self) -> bool {
@@ -133,6 +136,8 @@ pub enum Focus {
 /// coming back to a tab comes back to where you were in it.
 #[derive(Debug)]
 pub struct Document {
+    /// Which document this is, whichever pane or tab it moves to.
+    id: panes::DocId,
     buffer: Buffer,
     scroll: usize,
 }
@@ -140,10 +145,13 @@ pub struct Document {
 /// The running editor.
 #[derive(Debug)]
 pub struct App {
-    /// The open documents, in tab order.
+    /// Every open document, in no particular order: the panes say which are
+    /// where, and in which order.
     docs: Vec<Document>,
-    /// Which one is being edited.
-    active: usize,
+    /// The panes, and how they divide the screen.
+    panes: panes::Panes,
+    /// The id the next document opened will take.
+    next_doc: panes::DocId,
     palette: Palette,
     viewport: Rect,
     /// A transient message, shown until the next key.
@@ -176,21 +184,30 @@ pub struct App {
     last_undone: bool,
     /// A file asked for that should be opened once it has been created.
     open_when_created: Option<std::path::PathBuf>,
-    /// How far the tab strip is scrolled, in cells.
-    tab_scroll: u16,
-    /// A tab being dragged along the strip.
+    /// A tab being dragged along the strip, or to another pane.
     tab_drag: Option<tabs::TabDrag>,
+    /// A divider being dragged, by its index.
+    divider_drag: Option<usize>,
 }
 
 impl App {
-    /// The document being edited.
+    /// The document being edited: the active tab of the focused pane.
     fn doc(&self) -> &Document {
-        &self.docs[self.active]
+        let id = self.panes.focused().current();
+        id.and_then(|id| self.docs.iter().find(|doc| doc.id == id))
+            .expect("the focused pane always shows a document")
     }
 
     /// The document being edited, to change.
     fn doc_mut(&mut self) -> &mut Document {
-        &mut self.docs[self.active]
+        let id = self.panes.focused().current();
+        id.and_then(move |id| self.docs.iter_mut().find(|doc| doc.id == id))
+            .expect("the focused pane always shows a document")
+    }
+
+    /// One document by id.
+    fn doc_by(&self, id: panes::DocId) -> Option<&Document> {
+        self.docs.iter().find(|doc| doc.id == id)
     }
 
     /// An editor over `buffer`, driven by `keymap`.
@@ -198,8 +215,9 @@ impl App {
     pub fn new(buffer: Buffer, palette: Palette, keymap: Keymap<Command>) -> Self {
         let viewport = Rect::new(0, 0, 80, 24);
         let mut app = Self {
-            docs: vec![Document { buffer, scroll: 0 }],
-            active: 0,
+            docs: vec![Document { id: 0, buffer, scroll: 0 }],
+            panes: panes::Panes::single(vec![0]),
+            next_doc: 1,
             palette,
             viewport,
             message: None,
@@ -219,8 +237,8 @@ impl App {
             undo_offer: false,
             last_undone: false,
             open_when_created: None,
-            tab_scroll: 0,
             tab_drag: None,
+            divider_drag: None,
         };
         app.relayout();
         app
@@ -286,17 +304,10 @@ impl App {
         }
     }
 
-    /// Where the text and the status line go.
+    /// Where the focused pane's text and the status line go.
     fn areas(&self) -> (Rect, Rect) {
         let area = self.viewport;
-        let beside = self.sidebar_area().map_or(0, |sidebar| sidebar.width);
-        let above = u16::from(self.tabs_area().is_some());
-        let text = Rect {
-            x: area.x + beside,
-            y: area.y + above,
-            width: area.width - beside,
-            height: area.height.saturating_sub(1 + above),
-        };
+        let text = self.text_area_of(self.panes.focus()).unwrap_or(Rect::new(area.x, area.y, 0, 0));
         let status =
             Rect { y: area.bottom().saturating_sub(1), height: area.height.min(1), ..area };
         (text, status)
@@ -320,7 +331,7 @@ impl App {
         );
         hits.push(cells(status), Target::Status, false);
         self.layout_sidebar(&mut hits);
-        self.layout_tabs(&mut hits);
+        self.layout_panes(&mut hits);
 
         let parts = self.status_parts(status);
         if let Some(files) = parts.files {
@@ -370,7 +381,7 @@ impl App {
         let undo = undo.filter(|undo| undo.right() <= status.right());
         // With a strip on screen the tabs carry their own crosses; without
         // one, this is how the open file is closed with the mouse.
-        let close = (self.tabs_area().is_none() && status.width > 10)
+        let close = (self.strip_area(self.panes.focus()).is_none() && status.width > 10)
             .then(|| Rect::new(status.right() - 3, status.y, 3, 1));
         StatusParts { files, undo, close, text }
     }
@@ -572,7 +583,14 @@ impl App {
             Command::Rename => return self.ask_rename(),
             Command::Delete => return self.delete_selected(),
             Command::ToggleIgnored => return self.toggle_ignored(),
-            Command::CloseTab => return self.close_tab(self.active),
+            Command::CloseTab => {
+                let active = self.panes.focused().active;
+                return self.close_tab(self.panes.focus(), active);
+            }
+            Command::SplitBeside => return self.split_pane(nun_ui::Dir::Beside),
+            Command::SplitBelow => return self.split_pane(nun_ui::Dir::Below),
+            Command::ClosePane => return self.close_pane(self.panes.focus()),
+            Command::NextPane => return self.focus_next_pane(),
             Command::NextTab => return self.step_tab(1),
             Command::PreviousTab => return self.step_tab(-1),
         }
@@ -649,7 +667,12 @@ impl App {
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
                 if target.is_some_and(Target::in_tabs) =>
             {
-                self.tab_scroll_by(mouse.kind == MouseEventKind::ScrollDown)
+                let pane = self
+                    .panes
+                    .layout()
+                    .pane_at(self.panes_area(), mouse.column, mouse.row)
+                    .unwrap_or_else(|| self.panes.focus());
+                self.tab_scroll_by(mouse.kind == MouseEventKind::ScrollDown, pane)
             }
             // A question or a menu on screen takes every button, not only the
             // left one: closing a tab behind a prompt would answer it about
@@ -687,12 +710,14 @@ impl App {
                 }
             }
             MouseEventKind::Drag(MouseButton::Left) => self
-                .tab_drag_to(mouse.column, mouse.row)
+                .divider_drag_to(mouse.column, mouse.row)
+                .or_else(|| self.tab_drag_to(mouse.column, mouse.row))
                 .or_else(|| self.sidebar_drag(mouse.column, mouse.row))
                 .unwrap_or_else(|| self.drag_to(mouse.column, mouse.row, now))
                 .and(hovered),
             MouseEventKind::Up(MouseButton::Left) => self
-                .tab_release()
+                .divider_release()
+                .or_else(|| self.tab_release())
                 .or_else(|| self.sidebar_release())
                 .unwrap_or_else(|| self.release(mouse))
                 .and(hovered),
@@ -728,7 +753,7 @@ impl App {
             // The same button both ways: after an undo it offers the redo.
             Target::StatusClose => {
                 self.acknowledge();
-                self.close_tab(self.active)
+                self.close_tab(self.panes.focus(), self.panes.focused().active)
             }
             Target::StatusUndo if self.last_undone => self.redo_file_op(),
             Target::StatusUndo => self.undo_file_op(),
@@ -744,9 +769,22 @@ impl App {
                 self.acknowledge();
                 self.tab_press(mouse, target)
             }
+            Target::Divider(index) => {
+                self.acknowledge();
+                // A double-click on a divider evens the two sides.
+                let double = self.clicks.press(mouse.column, mouse.row, now) > 1;
+                self.divider_press(index, double)
+            }
             _ => {
                 self.acknowledge();
                 self.focus = Focus::Editor;
+                // A click in a pane's text works that pane, so it takes the
+                // keyboard before the caret is placed in it.
+                if let Some(pane) =
+                    self.panes.layout().pane_at(self.panes_area(), mouse.column, mouse.row)
+                {
+                    self.panes.set_focus(pane);
+                }
                 self.press(mouse, target, now)
             }
         }
@@ -866,34 +904,10 @@ impl App {
         // viewport in the editor and a fixed grid in the tests. The sidebar
         // takes columns from the left and the tab strip a row from the top,
         // the same way the layout pass reckons them.
-        let beside = self.sidebar_area().map_or(0, |sidebar| sidebar.width).min(area.width);
-        let above = u16::from(self.tabs_area().is_some()).min(area.height);
-        let text_area = Rect {
-            x: area.x + beside,
-            y: area.y + above,
-            width: area.width - beside,
-            height: area.height.saturating_sub(1 + above),
-        };
         let status =
             Rect { y: area.bottom().saturating_sub(1), height: area.height.min(1), ..area };
-        EditorView::new(&self.doc().buffer, &self.palette)
-            .scrolled_to(self.doc().scroll)
-            .with_drop_marker(self.drop_marker())
-            .render(text_area, cells);
-
+        self.render_panes(area, cells);
         self.render_sidebar(cells);
-        if above > 0 {
-            let strip = Rect { x: text_area.x, y: area.y, width: text_area.width, height: 1 };
-            let hovered = match self.hover.current() {
-                Some(Target::Tab(index) | Target::TabClose(index)) => Some(index),
-                _ => None,
-            };
-            TabStrip::new(&self.tab_items(), &self.palette, self.active)
-                .hovered(hovered)
-                .scrolled_by(self.tab_scroll)
-                .drop_at(self.tab_drag.and_then(|drag| drag.drop_at))
-                .render(strip, cells);
-        }
 
         if status.height > 0 {
             self.render_status(status, cells);

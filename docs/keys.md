@@ -35,3 +35,7 @@ This file is generated from the source by `nun keys`. Do not edit it by hand.
 | Close tab | `tab.close` | `Ctrl+W`, `Cmd+W` | `Ctrl+W` |
 | Next tab | `tab.next` | `Ctrl+PageDown` | `Ctrl+PageDown` |
 | Previous tab | `tab.previous` | `Ctrl+PageUp` | `Ctrl+PageUp` |
+| Split beside | `pane.split_beside` | `Ctrl+K V` | `Ctrl+K V` |
+| Split below | `pane.split_below` | `Ctrl+K B` | `Ctrl+K B` |
+| Close pane | `pane.close` | `Ctrl+K W` | `Ctrl+K W` |
+| Next pane | `pane.next` | `Ctrl+K O` | `Ctrl+K O` |

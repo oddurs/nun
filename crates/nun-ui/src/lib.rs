@@ -12,6 +12,7 @@
 
 mod events;
 mod harness;
+mod layout;
 mod lifecycle;
 mod menu;
 mod screen;
@@ -23,6 +24,7 @@ mod view;
 
 pub use events::{Event, Events};
 pub use harness::{Harness, changed_cells, changed_rows};
+pub use layout::{Dir, Divider, Edge, Layout, Side};
 pub use lifecycle::{
     Capabilities, CrosstermControl, TerminalControl, TerminalGuard, install_panic_hook,
 };
