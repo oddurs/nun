@@ -2,8 +2,9 @@
 id: 16
 title: Hit-testing and hover
 type: feature
-status: backlog
+status: done
 milestone: m2
+assignee: Oddur Sigurdsson
 depends_on:
 - 15
 created: 2026-09-10
@@ -29,11 +30,15 @@ per-target dwell delay.
 
 ## Acceptance criteria
 
-- [ ] Resolution is O(log n) or better in the number of regions
-- [ ] Overlays such as the palette correctly capture clicks beneath them
-- [ ] Hover enter/leave fire exactly once per crossing
+- [x] Resolution is O(log n) or better in the number of regions
+- [x] Overlays such as the palette correctly capture clicks beneath them
+- [x] Hover enter/leave fire exactly once per crossing
 - [ ] Cell-to-buffer-position mapping is correct across tabs, wide chars and folds
 
 ## 2026-09-19
 
 0015 added Screen::track_motion(bool): call it each frame with whether a hover target is on screen. 1003 support is not probed; a terminal without it simply sends no hover. If that should be detected rather than silently absent (rule 6), DECRQM CSI ?1003$p answers unambiguously on at least iTerm2; treat a timeout as unknown and still enable.
+
+## 2026-09-19
+
+Criterion 4 is met for tab characters, wide characters, combining marks and emoji, including a property test that position_at round-trips nun-core's column_of. Folds do not exist yet (0025, m3), so that part is left open and noted on 0025.

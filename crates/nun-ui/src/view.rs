@@ -41,6 +41,79 @@ impl<'a> EditorView<'a> {
         let digits = self.buffer.len_lines().to_string().len();
         u16::try_from(digits).unwrap_or(u16::MAX).saturating_add(GUTTER_PADDING)
     }
+
+    /// The buffer position drawn at cell `(column, row)` of `area`.
+    ///
+    /// Uses the same walk over grapheme clusters and display widths as drawing,
+    /// so a click lands on exactly the character painted under it: past a wide
+    /// character rather than inside it, on the right side of an expanded tab,
+    /// and at the end of the line for a click beyond its last character. A row
+    /// below the last line resolves to the last line.
+    ///
+    /// Returns `None` for the gutter and for anything outside `area`.
+    #[must_use]
+    pub fn position_at(&self, area: Rect, column: u16, row: u16) -> Option<usize> {
+        let gutter = self.gutter_width();
+        if column < area.left().saturating_add(gutter)
+            || column >= area.right()
+            || row < area.top()
+            || row >= area.bottom()
+        {
+            return None;
+        }
+
+        let last = self.buffer.len_lines().saturating_sub(1);
+        let line = (self.scroll + usize::from(row - area.top())).min(last);
+        let target = usize::from(column - area.left() - gutter);
+
+        let text = self.buffer.line_text(line);
+        let mut end = self.buffer.line_start(line);
+        for cell in self.cells_of(line, &text) {
+            if cell.column + cell.width > target {
+                return Some(cell.char_index);
+            }
+            end = cell.char_index + cell.chars;
+        }
+        Some(end)
+    }
+
+    /// The grapheme clusters of `line`, whose text is `text`, as they are
+    /// laid out on screen.
+    ///
+    /// Drawing and [`EditorView::position_at`] both walk this, which is what
+    /// stops a click and the glyph under it from ever disagreeing.
+    fn cells_of<'t>(&self, line: usize, text: &'t str) -> impl Iterator<Item = LaidOut<'t>> {
+        let text = text.strip_suffix('\n').unwrap_or(text);
+        let tab_width = self.buffer.tab_width();
+
+        let mut column = 0usize;
+        let mut char_index = self.buffer.line_start(line);
+        text.graphemes(true).map(move |cluster| {
+            let width = if cluster == "\t" {
+                tab_width - (column % tab_width)
+            } else {
+                cluster.width().max(1)
+            };
+            let chars = cluster.chars().count();
+            let laid = LaidOut { cluster, column, width, char_index, chars };
+            column += width;
+            char_index += chars;
+            laid
+        })
+    }
+}
+
+/// One grapheme cluster, placed.
+struct LaidOut<'t> {
+    cluster: &'t str,
+    /// Display column from the start of the line.
+    column: usize,
+    /// Cells it occupies.
+    width: usize,
+    /// Char index of its first char.
+    char_index: usize,
+    /// Chars it is made of.
+    chars: usize,
 }
 
 impl Widget for EditorView<'_> {
@@ -113,26 +186,17 @@ impl EditorView<'_> {
         gutter: u16,
         caret: usize,
     ) {
-        let text = self.buffer.line_text(line);
-        let text = text.strip_suffix('\n').unwrap_or(&text);
-        let line_start = self.buffer.line_start(line);
-        let tab_width = self.buffer.tab_width();
         let selections = self.buffer.selections();
+        let text = self.buffer.line_text(line);
 
         let mut x = area.left() + gutter;
-        let mut column = 0usize;
-        let mut char_index = line_start;
+        let mut char_index = self.buffer.line_start(line);
 
-        for cluster in text.graphemes(true) {
+        for LaidOut { cluster, width, char_index: at, chars, .. } in self.cells_of(line, &text) {
             if x >= area.right() {
                 break;
             }
-
-            let width = if cluster == "\t" {
-                tab_width - (column % tab_width)
-            } else {
-                cluster.width().max(1)
-            };
+            char_index = at;
 
             let selected = selections
                 .ranges()
@@ -166,8 +230,7 @@ impl EditorView<'_> {
 
             let Ok(step) = u16::try_from(width) else { break };
             x += step;
-            column += width;
-            char_index += cluster.chars().count();
+            char_index += chars;
         }
 
         // The caret may sit one past the last character on the line.

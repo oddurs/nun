@@ -93,6 +93,25 @@ impl Events {
         self.receiver.recv().unwrap_or(Event::Closed)
     }
 
+    /// Wait for the next event, but no later than `deadline`.
+    ///
+    /// `None` means the deadline passed first. With no deadline this is
+    /// [`Events::next`]: the loop only ever sleeps with a timeout while
+    /// something is actually pending — a hover dwell, a chord, an autoscroll —
+    /// so an idle editor still wakes for nothing.
+    #[must_use]
+    pub fn next_before(&self, deadline: Option<std::time::Instant>) -> Option<Event> {
+        let Some(deadline) = deadline else {
+            return Some(self.next());
+        };
+        let timeout = deadline.saturating_duration_since(std::time::Instant::now());
+        match self.receiver.recv_timeout(timeout) {
+            Ok(event) => Some(event),
+            Err(mpsc::RecvTimeoutError::Timeout) => None,
+            Err(mpsc::RecvTimeoutError::Disconnected) => Some(Event::Closed),
+        }
+    }
+
     /// Take everything already queued without waiting.
     ///
     /// Used to coalesce a burst — a held-down key, or a flood of mouse motion —

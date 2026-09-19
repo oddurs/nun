@@ -746,6 +746,7 @@ dependencies = [
  "crossterm",
  "nun-config",
  "nun-core",
+ "nun-input",
  "nun-theme",
  "nun-ui",
  "ratatui",
@@ -776,6 +777,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "nun-input"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+]
+
+[[package]]
 name = "nun-theme"
 version = "0.1.0"
 dependencies = [
@@ -789,6 +797,7 @@ dependencies = [
  "crossterm",
  "nun-core",
  "nun-theme",
+ "proptest",
  "ratatui",
  "rustix",
  "signal-hook 0.4.4",
