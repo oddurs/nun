@@ -39,3 +39,5 @@ This file is generated from the source by `nun keys`. Do not edit it by hand.
 | Split below | `pane.split_below` | `Ctrl+K B` | `Ctrl+K B` |
 | Close pane | `pane.close` | `Ctrl+K W` | `Ctrl+K W` |
 | Next pane | `pane.next` | `Ctrl+K O` | `Ctrl+K O` |
+| Go to file | `palette.files` | `Ctrl+P`, `Cmd+P` | `Ctrl+P` |
+| Run a command | `palette.commands` | `Ctrl+Shift+P`, `Cmd+Shift+P`, `F1` | `F1` |

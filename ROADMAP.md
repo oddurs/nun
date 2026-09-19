@@ -21,11 +21,7 @@
 
 ## m2 — Mouse and shell
 
-`#########·` 89% · 8 of 9 done · due 2026-10-08
-
-### backlog
-
-- [ ] [`0021`](https://github.com/oddurs/nun/blob/main/cairn/items/0021-command-palette.md) Command palette <sup>feature · p0</sup>
+`##########` 100% · 9 of 9 done · due 2026-10-08
 
 ### done
 
@@ -35,6 +31,7 @@
 - [x] [`0018`](https://github.com/oddurs/nun/blob/main/cairn/items/0018-file-tree-sidebar.md) File tree sidebar <sup>feature · p0</sup>
 - [x] [`0019`](https://github.com/oddurs/nun/blob/main/cairn/items/0019-tabs.md) Tabs <sup>feature · p1</sup>
 - [x] [`0020`](https://github.com/oddurs/nun/blob/main/cairn/items/0020-splits-and-drag-to-split.md) Splits and drag-to-split <sup>feature · p1</sup>
+- [x] [`0021`](https://github.com/oddurs/nun/blob/main/cairn/items/0021-command-palette.md) Command palette <sup>feature · p0</sup>
 - [x] [`0022`](https://github.com/oddurs/nun/blob/main/cairn/items/0022-keymap-resolution-and-kitty-protocol-negotiation.md) Keymap resolution and Kitty protocol negotiation <sup>feature · p0</sup>
 - [x] [`0052`](https://github.com/oddurs/nun/blob/main/cairn/items/0052-flush-pending-mouse-input-before-leaving-raw-mode.md) Flush pending mouse input before leaving raw mode <sup>bug · p1</sup>
 

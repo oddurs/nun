@@ -12,7 +12,7 @@ will mostly never open.
 Early. The editor is being built one milestone at a time; the roadmap lives in
 [`cairn/`](cairn/) and is the source of truth.
 
-What works today — milestone 1 and most of milestone 2, "mouse and shell":
+What works today — milestones 1 and 2, "buffer and screen" and "mouse and shell":
 
 ```sh
 nun <file>         # open it, edit it, save it
@@ -85,9 +85,14 @@ onto a pane's edge to split — the preview shows the half it will take. Drag
 the divider between two panes to resize them, double-click it to even them
 out, and closing a pane's last tab closes the pane and gives its space back.
 
-Not there yet: the command palette, syntax highlighting, search,
-language servers and git. Those are the rest of milestone 2 and milestones 3
-to 5.
+The palette is `Ctrl+P`, or the button in the status line. It opens on the
+project's files; `>` runs a command and shows the key that does the same, `:`
+goes to a line, and `?` lists the prefixes. Matching happens off the drawing
+thread, so it stays answerable on a large repository, and files you have
+opened before come first among equals. Alt+Enter opens the file in a split.
+
+Not there yet: syntax highlighting, search, language servers and git. Those
+are milestones 3 to 5.
 
 Do not install this yet.
 

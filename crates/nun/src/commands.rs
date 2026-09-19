@@ -54,6 +54,10 @@ pub enum Command {
     ClosePane,
     /// Go to the next pane.
     NextPane,
+    /// Open the palette on the project's files.
+    Palette,
+    /// Open the palette on the commands.
+    Commands,
 }
 
 impl Command {
@@ -77,6 +81,8 @@ impl Command {
         Self::SplitBelow,
         Self::ClosePane,
         Self::NextPane,
+        Self::Palette,
+        Self::Commands,
     ];
 
     /// The name used in `[keys]` in `nun.toml`.
@@ -101,6 +107,8 @@ impl Command {
             Self::SplitBelow => "pane.split_below",
             Self::ClosePane => "pane.close",
             Self::NextPane => "pane.next",
+            Self::Palette => "palette.files",
+            Self::Commands => "palette.commands",
         }
     }
 
@@ -126,6 +134,8 @@ impl Command {
             Self::SplitBelow => "Split below",
             Self::ClosePane => "Close pane",
             Self::NextPane => "Next pane",
+            Self::Palette => "Go to file",
+            Self::Commands => "Run a command",
         }
     }
 
@@ -167,6 +177,8 @@ const BASIC: &[(&str, Command)] = &[
     ("ctrl+k b", Command::SplitBelow),
     ("ctrl+k w", Command::ClosePane),
     ("ctrl+k o", Command::NextPane),
+    ("ctrl+p", Command::Palette),
+    ("f1", Command::Commands),
 ];
 
 /// Bindings that need the Kitty keyboard protocol, added over [`BASIC`].
@@ -181,6 +193,9 @@ const FULL: &[(&str, Command)] = &[
     ("cmd+q", Command::Quit),
     ("cmd+w", Command::CloseTab),
     ("cmd+b", Command::ToggleSidebar),
+    ("cmd+p", Command::Palette),
+    ("cmd+shift+p", Command::Commands),
+    ("ctrl+shift+p", Command::Commands),
 ];
 
 /// The default bindings for `set`.
