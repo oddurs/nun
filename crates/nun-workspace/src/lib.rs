@@ -13,6 +13,9 @@
 //!   every one of them. Delete moves the entry into a nun-owned trash rather
 //!   than removing it, because a delete that cannot be undone is not one a
 //!   person should be able to reach with a single click.
+//! - [`Jobs`] does the actual filesystem work — listing directories and
+//!   running operations — on a worker thread, and reports each result as a
+//!   message, so nothing the editor draws ever waits on a disk.
 //! - [`Watcher`] watches the expanded directories and reports, coalesced per
 //!   directory, that something in one of them changed. It never touches the
 //!   tree itself: the editor state has one owner on the main thread, so the
@@ -21,12 +24,14 @@
 //! No terminal dependency; all of this is unit tested directly against temporary
 //! directories.
 
+pub mod jobs;
 pub mod ops;
 mod order;
 pub mod tree;
 pub mod watch;
 
+pub use jobs::{Done, Job, Jobs, trash_or_temp};
 pub use ops::{Change, FsHistory, OpError, Operation, default_trash_dir};
 pub use order::compare_names;
-pub use tree::{FileTree, Kind, Row};
+pub use tree::{Entry, FileTree, Kind, Row, list_dir};
 pub use watch::{FsChange, WatchError, Watcher};

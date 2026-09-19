@@ -32,6 +32,13 @@ impl Palette {
         Style::default().fg(to_color(self.ramp.get(role))).bg(self.ground())
     }
 
+    /// One role as a foreground only, over whatever background is already
+    /// there — for a glyph on a row that has its own wash.
+    #[must_use]
+    pub fn ink(&self, role: Role) -> Style {
+        Style::default().fg(to_color(self.ramp.get(role)))
+    }
+
     /// One role as a background, with legible text on top.
     #[must_use]
     pub fn on(&self, role: Role, text: Role) -> Style {

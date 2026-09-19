@@ -113,7 +113,8 @@ impl App {
                 }
                 _ => Mode::Char { anchor: at },
             },
-            Target::Status => return Outcome::Continue,
+            // Everything else on screen handles its own press.
+            _ => return Outcome::Continue,
         };
 
         self.drag = Some(Drag { mode, pointer: (column, row) });

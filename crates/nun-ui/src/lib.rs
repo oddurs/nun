@@ -13,9 +13,11 @@
 mod events;
 mod harness;
 mod lifecycle;
+mod menu;
 mod screen;
 mod signals;
 mod style;
+mod tree;
 mod view;
 
 pub use events::{Event, Events};
@@ -23,7 +25,9 @@ pub use harness::{Harness, changed_cells, changed_rows};
 pub use lifecycle::{
     Capabilities, CrosstermControl, TerminalControl, TerminalGuard, install_panic_hook,
 };
+pub use menu::{Menu, MenuItem};
 pub use screen::Screen;
 pub use signals::{Signal, suspend_self, watch as watch_signals};
 pub use style::Palette;
+pub use tree::{TreeButton, TreeView};
 pub use view::EditorView;

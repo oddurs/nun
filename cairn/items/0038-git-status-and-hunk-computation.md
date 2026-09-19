@@ -7,7 +7,7 @@ milestone: m5
 depends_on:
 - 37
 created: 2026-09-10
-updated: 2026-09-10
+updated: 2026-09-19
 priority: p0
 effort: m
 area: vcs
@@ -29,3 +29,7 @@ what is actually on the screen. Recompute is debounced and off-thread.
 - [ ] A large repository does not stall the editor on open
 - [ ] Correct in a worktree, a submodule, and a detached HEAD
 - [ ] Absence of git is not an error; marks are simply absent
+
+## 2026-09-19
+
+0018 left the file tree's rows uncoloured by git status: its criterion 5 depends on this item. Once nun-vcs can report per-path status, colour nun-ui's TreeView rows from it (Role::Added / Changed / Removed) and tick 0018's last criterion.

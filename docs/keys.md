@@ -26,3 +26,9 @@ This file is generated from the source by `nun keys`. Do not edit it by hand.
 | Redo | `edit.redo` | `Ctrl+Y`, `Ctrl+Shift+Z`, `Cmd+Shift+Z` | `Ctrl+Y` |
 | Select all | `edit.select_all` | `Ctrl+A`, `Cmd+A` | `Ctrl+A` |
 | Quit | `app.quit` | `Ctrl+Q`, `Cmd+Q`, `Ctrl+W`, `Cmd+W` | `Ctrl+Q`, `Ctrl+W` |
+| Toggle the file tree | `view.toggle_sidebar` | `Ctrl+B`, `Cmd+B` | `Ctrl+B` |
+| New file | `files.new_file` | `Ctrl+K N` | `Ctrl+K N` |
+| New folder | `files.new_folder` | `Ctrl+K Shift+N` | `Ctrl+K Shift+N` |
+| Rename | `files.rename` | `F2` | `F2` |
+| Delete | `files.delete` | `Ctrl+K Delete` | `Ctrl+K Delete` |
+| Show or hide ignored files | `files.toggle_ignored` | `Ctrl+K I` | `Ctrl+K I` |

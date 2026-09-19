@@ -21,11 +21,10 @@
 
 ## m2 — Mouse and shell
 
-`######····` 56% · 5 of 9 done · due 2026-10-08
+`#######···` 67% · 6 of 9 done · due 2026-10-08
 
 ### backlog
 
-- [ ] [`0018`](https://github.com/oddurs/nun/blob/main/cairn/items/0018-file-tree-sidebar.md) File tree sidebar <sup>feature · p0</sup>
 - [ ] [`0019`](https://github.com/oddurs/nun/blob/main/cairn/items/0019-tabs.md) Tabs <sup>feature · p1</sup>
 - [ ] [`0020`](https://github.com/oddurs/nun/blob/main/cairn/items/0020-splits-and-drag-to-split.md) Splits and drag-to-split <sup>feature · p1</sup>
 - [ ] [`0021`](https://github.com/oddurs/nun/blob/main/cairn/items/0021-command-palette.md) Command palette <sup>feature · p0</sup>
@@ -35,6 +34,7 @@
 - [x] [`0015`](https://github.com/oddurs/nun/blob/main/cairn/items/0015-mouse-event-plumbing.md) Mouse event plumbing <sup>feature · p0</sup>
 - [x] [`0016`](https://github.com/oddurs/nun/blob/main/cairn/items/0016-hit-testing-and-hover.md) Hit-testing and hover <sup>feature · p0</sup>
 - [x] [`0017`](https://github.com/oddurs/nun/blob/main/cairn/items/0017-click-drag-and-multi-click-selection.md) Click, drag and multi-click selection <sup>feature · p0</sup>
+- [x] [`0018`](https://github.com/oddurs/nun/blob/main/cairn/items/0018-file-tree-sidebar.md) File tree sidebar <sup>feature · p0</sup>
 - [x] [`0022`](https://github.com/oddurs/nun/blob/main/cairn/items/0022-keymap-resolution-and-kitty-protocol-negotiation.md) Keymap resolution and Kitty protocol negotiation <sup>feature · p0</sup>
 - [x] [`0052`](https://github.com/oddurs/nun/blob/main/cairn/items/0052-flush-pending-mouse-input-before-leaving-raw-mode.md) Flush pending mouse input before leaving raw mode <sup>bug · p1</sup>
 
@@ -82,7 +82,7 @@
 
 ## m6 — Polish until it is boring
 
-`··········` 0% · 0 of 6 done · due 2026-12-17
+`··········` 0% · 0 of 7 done · due 2026-12-17
 
 ### backlog
 
@@ -92,4 +92,5 @@
 - [ ] [`0047`](https://github.com/oddurs/nun/blob/main/cairn/items/0047-first-run.md) First run <sup>feature · p1</sup>
 - [ ] [`0048`](https://github.com/oddurs/nun/blob/main/cairn/items/0048-one-command-install.md) One-command install <sup>chore · p1</sup>
 - [ ] [`0049`](https://github.com/oddurs/nun/blob/main/cairn/items/0049-freeze-and-ship-0-1.md) Freeze and ship 0.1 <sup>chore · p0</sup>
+- [ ] [`0053`](https://github.com/oddurs/nun/blob/main/cairn/items/0053-load-and-save-the-buffer-off-the-main-thread.md) Load and save the buffer off the main thread <sup>chore · p1</sup>
 
