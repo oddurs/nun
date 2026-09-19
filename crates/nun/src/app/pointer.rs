@@ -190,6 +190,14 @@ impl App {
         Outcome::Redraw
     }
 
+    /// Forget a drag whose release never arrived — the button let go outside
+    /// the window, say. Left alone, autoscroll would keep re-applying it over
+    /// whatever the keyboard does next.
+    pub(super) fn end_drag(&mut self) {
+        self.drag = None;
+        self.autoscroll = None;
+    }
+
     /// Where dragged text would land, for drawing.
     pub(super) fn drop_marker(&self) -> Option<usize> {
         match self.drag.as_ref().map(|drag| &drag.mode) {
@@ -635,6 +643,30 @@ mod tests {
         pointer.press(&mut app, GUTTER, 2, KeyModifiers::NONE);
         pointer.drag(&mut app, GUTTER, 9);
         pointer.release(&mut app, GUTTER, 9, KeyModifiers::NONE);
+        assert_eq!(app.deadline(), None);
+    }
+
+    #[test]
+    fn a_key_ends_a_drag_whose_release_never_arrived() {
+        let mut app = app(&"line\n".repeat(40), 10);
+        let mut pointer = Pointer::new();
+        pointer.press(&mut app, GUTTER, 2, KeyModifiers::NONE);
+        pointer.drag(&mut app, GUTTER, 9);
+        app.handle(Event::Key(KeyEvent::from(KeyCode::Right)));
+        assert_eq!(app.deadline(), None, "autoscroll stopped");
+        let caret = app.buffer().selections().primary();
+        let deadline = Instant::now() + Duration::from_secs(1);
+        app.tick(deadline);
+        assert_eq!(app.buffer().selections().primary(), caret, "the keyboard's caret stands");
+    }
+
+    #[test]
+    fn losing_focus_ends_a_drag() {
+        let mut app = app(&"line\n".repeat(40), 10);
+        let mut pointer = Pointer::new();
+        pointer.press(&mut app, GUTTER, 2, KeyModifiers::NONE);
+        pointer.drag(&mut app, GUTTER, 9);
+        app.handle(Event::Focus(false));
         assert_eq!(app.deadline(), None);
     }
 

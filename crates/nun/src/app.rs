@@ -292,11 +292,8 @@ impl App {
             Event::Focus(true) => Outcome::Continue,
             // The pointer may be anywhere by the time focus comes back.
             Event::Focus(false) => {
-                if self.hover.clear(now).is_none() {
-                    Outcome::Continue
-                } else {
-                    Outcome::Redraw
-                }
+                self.end_drag();
+                if self.hover.clear(now).is_none() { Outcome::Continue } else { Outcome::Redraw }
             }
         }
     }
@@ -307,6 +304,7 @@ impl App {
         if event.kind == KeyEventKind::Release {
             return Outcome::Continue;
         }
+        self.end_drag();
         let Some(key) = to_key(&event) else { return Outcome::Continue };
 
         let mut outcome = Outcome::Continue;
