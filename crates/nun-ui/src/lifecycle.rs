@@ -21,6 +21,9 @@ pub struct Capabilities {
     /// Switch to the alternate screen, so the user's scrollback survives.
     pub alternate_screen: bool,
     /// Enable SGR mouse reporting with button-motion tracking.
+    ///
+    /// Motion with no button held is *not* part of this; see
+    /// [`TerminalGuard::track_motion`].
     pub mouse: bool,
     /// Negotiate the Kitty keyboard protocol for real modifier reporting.
     pub keyboard_enhancement: bool,
@@ -83,12 +86,24 @@ pub trait TerminalControl {
     ///
     /// Whatever the platform reports.
     fn enable_mouse(&mut self) -> io::Result<()>;
-    /// Turn it off.
+    /// Turn it off, including any-motion tracking if that is on.
     ///
     /// # Errors
     ///
     /// Whatever the platform reports.
     fn disable_mouse(&mut self) -> io::Result<()>;
+    /// Report motion with no button held, for hover.
+    ///
+    /// # Errors
+    ///
+    /// Whatever the platform reports.
+    fn enable_motion_tracking(&mut self) -> io::Result<()>;
+    /// Drop back to reporting motion only while a button is held.
+    ///
+    /// # Errors
+    ///
+    /// Whatever the platform reports.
+    fn disable_motion_tracking(&mut self) -> io::Result<()>;
     /// Push keyboard-enhancement flags.
     ///
     /// # Errors
@@ -126,6 +141,7 @@ pub struct TerminalGuard<C: TerminalControl> {
     raw: bool,
     alternate: bool,
     mouse: bool,
+    motion: bool,
     keyboard_flags: bool,
     cursor_hidden: bool,
 }
@@ -146,6 +162,7 @@ impl<C: TerminalControl> TerminalGuard<C> {
             raw: false,
             alternate: false,
             mouse: false,
+            motion: false,
             keyboard_flags: false,
             cursor_hidden: false,
         };
@@ -198,6 +215,9 @@ impl<C: TerminalControl> TerminalGuard<C> {
             let _ = self.control.pop_keyboard_flags();
             KEYBOARD_FLAGS_PUSHED.fetch_sub(1, Ordering::SeqCst);
         }
+        // Turning mouse reporting off turns any-motion off with it, so there is
+        // nothing separate to undo — only the flag to clear.
+        self.motion = false;
         if std::mem::take(&mut self.mouse) {
             let _ = self.control.disable_mouse();
         }
@@ -207,6 +227,39 @@ impl<C: TerminalControl> TerminalGuard<C> {
         if std::mem::take(&mut self.raw) {
             let _ = self.control.disable_raw_mode();
         }
+    }
+
+    /// Turn any-motion tracking on or off.
+    ///
+    /// Motion with no button held is only worth its cost while something on
+    /// screen reacts to hover: left on, every twitch of the pointer is an event,
+    /// and on a busy terminal that floods the input stream. So it is off unless
+    /// asked for, and the caller turns it off again when the hover target goes.
+    ///
+    /// A no-op when mouse reporting was never entered, and when the state
+    /// already matches, so it is cheap to call once per frame.
+    ///
+    /// # Errors
+    ///
+    /// If the terminal write fails. The recorded state is left as it was
+    /// before the call.
+    pub fn track_motion(&mut self, on: bool) -> io::Result<()> {
+        if !self.mouse || self.motion == on {
+            return Ok(());
+        }
+        if on {
+            self.control.enable_motion_tracking()?;
+        } else {
+            self.control.disable_motion_tracking()?;
+        }
+        self.motion = on;
+        Ok(())
+    }
+
+    /// Whether any-motion tracking is on.
+    #[must_use]
+    pub const fn is_tracking_motion(&self) -> bool {
+        self.motion
     }
 
     /// Whether any terminal state is still entered.
@@ -270,6 +323,32 @@ pub fn emergency_restore() {
     let _ = terminal::disable_raw_mode();
 }
 
+/// Press, release, and motion while a button is held (1000, 1002), in SGR
+/// encoding (1006).
+///
+/// Written by hand rather than with crossterm's `EnableMouseCapture`, which also
+/// turns on any-motion tracking (1003) for the whole session. SGR is the only
+/// encoding asked for: it has no coordinate cap, where the legacy encoding stops
+/// at column 223, and it says which button was released.
+const MOUSE_ON: &str = "\x1b[?1000h\x1b[?1002h\x1b[?1006h";
+
+/// Report motion with no button held too.
+const MOTION_ON: &str = "\x1b[?1003h";
+
+/// Back to button-motion only.
+///
+/// The tracking modes are one setting, not independent switches: resetting
+/// 1003 turns tracking off altogether rather than falling back to 1002, so 1002
+/// is set again straight after.
+const MOTION_OFF: &str = "\x1b[?1003l\x1b[?1002h";
+
+fn write_sequence(sequence: &str) -> io::Result<()> {
+    use io::Write as _;
+    let mut out = io::stdout();
+    out.write_all(sequence.as_bytes())?;
+    out.flush()
+}
+
 /// The real terminal.
 #[derive(Debug, Default)]
 pub struct CrosstermControl;
@@ -292,11 +371,25 @@ impl TerminalControl for CrosstermControl {
     }
 
     fn enable_mouse(&mut self) -> io::Result<()> {
-        crossterm::execute!(io::stdout(), crossterm::event::EnableMouseCapture)
+        // The Windows console is switched into mouse mode through the console
+        // API, not escape sequences, and crossterm's disable expects the mode
+        // its own enable saved.
+        #[cfg(windows)]
+        return crossterm::execute!(io::stdout(), crossterm::event::EnableMouseCapture);
+        #[cfg(not(windows))]
+        write_sequence(MOUSE_ON)
     }
 
     fn disable_mouse(&mut self) -> io::Result<()> {
         crossterm::execute!(io::stdout(), crossterm::event::DisableMouseCapture)
+    }
+
+    fn enable_motion_tracking(&mut self) -> io::Result<()> {
+        write_sequence(MOTION_ON)
+    }
+
+    fn disable_motion_tracking(&mut self) -> io::Result<()> {
+        write_sequence(MOTION_OFF)
     }
 
     fn push_keyboard_flags(&mut self) -> io::Result<()> {
@@ -379,6 +472,12 @@ mod tests {
         }
         fn disable_mouse(&mut self) -> io::Result<()> {
             self.record("mouse off")
+        }
+        fn enable_motion_tracking(&mut self) -> io::Result<()> {
+            self.record("motion on")
+        }
+        fn disable_motion_tracking(&mut self) -> io::Result<()> {
+            self.record("motion off")
         }
         fn push_keyboard_flags(&mut self) -> io::Result<()> {
             self.record("flags push")
@@ -464,6 +563,100 @@ mod tests {
         let (recorder, log) = Recorder::failing_on("raw on");
         assert!(TerminalGuard::enter(recorder, Capabilities::default()).is_err());
         assert!(log.borrow().is_empty());
+    }
+
+    fn motion_steps(log: &Rc<RefCell<Vec<&'static str>>>) -> Vec<&'static str> {
+        log.borrow().iter().copied().filter(|step| step.starts_with("motion")).collect()
+    }
+
+    #[test]
+    fn motion_tracking_is_off_until_asked_for() {
+        let (recorder, log) = Recorder::new();
+        let guard = TerminalGuard::enter(recorder, Capabilities::default()).unwrap();
+        assert!(!guard.is_tracking_motion());
+        assert!(motion_steps(&log).is_empty(), "entering must not turn on any-motion");
+    }
+
+    #[test]
+    fn motion_tracking_follows_hover_and_is_only_written_on_a_change() {
+        let (recorder, log) = Recorder::new();
+        let mut guard = TerminalGuard::enter(recorder, Capabilities::default()).unwrap();
+
+        guard.track_motion(true).unwrap();
+        guard.track_motion(true).unwrap();
+        assert!(guard.is_tracking_motion());
+        guard.track_motion(false).unwrap();
+        guard.track_motion(false).unwrap();
+        assert!(!guard.is_tracking_motion());
+
+        assert_eq!(motion_steps(&log), vec!["motion on", "motion off"]);
+    }
+
+    #[test]
+    fn motion_tracking_is_never_turned_on_without_mouse_reporting() {
+        let (recorder, log) = Recorder::new();
+        let capabilities = Capabilities { mouse: false, ..Capabilities::default() };
+        let mut guard = TerminalGuard::enter(recorder, capabilities).unwrap();
+
+        guard.track_motion(true).unwrap();
+        assert!(!guard.is_tracking_motion());
+        assert!(motion_steps(&log).is_empty());
+    }
+
+    #[test]
+    fn a_failed_motion_write_leaves_the_recorded_state_alone() {
+        let (recorder, _log) = Recorder::failing_on("motion on");
+        let mut guard = TerminalGuard::enter(recorder, Capabilities::default()).unwrap();
+
+        assert!(guard.track_motion(true).is_err());
+        assert!(!guard.is_tracking_motion(), "it did not turn on, so it must not say it did");
+    }
+
+    #[test]
+    fn restoring_with_motion_on_turns_mouse_reporting_off_once() {
+        let (recorder, log) = Recorder::new();
+        let mut guard = TerminalGuard::enter(recorder, Capabilities::default()).unwrap();
+        guard.track_motion(true).unwrap();
+        drop(guard);
+
+        let log = log.borrow();
+        let mouse_off = log.iter().filter(|step| **step == "mouse off").count();
+        assert_eq!(mouse_off, 1, "{log:?}");
+        assert_eq!(log.last(), Some(&"raw off"));
+    }
+
+    #[test]
+    fn motion_is_off_again_after_a_restore_and_reentry() {
+        // The suspend path: restore, stop, enter again. The new guard starts
+        // with motion off, and the caller has to ask again.
+        let (recorder, _log) = Recorder::new();
+        let mut guard = TerminalGuard::enter(recorder, Capabilities::default()).unwrap();
+        guard.track_motion(true).unwrap();
+        guard.restore();
+        assert!(!guard.is_tracking_motion());
+        assert!(!guard.is_entered());
+    }
+
+    #[test]
+    fn the_mouse_sequences_ask_for_sgr_and_never_for_any_motion_on_entry() {
+        assert!(MOUSE_ON.contains("?1006h"), "SGR is what lifts the column-223 cap");
+        assert!(MOUSE_ON.contains("?1002h"));
+        assert!(!MOUSE_ON.contains("?1003"), "any-motion is for hover only");
+        assert!(!MOUSE_ON.contains("?1015"), "only one extended encoding is asked for");
+        assert_eq!(MOTION_ON, "\x1b[?1003h");
+        assert!(
+            MOTION_OFF.ends_with("?1002h"),
+            "resetting 1003 drops tracking entirely, so 1002 has to come back"
+        );
+    }
+
+    #[test]
+    fn the_exit_sequence_turns_off_everything_entry_and_hover_can_turn_on() {
+        let mut exit = String::new();
+        crossterm::Command::write_ansi(&crossterm::event::DisableMouseCapture, &mut exit).unwrap();
+        for mode in ["1000", "1002", "1003", "1006"] {
+            assert!(exit.contains(&format!("?{mode}l")), "{mode} is not reset on exit: {exit:?}");
+        }
     }
 
     #[test]

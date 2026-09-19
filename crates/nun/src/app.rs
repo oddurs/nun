@@ -617,6 +617,48 @@ mod tests {
     }
 
     #[test]
+    fn a_click_past_column_223_lands_where_it_was_made() {
+        // The legacy mouse encoding tops out at column 223. SGR does not, and
+        // nothing between the terminal and the buffer may narrow it again.
+        let mut app = App::new(
+            Buffer::from_text(&"x".repeat(400)),
+            Palette::new(derive(&Probe::builtin_dark())),
+        );
+        app.set_viewport(Rect::new(0, 0, 420, 6));
+
+        app.handle(click(3 + 300, 0));
+        assert_eq!(app.buffer().selections().primary().head, 300);
+    }
+
+    #[test]
+    fn a_click_below_row_223_lands_where_it_was_made() {
+        let mut app = App::new(
+            Buffer::from_text(&"line\n".repeat(400)),
+            Palette::new(derive(&Probe::builtin_dark())),
+        );
+        app.set_viewport(Rect::new(0, 0, 40, 302));
+
+        // Three digits of line number plus two columns of padding.
+        app.handle(click(5 + 2, 250));
+        let head = app.buffer().selections().primary().head;
+        assert_eq!(app.buffer().line_of(head), 250);
+    }
+
+    #[test]
+    fn pointer_motion_on_its_own_costs_no_frame() {
+        // With hover tracking on, motion arrives for every cell the pointer
+        // crosses. Until something reacts to it, none of it may redraw.
+        let mut app = app_over("hello\n");
+        let motion = Event::Mouse(crossterm::event::MouseEvent {
+            kind: MouseEventKind::Moved,
+            column: 4,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(app.handle(motion), Outcome::Continue);
+    }
+
+    #[test]
     fn clicking_in_the_gutter_does_not_move_the_caret() {
         let mut app = app_over("hello\n");
         app.handle(key(KeyCode::Right));

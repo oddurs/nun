@@ -7,7 +7,7 @@ milestone: m2
 depends_on:
 - 15
 created: 2026-09-10
-updated: 2026-09-10
+updated: 2026-09-19
 priority: p0
 effort: m
 area: input
@@ -33,3 +33,7 @@ per-target dwell delay.
 - [ ] Overlays such as the palette correctly capture clicks beneath them
 - [ ] Hover enter/leave fire exactly once per crossing
 - [ ] Cell-to-buffer-position mapping is correct across tabs, wide chars and folds
+
+## 2026-09-19
+
+0015 added Screen::track_motion(bool): call it each frame with whether a hover target is on screen. 1003 support is not probed; a terminal without it simply sends no hover. If that should be detected rather than silently absent (rule 6), DECRQM CSI ?1003$p answers unambiguously on at least iTerm2; treat a timeout as unknown and still enable.
