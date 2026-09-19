@@ -332,6 +332,17 @@ impl Buffer {
         for edit in &edits {
             inverse.push(self.apply_to_rope(edit));
         }
+        // Each inverse was taken in the coordinates of the text before the
+        // whole revision, but undo applies it to the text after it — where
+        // every edit below this one has already grown or shrunk what precedes
+        // it. Shift each by the net change of the edits beneath it, so undo can
+        // replay them highest-first just as the forward edits were applied.
+        let mut shift: isize = 0;
+        for (edit, inverse) in edits.iter().zip(inverse.iter_mut()).rev() {
+            inverse.start = inverse.start.saturating_add_signed(shift);
+            inverse.end = inverse.end.saturating_add_signed(shift);
+            shift += edit.inserted().cast_signed() - edit.removed().cast_signed();
+        }
         for edit in &edits {
             self.selections.map_through(edit);
         }
@@ -439,7 +450,7 @@ impl Buffer {
                 }
             })
             .collect();
-        self.edit(edits);
+        self.edit(merge_deletes(edits));
     }
 
     /// Delete the selection, or one grapheme after the caret when empty.
@@ -461,7 +472,7 @@ impl Buffer {
                 }
             })
             .collect();
-        self.edit(edits);
+        self.edit(merge_deletes(edits));
     }
 
     /// Reverse the most recent revision. Returns false when there is nothing to undo.
@@ -626,6 +637,145 @@ impl Buffer {
         self.history.commit();
     }
 
+    // ── pointer selection ───────────────────────────────────────────────────
+
+    /// The word, space run or symbol run under `char_idx`, as `(start, end)`:
+    /// what a double-click selects.
+    ///
+    /// Word boundaries for code: `snake_case` and `größe` are one word each,
+    /// `self.value` is three pieces, `::` is one, and an emoji sequence is
+    /// one. The newline is never part of a word.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `char_idx` is past the end of the buffer.
+    #[must_use]
+    pub fn word_range(&self, char_idx: usize) -> (usize, usize) {
+        let line = self.line_of(char_idx);
+        let start = self.line_start(line);
+        let (from, to) = grapheme::word_bounds(&self.line_text(line), char_idx - start);
+        (start + from, start + to)
+    }
+
+    /// The whole of `line` including its newline, as `(start, end)` — what a
+    /// triple-click selects, so that deleting it removes the line rather than
+    /// leaving an empty one behind.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `line` is out of range.
+    #[must_use]
+    pub fn line_range(&self, line: usize) -> (usize, usize) {
+        let start = self.line_start(line);
+        let end =
+            if line + 1 < self.len_lines() { self.line_start(line + 1) } else { self.len_chars() };
+        (start, end)
+    }
+
+    /// Display columns `line` occupies, excluding its newline.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `line` is out of range.
+    #[must_use]
+    pub fn line_width(&self, line: usize) -> usize {
+        let text = self.line_text(line);
+        let text = text.strip_suffix('\n').unwrap_or(&text);
+        grapheme::width_to(text, text.chars().count(), self.tab_width)
+    }
+
+    /// The char index on `line` at display column `column`: the start of the
+    /// cluster covering it, or the end of the line when the line is shorter.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `line` is out of range.
+    #[must_use]
+    pub fn char_at_column(&self, line: usize, column: usize) -> usize {
+        let text = self.line_text(line);
+        self.line_start(line) + grapheme::char_off_at_width(&text, column, self.tab_width)
+    }
+
+    /// A column (box) selection between two `(line, display column)` corners.
+    ///
+    /// One range per line, anchored at the anchor's column and heading to the
+    /// head's, so the direction of the drag is kept. A line that does not reach
+    /// the left edge of the box gets no range at all rather than a caret stuck
+    /// at its end — typing into a box must not append to the short lines it
+    /// passes over. If no line reaches the box, the anchor's own position is
+    /// the single caret, because a buffer always has one.
+    ///
+    /// The primary is the range on the head's line, where the pointer is.
+    ///
+    /// # Panics
+    ///
+    /// Panics if either line is out of range.
+    #[must_use]
+    pub fn column_selection(&self, anchor: (usize, usize), head: (usize, usize)) -> Selections {
+        let (first, last) = (anchor.0.min(head.0), anchor.0.max(head.0));
+        let left = anchor.1.min(head.1);
+        let zero_width = anchor.1 == head.1;
+
+        let mut ranges = Vec::new();
+        let mut primary = 0;
+        for line in first..=last {
+            // A box with width wants lines that reach into it; a line ending
+            // exactly at its left edge would get only a caret at its end. A
+            // zero-width box is a column of carets, and a line ending at that
+            // column is exactly where one belongs.
+            let width = self.line_width(line);
+            if width < left || (width == left && !zero_width) {
+                continue;
+            }
+            if line == head.0 || ranges.is_empty() {
+                primary = ranges.len();
+            }
+            ranges.push(Range::new(
+                self.char_at_column(line, anchor.1),
+                self.char_at_column(line, head.1),
+            ));
+        }
+
+        if ranges.is_empty() {
+            return Selections::single(Range::caret(self.char_at_column(anchor.0, anchor.1)));
+        }
+        Selections::new(ranges, primary)
+    }
+
+    /// Move the text in `from..to` to `dest`, or copy it there, as one undo
+    /// step, leaving it selected in its new place.
+    ///
+    /// Moving text into itself, or to either of its own edges, changes
+    /// nothing: there is nowhere for it to go.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the range or `dest` is past the end of the buffer.
+    pub fn move_text(&mut self, from: usize, to: usize, dest: usize, copy: bool) {
+        let (from, to) = (from.min(to), from.max(to));
+        if from == to || (!copy && dest >= from && dest <= to) {
+            return;
+        }
+        let text = self.rope.slice(from..to).to_string();
+        let len = to - from;
+
+        let mut edits = vec![Edit::insert(dest, text)];
+        if !copy {
+            edits.push(Edit::delete(from, to));
+        }
+        // Its own undo step, never folded into typing before or after it.
+        self.history.commit();
+        self.edit(edits);
+
+        // Where the text landed, in the buffer as it now stands.
+        let start = if !copy && dest > to { dest - len } else { dest };
+        self.selections = Selections::single(Range::new(start, start + len));
+        if let Some(tip) = self.history.open_tip() {
+            tip.after = self.selections.clone();
+        }
+        self.history.commit();
+    }
+
     // ── saving ──────────────────────────────────────────────────────────────
 
     /// Write the buffer back to its own path.
@@ -695,6 +845,25 @@ impl Buffer {
         self.history.commit();
         Ok(())
     }
+}
+
+/// Union overlapping deletions into one.
+///
+/// Selections never overlap, but what each one deletes can: a caret on a
+/// cluster's far edge deletes the whole cluster, which may reach back over
+/// another caret inside it, and a selection ending part-way into a cluster
+/// shares it with a caret just after. One edit per
+/// span keeps a revision's edits disjoint, which undo depends on.
+fn merge_deletes(mut edits: Vec<Edit>) -> Vec<Edit> {
+    edits.sort_by_key(|edit| edit.start);
+    let mut merged: Vec<Edit> = Vec::with_capacity(edits.len());
+    for edit in edits {
+        match merged.last_mut() {
+            Some(last) if edit.start < last.end => last.end = last.end.max(edit.end),
+            _ => merged.push(edit),
+        }
+    }
+    merged
 }
 
 #[cfg(test)]

@@ -81,6 +81,9 @@ pub struct Config {
     pub alternate_screen: bool,
     /// Negotiate the Kitty keyboard protocol.
     pub keyboard_enhancement: bool,
+    /// Longest gap between presses that still makes a double or triple click,
+    /// in milliseconds. `None` uses the platform's usual value.
+    pub double_click_ms: Option<u64>,
     /// Key bindings added over the defaults: key sequence to command id.
     ///
     /// Kept as text here. Which sequences and commands exist is the binary's
@@ -97,6 +100,7 @@ impl Default for Config {
             mouse: true,
             alternate_screen: true,
             keyboard_enhancement: true,
+            double_click_ms: None,
             keys: BTreeMap::new(),
         }
     }
@@ -160,6 +164,14 @@ impl Loaded {
             ("keyboard_enhancement", c.keyboard_enhancement),
         ] {
             let _ = writeln!(out, "{key} = {value}{}", self.note(key));
+        }
+        match c.double_click_ms {
+            Some(ms) => {
+                let _ = writeln!(out, "double_click_ms = {ms}{}", self.note("double_click_ms"));
+            }
+            None => {
+                let _ = writeln!(out, "# double_click_ms — the platform's usual value");
+            }
         }
 
         if c.keys.is_empty() {
@@ -272,6 +284,7 @@ struct RawUi {
     mouse: Option<bool>,
     alternate_screen: Option<bool>,
     keyboard_enhancement: Option<bool>,
+    double_click_ms: Option<u64>,
 }
 
 impl RawConfig {
@@ -317,6 +330,21 @@ impl RawConfig {
             if let Some(value) = ui.keyboard_enhancement {
                 loaded.config.keyboard_enhancement = value;
                 set("keyboard_enhancement");
+            }
+            if let Some(ms) = ui.double_click_ms {
+                // Below 100 ms nobody can double-click; above 2 s two separate
+                // clicks start turning into one.
+                if (100..=2000).contains(&ms) {
+                    loaded.config.double_click_ms = Some(ms);
+                    set("double_click_ms");
+                } else {
+                    loaded.problems.push(Problem {
+                        path: path.to_path_buf(),
+                        message: format!(
+                            "ui.double_click_ms must be between 100 and 2000, not {ms}"
+                        ),
+                    });
+                }
             }
         }
 

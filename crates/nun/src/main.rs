@@ -64,6 +64,9 @@ fn edit(path: &Path) -> io::Result<()> {
     let problems = [role_problems, key_problems].concat();
 
     let mut app = App::new(buffer, palette, keymap);
+    if let Some(ms) = settings.config.double_click_ms {
+        app.set_double_click(std::time::Duration::from_millis(ms));
+    }
     // Only the first is shown: the rest are visible through `nun config`, and a
     // queue of config complaints would bury the editor under them.
     if let Some(warning) = warnings(report, &settings, &problems).into_iter().next() {
@@ -295,7 +298,10 @@ fn usage() -> String {
          Keys:\n  \
            Ctrl+S save   Ctrl+Z undo   Ctrl+Y redo   Ctrl+A select all   Ctrl+Q quit\n  \
            `nun keys` lists them all, and the Cmd bindings a Kitty-protocol terminal adds.\n  \
-           Click places the caret; the wheel scrolls.\n"
+           Click places the caret; the wheel scrolls.\n  \
+           Double-click a word, triple-click a line, drag to extend by either.\n  \
+           Shift-click extends; Alt-click adds a caret; Alt-drag selects a column.\n  \
+           Drag a selection to move it, with Ctrl held at the drop to copy.\n"
     )
 }
 

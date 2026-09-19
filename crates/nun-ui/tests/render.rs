@@ -385,3 +385,32 @@ mod mapping {
         }
     }
 }
+
+// ── carets ──────────────────────────────────────────────────────────────────
+
+fn caret_columns(harness: &Harness, palette: &Palette, row: u16) -> Vec<u16> {
+    let caret = palette.on(Role::Accent, Role::OnAccent);
+    let cells = harness.cells();
+    (0..harness.area().width).filter(|&x| cells[(x, row)].bg == caret.bg.unwrap()).collect()
+}
+
+#[test]
+fn every_caret_is_drawn_not_only_the_primary() {
+    let mut buffer = Buffer::from_text("abc\nabc");
+    buffer.set_selections(Selections::new(vec![Range::caret(1), Range::caret(5)], 0));
+    let palette = palette();
+    let mut harness = Harness::new(20, 3);
+    draw(&mut harness, &buffer, &palette);
+
+    assert_eq!(caret_columns(&harness, &palette, 0), vec![3 + 1]);
+    assert_eq!(caret_columns(&harness, &palette, 1), vec![3 + 1]);
+}
+
+#[test]
+fn the_drop_marker_shows_where_dragged_text_would_land() {
+    let buffer = Buffer::from_text("abcdef");
+    let palette = palette();
+    let mut harness = Harness::new(20, 2);
+    harness.draw(EditorView::new(&buffer, &palette).with_drop_marker(Some(4)));
+    assert_eq!(caret_columns(&harness, &palette, 0), vec![3, 3 + 4], "the caret, then the marker");
+}

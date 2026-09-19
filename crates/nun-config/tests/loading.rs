@@ -204,3 +204,13 @@ fn describe_lists_the_key_bindings() {
     assert!(loaded.describe().contains("\"ctrl+k ctrl+s\" = \"file.save\""));
     assert!(Loaded::defaults().describe().contains("nun keys"));
 }
+
+#[test]
+fn the_double_click_threshold_can_be_set_within_reason() {
+    let (loaded, _) = load_text("[ui]\ndouble_click_ms = 350\n");
+    assert_eq!(loaded.config.double_click_ms, Some(350));
+
+    let (loaded, _) = load_text("[ui]\ndouble_click_ms = 5\n");
+    assert_eq!(loaded.config.double_click_ms, None, "falls back to the platform value");
+    assert!(loaded.problems[0].message.contains("between 100 and 2000"));
+}

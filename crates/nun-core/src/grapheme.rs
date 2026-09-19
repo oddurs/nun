@@ -62,7 +62,9 @@ pub(crate) fn char_off_at_width(line: &str, target_col: usize, tab_width: usize)
     let mut chars = 0;
     let mut col = 0;
     for cluster in line.graphemes(true) {
-        if cluster == "\n" {
+        // Not only a bare `\n`: a stray `\r` before the line ending makes
+        // `\r\n` one cluster, and walking into it would land on the next line.
+        if cluster.ends_with('\n') {
             break;
         }
         let width = cluster_width(cluster, col, tab_width);
@@ -73,6 +75,67 @@ pub(crate) fn char_off_at_width(line: &str, target_col: usize, tab_width: usize)
         chars += cluster.chars().count();
     }
     chars
+}
+
+/// The word, space run or punctuation run containing `char_off`, as char
+/// offsets `(start, end)` within `line`.
+///
+/// Word boundaries for code, not for prose. Unicode's word rules treat
+/// `self.value` and `e.g` as single words, because a full stop between letters
+/// joins them — right for a sentence, wrong for a field access. So each
+/// grapheme cluster is classed as part of a word (letters, digits,
+/// underscore, in any script), whitespace, or a symbol, and a piece is a run
+/// of word clusters, a run of whitespace, or a run of one repeated symbol
+/// (`::`, `==`). A cluster is classed by its first char, so a combining mark
+/// stays with its letter and an emoji sequence stays whole.
+///
+/// The line's newline is never part of a piece; an offset at or past the end
+/// of the line takes the last piece, and an empty line gives an empty range.
+/// The scan stops at the end of the piece under the click, so a double-click
+/// near the start of a very long line costs the start of the line.
+pub(crate) fn word_bounds(line: &str, char_off: usize) -> (usize, usize) {
+    let line = line.strip_suffix('\n').unwrap_or(line);
+
+    let mut piece = (0, 0);
+    let mut previous: Option<(&str, Class)> = None;
+    for cluster in line.graphemes(true) {
+        let class = Class::of(cluster);
+        let joins = previous.is_some_and(|(last, last_class)| {
+            last_class == class && (class != Class::Symbol || last == cluster)
+        });
+        if !joins {
+            if char_off < piece.1 {
+                return piece;
+            }
+            piece = (piece.1, piece.1);
+        }
+        piece.1 += cluster.chars().count();
+        previous = Some((cluster, class));
+    }
+    piece
+}
+
+/// How a cluster behaves under a double-click.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Class {
+    Word,
+    Space,
+    Symbol,
+}
+
+impl Class {
+    fn of(cluster: &str) -> Self {
+        // A keycap (`1️⃣`) or any emoji-presentation sequence starts with an
+        // ordinary digit or letter but is a picture, not part of a name.
+        if cluster.contains(['\u{20e3}', '\u{fe0f}']) {
+            return Self::Symbol;
+        }
+        match cluster.chars().next() {
+            Some(ch) if ch.is_alphanumeric() || ch == '_' => Self::Word,
+            Some(ch) if ch.is_whitespace() => Self::Space,
+            _ => Self::Symbol,
+        }
+    }
 }
 
 /// Columns one cluster occupies when it begins at column `col`.

@@ -79,6 +79,34 @@ proptest! {
         prop_assert_eq!(buffer.text().to_string(), original);
     }
 
+    /// Typing, replacing and deleting at several selections at once undoes
+    /// and redoes exactly. Each edit in such a revision shifts the ones after
+    /// it, which a single caret never exercises.
+    #[test]
+    fn edits_at_several_selections_undo_and_redo_exactly(
+        text in interesting_text(),
+        ranges in proptest::collection::vec((0usize..40, 0usize..6), 1..6),
+        what in interesting_text(),
+        delete in proptest::bool::ANY,
+    ) {
+        let mut buffer = Buffer::from_text(&text);
+        let original = buffer.text().to_string();
+        let len = buffer.len_chars();
+        let ranges: Vec<Range> = ranges
+            .iter()
+            .map(|(at, span)| Range::new((*at).min(len), (at + span).min(len)))
+            .collect();
+        buffer.set_selections(Selections::new(ranges, 0));
+
+        if delete { buffer.delete_backward() } else { buffer.insert(&what) }
+        let edited = buffer.text().to_string();
+
+        buffer.undo();
+        prop_assert_eq!(buffer.text().to_string(), original);
+        buffer.redo();
+        prop_assert_eq!(buffer.text().to_string(), edited);
+    }
+
     /// Selections stay sorted, disjoint and non-empty no matter what happens.
     #[test]
     fn selections_stay_sorted_and_disjoint(

@@ -19,19 +19,27 @@ pub struct EditorView<'a> {
     buffer: &'a Buffer,
     palette: &'a Palette,
     scroll: usize,
+    marker: Option<usize>,
 }
 
 impl<'a> EditorView<'a> {
     /// A view of `buffer`, scrolled so `scroll` is the top visible line.
     #[must_use]
     pub const fn new(buffer: &'a Buffer, palette: &'a Palette) -> Self {
-        Self { buffer, palette, scroll: 0 }
+        Self { buffer, palette, scroll: 0, marker: None }
     }
 
     /// Set the first visible line.
     #[must_use]
     pub const fn scrolled_to(mut self, line: usize) -> Self {
         self.scroll = line;
+        self
+    }
+
+    /// Mark where dragged text would land if it were dropped now.
+    #[must_use]
+    pub const fn with_drop_marker(mut self, at: Option<usize>) -> Self {
+        self.marker = at;
         self
     }
 
@@ -138,6 +146,12 @@ impl Widget for EditorView<'_> {
 
         let caret = self.buffer.selections().primary().head;
         let caret_line = self.buffer.line_of(caret);
+        // Every caret is drawn, not just the primary: with several, the ones
+        // that are not drawn are the ones that surprise you when you type.
+        let mut carets: Vec<usize> =
+            self.buffer.selections().ranges().iter().map(|range| range.head).collect();
+        carets.extend(self.marker);
+        carets.sort_unstable();
         let last_line = self.buffer.len_lines();
 
         for (row, line) in (self.scroll..last_line).take(area.height as usize).enumerate() {
@@ -152,7 +166,7 @@ impl Widget for EditorView<'_> {
             }
 
             self.draw_gutter(cells, area, y, line, is_caret_line);
-            self.draw_line(cells, area, y, line, gutter, caret);
+            self.draw_line(cells, area, y, line, gutter, &carets);
         }
     }
 }
@@ -184,8 +198,10 @@ impl EditorView<'_> {
         y: u16,
         line: usize,
         gutter: u16,
-        caret: usize,
+        carets: &[usize],
     ) {
+        let is_caret = |at: usize| carets.binary_search(&at).is_ok();
+        let caret_line = self.buffer.line_of(self.buffer.selections().primary().head);
         let selections = self.buffer.selections();
         let text = self.buffer.line_text(line);
 
@@ -204,13 +220,13 @@ impl EditorView<'_> {
                 .any(|range| char_index >= range.from() && char_index < range.to());
 
             let mut style = self.palette.text();
-            if line == self.buffer.line_of(caret) {
+            if line == caret_line {
                 style = style.patch(self.palette.cursor_line());
             }
             if selected {
                 style = style.patch(self.palette.selection());
             }
-            if char_index == caret {
+            if is_caret(char_index) {
                 style = self.palette.on(Role::Accent, Role::OnAccent);
             }
 
@@ -234,7 +250,7 @@ impl EditorView<'_> {
         }
 
         // The caret may sit one past the last character on the line.
-        if char_index == caret && x < area.right() {
+        if is_caret(char_index) && x < area.right() {
             cells[(x, y)].set_symbol(" ").set_style(self.palette.on(Role::Accent, Role::OnAccent));
         }
     }

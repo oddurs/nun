@@ -23,8 +23,14 @@ nun theme dump     # probe this terminal and print the derived ramp as TOML
 You get a full-screen editor with line numbers, a status line, and colours
 derived from your own terminal. Typing, arrow keys and shift-selection, undo and
 redo, select all, page up and down, save, and a quit that asks twice if there
-are unsaved changes. Clicking places the caret and the wheel scrolls; the rest
-of the mouse is milestone 2.
+are unsaved changes.
+
+The mouse does what it does everywhere else. Click places the caret,
+double-click selects a word and triple-click a line, and dragging after either
+extends by that unit. Shift-click extends, Alt-click adds a caret, Alt-drag
+selects a column, and dragging a selection moves it (Ctrl at the drop copies).
+Drag past the top or bottom and the view scrolls with you. Clicking the line
+numbers selects whole lines.
 
 | | |
 |---|---|

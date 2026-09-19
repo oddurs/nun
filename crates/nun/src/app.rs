@@ -12,7 +12,9 @@ use crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
 };
 use nun_core::{Buffer, Range, SaveError, Selections};
-use nun_input::{Chords, Code, HitMap, Hover, Key, Keymap, Mods, Resolved, Sequence};
+use nun_input::{
+    Chords, Clicks, Code, HitMap, Hover, Key, Keymap, Mods, PLATFORM_THRESHOLD, Resolved, Sequence,
+};
 use nun_theme::Role;
 use nun_ui::{EditorView, Event, Palette};
 use ratatui::buffer::Buffer as Cells;
@@ -20,6 +22,8 @@ use ratatui::layout::Rect;
 use ratatui::widgets::Widget;
 
 use crate::commands::Command;
+
+mod pointer;
 
 /// What the editor wants the caller to do next.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,6 +88,12 @@ pub struct App {
     hits: HitMap<Target>,
     /// Which hover target the pointer is over.
     hover: Hover<Target>,
+    /// Presses, counted into single, double and triple clicks.
+    clicks: Clicks,
+    /// A drag in progress.
+    drag: Option<pointer::Drag>,
+    /// Scrolling under a drag held past the edge of the text.
+    autoscroll: Option<pointer::Autoscroll>,
 }
 
 impl App {
@@ -103,6 +113,9 @@ impl App {
             chords: Chords::new(CHORD_TIMEOUT),
             hits: HitMap::new(cells(viewport)),
             hover: Hover::new(HOVER_DWELL),
+            clicks: Clicks::new(PLATFORM_THRESHOLD),
+            drag: None,
+            autoscroll: None,
         };
         app.relayout();
         app
@@ -125,6 +138,17 @@ impl App {
     #[cfg(test)]
     pub fn message(&self) -> Option<&str> {
         self.shown_message()
+    }
+
+    /// Use `threshold` as the longest gap that still joins presses into a
+    /// double or triple click.
+    pub fn set_double_click(&mut self, threshold: Duration) {
+        self.clicks = Clicks::new(threshold);
+    }
+
+    /// Columns the line-number gutter takes.
+    fn gutter_width(&self) -> u16 {
+        EditorView::new(&self.buffer, &self.palette).gutter_width()
     }
 
     /// Say something once in the status line.
@@ -193,7 +217,8 @@ impl App {
 
     /// When the editor next needs waking with no input, if ever.
     pub fn deadline(&self) -> Option<Instant> {
-        [self.hover.deadline(), self.chords.deadline()].into_iter().flatten().min()
+        let autoscroll = self.autoscroll.map(|scroll| scroll.next);
+        [self.hover.deadline(), self.chords.deadline(), autoscroll].into_iter().flatten().min()
     }
 
     /// A deadline passed with no input.
@@ -214,7 +239,7 @@ impl App {
             None => Outcome::Continue,
         };
 
-        let outcome = chord.and(dwell);
+        let outcome = chord.and(dwell).and(self.autoscroll_tick(now));
         if outcome == Outcome::Redraw {
             self.relayout();
         }
@@ -411,13 +436,16 @@ impl App {
                 // next key is typed rather than taken as its second half.
                 self.chords.cancel();
                 self.acknowledge();
-                if hit.is_some_and(|hit| hit.target == Target::Text)
-                    && let Some(position) = self.position_at(mouse.column, mouse.row)
-                {
-                    self.buffer.set_selections(Selections::single(Range::caret(position)));
+                self.quit_confirmed = false;
+                match hit {
+                    Some(hit) => self.press(mouse, hit.target, now),
+                    None => Outcome::Redraw,
                 }
-                Outcome::Redraw
             }
+            MouseEventKind::Drag(MouseButton::Left) => {
+                self.drag_to(mouse.column, mouse.row, now).and(hovered)
+            }
+            MouseEventKind::Up(MouseButton::Left) => self.release(mouse).and(hovered),
             _ => hovered,
         }
     }
@@ -522,6 +550,7 @@ impl App {
         let text_area = Rect { height: area.height.saturating_sub(1), ..area };
         EditorView::new(&self.buffer, &self.palette)
             .scrolled_to(self.scroll)
+            .with_drop_marker(self.drop_marker())
             .render(text_area, cells);
 
         if area.height == 0 {
@@ -1046,12 +1075,11 @@ mod tests {
     }
 
     #[test]
-    fn clicking_in_the_gutter_does_not_move_the_caret() {
-        let mut app = app_over("hello\n");
-        app.handle(key(KeyCode::Right));
-        let before = app.buffer().selections().primary().head;
+    fn clicking_in_the_gutter_selects_the_line() {
+        let mut app = app_over("hello\nworld\n");
         app.handle(click(0, 0));
-        assert_eq!(app.buffer().selections().primary().head, before);
+        let primary = app.buffer().selections().primary();
+        assert_eq!((primary.from(), primary.to()), (0, 6), "the line and its newline");
     }
 
     #[test]
