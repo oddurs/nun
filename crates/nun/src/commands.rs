@@ -46,6 +46,14 @@ pub enum Command {
     NextTab,
     /// Go to the previous tab.
     PreviousTab,
+    /// Put another pane beside this one.
+    SplitBeside,
+    /// Put another pane below this one.
+    SplitBelow,
+    /// Close the pane being edited.
+    ClosePane,
+    /// Go to the next pane.
+    NextPane,
 }
 
 impl Command {
@@ -65,6 +73,10 @@ impl Command {
         Self::CloseTab,
         Self::NextTab,
         Self::PreviousTab,
+        Self::SplitBeside,
+        Self::SplitBelow,
+        Self::ClosePane,
+        Self::NextPane,
     ];
 
     /// The name used in `[keys]` in `nun.toml`.
@@ -85,6 +97,10 @@ impl Command {
             Self::CloseTab => "tab.close",
             Self::NextTab => "tab.next",
             Self::PreviousTab => "tab.previous",
+            Self::SplitBeside => "pane.split_beside",
+            Self::SplitBelow => "pane.split_below",
+            Self::ClosePane => "pane.close",
+            Self::NextPane => "pane.next",
         }
     }
 
@@ -106,6 +122,10 @@ impl Command {
             Self::CloseTab => "Close tab",
             Self::NextTab => "Next tab",
             Self::PreviousTab => "Previous tab",
+            Self::SplitBeside => "Split beside",
+            Self::SplitBelow => "Split below",
+            Self::ClosePane => "Close pane",
+            Self::NextPane => "Next pane",
         }
     }
 
@@ -143,6 +163,10 @@ const BASIC: &[(&str, Command)] = &[
     ("f2", Command::Rename),
     ("ctrl+k delete", Command::Delete),
     ("ctrl+k i", Command::ToggleIgnored),
+    ("ctrl+k v", Command::SplitBeside),
+    ("ctrl+k b", Command::SplitBelow),
+    ("ctrl+k w", Command::ClosePane),
+    ("ctrl+k o", Command::NextPane),
 ];
 
 /// Bindings that need the Kitty keyboard protocol, added over [`BASIC`].

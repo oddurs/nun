@@ -80,7 +80,12 @@ reorder it, close it with its cross or the middle button, and closing one with
 unsaved changes asks first. Two files with the same name say which folder
 they are in.
 
-Not there yet: splits, the command palette, syntax highlighting, search,
+Panes split the screen. Drag a tab onto another pane to move it there, or
+onto a pane's edge to split — the preview shows the half it will take. Drag
+the divider between two panes to resize them, double-click it to even them
+out, and closing a pane's last tab closes the pane and gives its space back.
+
+Not there yet: the command palette, syntax highlighting, search,
 language servers and git. Those are the rest of milestone 2 and milestones 3
 to 5.
 
