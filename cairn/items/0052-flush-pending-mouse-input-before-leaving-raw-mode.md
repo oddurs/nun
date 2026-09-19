@@ -2,8 +2,9 @@
 id: 52
 title: Flush pending mouse input before leaving raw mode
 type: bug
-status: backlog
+status: done
 milestone: m2
+assignee: Oddur Sigurdsson
 created: 2026-09-19
 updated: 2026-09-19
 priority: p1
@@ -33,3 +34,7 @@ is the likely one. That is a new dependency and needs a decision first.
    over it.
 2. Quit with Ctrl+Q while it is still moving.
 3. Escape-sequence junk appears at the shell prompt.
+
+## 2026-09-19
+
+Uses rustix::termios::tcflush, which is already in the build through crossterm, so no new crate. Flushed only when mouse reporting was on, so a user typing ahead of a no-mouse session keeps their keystrokes. A report the terminal generates after the flush but before it has processed the disable can still slip through; that window is a few microseconds on a local terminal.

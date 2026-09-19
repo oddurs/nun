@@ -92,6 +92,12 @@ pub trait TerminalControl {
     ///
     /// Whatever the platform reports.
     fn disable_mouse(&mut self) -> io::Result<()>;
+    /// Throw away input the terminal has sent that nobody has read yet.
+    ///
+    /// # Errors
+    ///
+    /// Whatever the platform reports.
+    fn discard_pending_input(&mut self) -> io::Result<()>;
     /// Report motion with no button held, for hover.
     ///
     /// # Errors
@@ -220,6 +226,10 @@ impl<C: TerminalControl> TerminalGuard<C> {
         self.motion = false;
         if std::mem::take(&mut self.mouse) {
             let _ = self.control.disable_mouse();
+            // Reports the terminal sent before it saw the disable are still
+            // queued. Left there, the shell reads them once raw mode is off and
+            // prints them at the prompt.
+            let _ = self.control.discard_pending_input();
         }
         if std::mem::take(&mut self.alternate) {
             let _ = self.control.leave_alternate_screen();
@@ -319,6 +329,7 @@ pub fn emergency_restore() {
     }
 
     let _ = execute!(out, event::DisableMouseCapture);
+    let _ = discard_pending_input();
     let _ = execute!(out, terminal::LeaveAlternateScreen);
     let _ = terminal::disable_raw_mode();
 }
@@ -341,6 +352,30 @@ const MOTION_ON: &str = "\x1b[?1003h";
 /// 1003 turns tracking off altogether rather than falling back to 1002, so 1002
 /// is set again straight after.
 const MOTION_OFF: &str = "\x1b[?1003l\x1b[?1002h";
+
+/// Drop whatever the terminal has sent that has not been read.
+///
+/// The terminal is whichever of stdin and `/dev/tty` is one, the same choice
+/// crossterm makes when it reads.
+#[cfg(unix)]
+fn discard_pending_input() -> io::Result<()> {
+    use rustix::termios::{QueueSelector, isatty, tcflush};
+
+    let stdin = io::stdin();
+    if isatty(&stdin) {
+        tcflush(&stdin, QueueSelector::IFlush)?;
+    } else {
+        tcflush(std::fs::File::open("/dev/tty")?, QueueSelector::IFlush)?;
+    }
+    Ok(())
+}
+
+/// Nothing to do where input does not arrive as escape sequences.
+#[cfg(not(unix))]
+#[allow(clippy::unnecessary_wraps)] // Matches the unix signature.
+fn discard_pending_input() -> io::Result<()> {
+    Ok(())
+}
 
 fn write_sequence(sequence: &str) -> io::Result<()> {
     use io::Write as _;
@@ -382,6 +417,10 @@ impl TerminalControl for CrosstermControl {
 
     fn disable_mouse(&mut self) -> io::Result<()> {
         crossterm::execute!(io::stdout(), crossterm::event::DisableMouseCapture)
+    }
+
+    fn discard_pending_input(&mut self) -> io::Result<()> {
+        discard_pending_input()
     }
 
     fn enable_motion_tracking(&mut self) -> io::Result<()> {
@@ -473,6 +512,9 @@ mod tests {
         fn disable_mouse(&mut self) -> io::Result<()> {
             self.record("mouse off")
         }
+        fn discard_pending_input(&mut self) -> io::Result<()> {
+            self.record("discard input")
+        }
         fn enable_motion_tracking(&mut self) -> io::Result<()> {
             self.record("motion on")
         }
@@ -509,10 +551,32 @@ mod tests {
                 "cursor show",
                 "flags pop",
                 "mouse off",
+                "discard input",
                 "alt off",
                 "raw off",
             ]
         );
+    }
+
+    #[test]
+    fn queued_mouse_reports_are_discarded_after_reporting_stops_and_before_raw_mode_ends() {
+        let (recorder, log) = Recorder::new();
+        drop(TerminalGuard::enter(recorder, Capabilities::default()).unwrap());
+
+        let log = log.borrow();
+        let at = |step| log.iter().position(|s| *s == step).unwrap();
+        assert!(at("mouse off") < at("discard input"), "discarding first lets more arrive");
+        assert!(at("discard input") < at("raw off"), "after raw off the shell has them");
+    }
+
+    #[test]
+    fn input_is_left_alone_when_the_mouse_was_never_on() {
+        // Without mouse reporting nothing but keystrokes are queued, and those
+        // may be the user typing their next shell command.
+        let (recorder, log) = Recorder::new();
+        let capabilities = Capabilities { mouse: false, ..Capabilities::default() };
+        drop(TerminalGuard::enter(recorder, capabilities).unwrap());
+        assert!(!log.borrow().contains(&"discard input"));
     }
 
     #[test]
