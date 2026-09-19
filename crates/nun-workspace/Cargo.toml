@@ -1,0 +1,21 @@
+[package]
+name = "nun-workspace"
+description = "The project on disk for nun: file tree, file operations and watching"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+ignore = "0.4.33"
+notify = "8.2.0"
+thiserror = "2.0.20"
+
+[dev-dependencies]
+proptest = "1.11.0"
+tempfile = "3.27.0"

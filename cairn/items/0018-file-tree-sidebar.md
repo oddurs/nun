@@ -2,10 +2,12 @@
 id: 18
 title: File tree sidebar
 type: feature
-status: backlog
+status: doing
 milestone: m2
+assignee: Oddur Sigurdsson
+claimed: 2026-09-19
 created: 2026-09-10
-updated: 2026-09-10
+updated: 2026-09-19
 priority: p0
 effort: l
 area: workspace
@@ -29,3 +31,7 @@ disk with an undo toast. `notify` keeps it live.
 - [ ] Create, rename, delete and move, each undoable
 - [ ] External filesystem changes appear without a manual refresh
 - [ ] Git status colours rows from nun-vcs once that exists
+
+## 2026-09-19
+
+Model half landed in crates/nun-workspace (FileTree, FsHistory, Watcher). Trash under the platform state dir is never emptied yet; it needs a purge policy (for example, entries older than N days at startup) once the binary wires FsHistory in.
