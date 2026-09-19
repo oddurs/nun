@@ -284,7 +284,7 @@ fn warnings(report: LoadReport, settings: &Loaded, role_problems: &[String]) -> 
 }
 
 /// Adapts the editor to ratatui's widget trait.
-struct AppView<'a>(&'a App);
+pub(crate) struct AppView<'a>(&'a App);
 
 impl Widget for AppView<'_> {
     fn render(self, area: Rect, cells: &mut Cells) {

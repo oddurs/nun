@@ -16,7 +16,7 @@ use nun_input::{
     Chords, Clicks, Code, HitMap, Hover, Key, Keymap, Mods, PLATFORM_THRESHOLD, Resolved, Sequence,
 };
 use nun_theme::Role;
-use nun_ui::{EditorView, Event, Menu, Palette, TreeButton, TreeView};
+use nun_ui::{EditorView, Event, Menu, Palette, TabStrip, TreeButton, TreeView};
 use ratatui::buffer::Buffer as Cells;
 use ratatui::layout::Rect;
 use ratatui::widgets::Widget;
@@ -26,6 +26,7 @@ use crate::commands::Command;
 mod pointer;
 mod prompt;
 mod sidebar;
+mod tabs;
 
 /// What the editor wants the caller to do next.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,10 +71,18 @@ pub enum Target {
     Gutter,
     /// The status line.
     Status,
+    /// A tab.
+    Tab(usize),
+    /// A tab's close cross.
+    TabClose(usize),
+    /// The tab strip beside the tabs.
+    TabStrip,
     /// The file-tree toggle at the left of the status line.
     StatusFiles,
     /// The Undo offered after a file operation.
     StatusUndo,
+    /// The cross that closes the open file when there is no tab strip.
+    StatusClose,
     /// A button of the question in the status line.
     PromptButton(usize),
     /// The sidebar's header row.
@@ -93,6 +102,10 @@ pub enum Target {
 }
 
 impl Target {
+    const fn in_tabs(self) -> bool {
+        matches!(self, Self::Tab(_) | Self::TabClose(_) | Self::TabStrip)
+    }
+
     const fn in_sidebar(self) -> bool {
         matches!(
             self,
@@ -114,12 +127,24 @@ pub enum Focus {
     Sidebar,
 }
 
+/// One open file: its text, and where the view on it is.
+///
+/// A document's scroll belongs to the document, not to the screen, so
+/// coming back to a tab comes back to where you were in it.
+#[derive(Debug)]
+pub struct Document {
+    buffer: Buffer,
+    scroll: usize,
+}
+
 /// The running editor.
 #[derive(Debug)]
 pub struct App {
-    buffer: Buffer,
+    /// The open documents, in tab order.
+    docs: Vec<Document>,
+    /// Which one is being edited.
+    active: usize,
     palette: Palette,
-    scroll: usize,
     viewport: Rect,
     /// A transient message, shown until the next key.
     message: Option<String>,
@@ -151,17 +176,31 @@ pub struct App {
     last_undone: bool,
     /// A file asked for that should be opened once it has been created.
     open_when_created: Option<std::path::PathBuf>,
+    /// How far the tab strip is scrolled, in cells.
+    tab_scroll: u16,
+    /// A tab being dragged along the strip.
+    tab_drag: Option<tabs::TabDrag>,
 }
 
 impl App {
+    /// The document being edited.
+    fn doc(&self) -> &Document {
+        &self.docs[self.active]
+    }
+
+    /// The document being edited, to change.
+    fn doc_mut(&mut self) -> &mut Document {
+        &mut self.docs[self.active]
+    }
+
     /// An editor over `buffer`, driven by `keymap`.
     #[must_use]
     pub fn new(buffer: Buffer, palette: Palette, keymap: Keymap<Command>) -> Self {
         let viewport = Rect::new(0, 0, 80, 24);
         let mut app = Self {
-            buffer,
+            docs: vec![Document { buffer, scroll: 0 }],
+            active: 0,
             palette,
-            scroll: 0,
             viewport,
             message: None,
             notices: VecDeque::new(),
@@ -180,22 +219,24 @@ impl App {
             undo_offer: false,
             last_undone: false,
             open_when_created: None,
+            tab_scroll: 0,
+            tab_drag: None,
         };
         app.relayout();
         app
     }
 
-    /// The buffer. Only the tests read it; `render` and `status` use the field
-    /// directly, so this would otherwise be dead weight in the binary.
+    /// The buffer being edited. Only the tests read it; everything else goes
+    /// through `doc()`.
     #[cfg(test)]
-    pub const fn buffer(&self) -> &Buffer {
-        &self.buffer
+    pub fn buffer(&self) -> &Buffer {
+        &self.doc().buffer
     }
 
-    /// The first visible line.
+    /// The first visible line of the buffer being edited.
     #[cfg(test)]
-    pub const fn scroll(&self) -> usize {
-        self.scroll
+    pub fn scroll(&self) -> usize {
+        self.doc().scroll
     }
 
     /// The transient message shown in the status line, if any.
@@ -212,7 +253,7 @@ impl App {
 
     /// Columns the line-number gutter takes.
     fn gutter_width(&self) -> u16 {
-        EditorView::new(&self.buffer, &self.palette).gutter_width()
+        EditorView::new(&self.doc().buffer, &self.palette).gutter_width()
     }
 
     /// Say something once in the status line.
@@ -249,11 +290,12 @@ impl App {
     fn areas(&self) -> (Rect, Rect) {
         let area = self.viewport;
         let beside = self.sidebar_area().map_or(0, |sidebar| sidebar.width);
+        let above = u16::from(self.tabs_area().is_some());
         let text = Rect {
             x: area.x + beside,
+            y: area.y + above,
             width: area.width - beside,
-            height: area.height.saturating_sub(1),
-            ..area
+            height: area.height.saturating_sub(1 + above),
         };
         let status =
             Rect { y: area.bottom().saturating_sub(1), height: area.height.min(1), ..area };
@@ -266,7 +308,8 @@ impl App {
     /// a menu — is pushed later and captures the pointer above what is beneath.
     fn relayout(&mut self) {
         let (text, status) = self.areas();
-        let gutter = EditorView::new(&self.buffer, &self.palette).gutter_width().min(text.width);
+        let gutter =
+            EditorView::new(&self.doc().buffer, &self.palette).gutter_width().min(text.width);
 
         let mut hits = HitMap::new(cells(self.viewport));
         hits.push(cells(Rect { width: gutter, ..text }), Target::Gutter, false);
@@ -277,6 +320,7 @@ impl App {
         );
         hits.push(cells(status), Target::Status, false);
         self.layout_sidebar(&mut hits);
+        self.layout_tabs(&mut hits);
 
         let parts = self.status_parts(status);
         if let Some(files) = parts.files {
@@ -284,6 +328,11 @@ impl App {
         }
         if let Some(undo) = parts.undo {
             hits.push(cells(undo), Target::StatusUndo, true);
+        }
+        if let Some(close) = parts.close {
+            // Clickable, but not a hover target: one small button is no reason
+            // to have the terminal report every pointer movement all session.
+            hits.push(cells(close), Target::StatusClose, false);
         }
         if let Some(prompt) = &self.prompt {
             for (index, area) in prompt.button_areas(status).into_iter().enumerate() {
@@ -309,7 +358,7 @@ impl App {
     /// Where the status line's own buttons go.
     fn status_parts(&self, status: Rect) -> StatusParts {
         if self.prompt.is_some() || status.height == 0 {
-            return StatusParts { files: None, undo: None, text: status.x };
+            return StatusParts { files: None, undo: None, close: None, text: status.x };
         }
         let files = self.sidebar.as_ref().map(|_| Rect { width: 3.min(status.width), ..status });
         let text = files.map_or(status.x, Rect::right);
@@ -319,7 +368,11 @@ impl App {
             Rect::new(x, status.y, u16::try_from(self.undo_label().len()).unwrap_or(6), 1)
         });
         let undo = undo.filter(|undo| undo.right() <= status.right());
-        StatusParts { files, undo, text }
+        // With a strip on screen the tabs carry their own crosses; without
+        // one, this is how the open file is closed with the mouse.
+        let close = (self.tabs_area().is_none() && status.width > 10)
+            .then(|| Rect::new(status.right() - 3, status.y, 3, 1));
+        StatusParts { files, undo, close, text }
     }
 
     /// Whether anything on screen reacts to the pointer merely passing over it.
@@ -360,9 +413,10 @@ impl App {
         outcome
     }
 
-    /// How many lines of text fit, leaving a row for the status line.
-    const fn text_height(&self) -> usize {
-        self.viewport.height.saturating_sub(1) as usize
+    /// How many lines of text fit, once the status line and any tab strip
+    /// have taken their rows.
+    fn text_height(&self) -> usize {
+        usize::from(self.areas().0.height)
     }
 
     /// Handle one event.
@@ -394,7 +448,7 @@ impl App {
                 self.chords.cancel();
                 self.acknowledge();
                 self.focus = Focus::Editor;
-                self.buffer.insert(&text);
+                self.doc_mut().buffer.insert(&text);
                 self.follow_caret();
                 Outcome::Redraw
             }
@@ -506,18 +560,21 @@ impl App {
             Command::Undo if sidebar => return self.undo_file_op(),
             Command::Redo if sidebar => return self.redo_file_op(),
             Command::Undo => {
-                self.buffer.undo();
+                self.doc_mut().buffer.undo();
             }
             Command::Redo => {
-                self.buffer.redo();
+                self.doc_mut().buffer.redo();
             }
-            Command::SelectAll => self.buffer.select_all(),
+            Command::SelectAll => self.doc_mut().buffer.select_all(),
             Command::ToggleSidebar => return self.toggle_sidebar(),
             Command::NewFile => return self.ask_new(false),
             Command::NewFolder => return self.ask_new(true),
             Command::Rename => return self.ask_rename(),
             Command::Delete => return self.delete_selected(),
             Command::ToggleIgnored => return self.toggle_ignored(),
+            Command::CloseTab => return self.close_tab(self.active),
+            Command::NextTab => return self.step_tab(1),
+            Command::PreviousTab => return self.step_tab(-1),
         }
         self.follow_caret();
         Outcome::Redraw
@@ -535,32 +592,32 @@ impl App {
         match key.code {
             KeyCode::Char(ch) if !control => {
                 let mut text = [0u8; 4];
-                self.buffer.insert(ch.encode_utf8(&mut text));
+                self.doc_mut().buffer.insert(ch.encode_utf8(&mut text));
             }
-            KeyCode::Enter => self.buffer.insert("\n"),
-            KeyCode::Tab => self.buffer.insert("\t"),
-            KeyCode::Backspace => self.buffer.delete_backward(),
-            KeyCode::Delete => self.buffer.delete_forward(),
+            KeyCode::Enter => self.doc_mut().buffer.insert("\n"),
+            KeyCode::Tab => self.doc_mut().buffer.insert("\t"),
+            KeyCode::Backspace => self.doc_mut().buffer.delete_backward(),
+            KeyCode::Delete => self.doc_mut().buffer.delete_forward(),
 
-            KeyCode::Left => self.buffer.move_left(shift),
-            KeyCode::Right => self.buffer.move_right(shift),
-            KeyCode::Up => self.buffer.move_up(shift),
-            KeyCode::Down => self.buffer.move_down(shift),
-            KeyCode::Home => self.buffer.move_line_start(shift),
-            KeyCode::End => self.buffer.move_line_end(shift),
+            KeyCode::Left => self.doc_mut().buffer.move_left(shift),
+            KeyCode::Right => self.doc_mut().buffer.move_right(shift),
+            KeyCode::Up => self.doc_mut().buffer.move_up(shift),
+            KeyCode::Down => self.doc_mut().buffer.move_down(shift),
+            KeyCode::Home => self.doc_mut().buffer.move_line_start(shift),
+            KeyCode::End => self.doc_mut().buffer.move_line_end(shift),
             KeyCode::PageUp => {
                 for _ in 0..self.text_height() {
-                    self.buffer.move_up(shift);
+                    self.doc_mut().buffer.move_up(shift);
                 }
             }
             KeyCode::PageDown => {
                 for _ in 0..self.text_height() {
-                    self.buffer.move_down(shift);
+                    self.doc_mut().buffer.move_down(shift);
                 }
             }
             KeyCode::Esc => {
-                let head = self.buffer.selections().primary().head;
-                self.buffer.set_selections(Selections::single(Range::caret(head)));
+                let head = self.doc().buffer.selections().primary().head;
+                self.doc_mut().buffer.set_selections(Selections::single(Range::caret(head)));
             }
             // An unbound Ctrl chord, or a key nun does not use. The message it
             // may have cleared still needs a redraw.
@@ -589,13 +646,29 @@ impl App {
             {
                 self.sidebar_scroll(mouse.kind == MouseEventKind::ScrollDown)
             }
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+                if target.is_some_and(Target::in_tabs) =>
+            {
+                self.tab_scroll_by(mouse.kind == MouseEventKind::ScrollDown)
+            }
+            // A question or a menu on screen takes every button, not only the
+            // left one: closing a tab behind a prompt would answer it about
+            // the wrong tab.
+            MouseEventKind::Down(MouseButton::Middle)
+                if self.prompt.is_none() && self.menu.is_none() =>
+            {
+                match target {
+                    Some(target) => self.tab_middle_click(target),
+                    None => hovered,
+                }
+            }
             MouseEventKind::ScrollUp => {
-                self.scroll = self.scroll.saturating_sub(3);
+                self.doc_mut().scroll = self.doc_mut().scroll.saturating_sub(3);
                 Outcome::Redraw
             }
             MouseEventKind::ScrollDown => {
-                let last = self.buffer.len_lines().saturating_sub(1);
-                self.scroll = (self.scroll + 3).min(last);
+                let last = self.doc().buffer.len_lines().saturating_sub(1);
+                self.doc_mut().scroll = (self.doc_mut().scroll + 3).min(last);
                 Outcome::Redraw
             }
             MouseEventKind::Down(MouseButton::Left) => {
@@ -613,18 +686,16 @@ impl App {
                     _ => hovered,
                 }
             }
-            MouseEventKind::Drag(MouseButton::Left) => {
-                match self.sidebar_drag(mouse.column, mouse.row) {
-                    Some(outcome) => outcome,
-                    None => self.drag_to(mouse.column, mouse.row, now),
-                }
-                .and(hovered)
-            }
-            MouseEventKind::Up(MouseButton::Left) => match self.sidebar_release() {
-                Some(outcome) => outcome,
-                None => self.release(mouse),
-            }
-            .and(hovered),
+            MouseEventKind::Drag(MouseButton::Left) => self
+                .tab_drag_to(mouse.column, mouse.row)
+                .or_else(|| self.sidebar_drag(mouse.column, mouse.row))
+                .unwrap_or_else(|| self.drag_to(mouse.column, mouse.row, now))
+                .and(hovered),
+            MouseEventKind::Up(MouseButton::Left) => self
+                .tab_release()
+                .or_else(|| self.sidebar_release())
+                .unwrap_or_else(|| self.release(mouse))
+                .and(hovered),
             _ => hovered,
         }
     }
@@ -655,6 +726,10 @@ impl App {
 
         match target {
             // The same button both ways: after an undo it offers the redo.
+            Target::StatusClose => {
+                self.acknowledge();
+                self.close_tab(self.active)
+            }
             Target::StatusUndo if self.last_undone => self.redo_file_op(),
             Target::StatusUndo => self.undo_file_op(),
             Target::StatusFiles => {
@@ -664,6 +739,10 @@ impl App {
             target if target.in_sidebar() => {
                 self.acknowledge();
                 self.sidebar_press(mouse, target)
+            }
+            target if target.in_tabs() => {
+                self.acknowledge();
+                self.tab_press(mouse, target)
             }
             _ => {
                 self.acknowledge();
@@ -677,8 +756,8 @@ impl App {
     fn position_at(&self, column: u16, row: u16) -> Option<usize> {
         // The view measures from the left edge of the gutter, not the text.
         let (area, _) = self.areas();
-        EditorView::new(&self.buffer, &self.palette)
-            .scrolled_to(self.scroll)
+        EditorView::new(&self.doc().buffer, &self.palette)
+            .scrolled_to(self.doc().scroll)
             .position_at(area, column, row)
     }
 
@@ -688,35 +767,42 @@ impl App {
         if height == 0 {
             return;
         }
-        let line = self.buffer.line_of(self.buffer.selections().primary().head);
-        if line < self.scroll {
-            self.scroll = line;
-        } else if line >= self.scroll + height {
-            self.scroll = line - height + 1;
+        let line = self.doc().buffer.line_of(self.doc().buffer.selections().primary().head);
+        if line < self.doc().scroll {
+            self.doc_mut().scroll = line;
+        } else if line >= self.doc().scroll + height {
+            self.doc_mut().scroll = line - height + 1;
         }
     }
 
     fn request_quit(&mut self) -> Outcome {
-        if self.buffer.is_modified() && !self.quit_confirmed {
+        let unsaved = self.docs.iter().filter(|doc| doc.buffer.is_modified()).count();
+        if unsaved > 0 && !self.quit_confirmed {
             self.quit_confirmed = true;
             let save = self.binding_for(Command::Save);
             let quit = self.binding_for(Command::Quit);
-            self.message =
-                Some(format!("Unsaved changes. {save} to save, or {quit} again to discard."));
+            // Every unsaved tab is counted, so quitting never throws away a
+            // file that is not the one on screen without saying so.
+            let what = if unsaved == 1 {
+                "Unsaved changes".to_string()
+            } else {
+                format!("{unsaved} files have unsaved changes")
+            };
+            self.message = Some(format!("{what}. {save} to save, or {quit} again to discard."));
             return Outcome::Redraw;
         }
         Outcome::Quit
     }
 
     fn save(&mut self) -> Outcome {
-        if self.buffer.is_lossy() {
+        if self.doc().buffer.is_lossy() {
             self.message = Some(
                 "Refusing to save: this file was not valid UTF-8 and would be damaged.".into(),
             );
             return Outcome::Redraw;
         }
-        self.message = Some(match self.buffer.save() {
-            Ok(()) => format!("Saved {}", display_path(self.buffer.path())),
+        self.message = Some(match self.doc_mut().buffer.save() {
+            Ok(()) => format!("Saved {}", display_path(self.doc().buffer.path())),
             Err(SaveError::NoPath) => "No path to save to.".into(),
             Err(SaveError::ChangedOnDisk { path }) => {
                 format!(
@@ -752,21 +838,21 @@ impl App {
             chord.or_else(|| self.shown_message().map(str::to_string)).unwrap_or_else(|| {
                 format!(
                     "{}{}",
-                    display_path(self.buffer.path()),
-                    if self.buffer.is_modified() { " •" } else { "" }
+                    display_path(self.doc().buffer.path()),
+                    if self.doc().buffer.is_modified() { " •" } else { "" }
                 )
             });
 
-        let caret = self.buffer.selections().primary().head;
-        let line = self.buffer.line_of(caret);
-        let selections = self.buffer.selections().len();
+        let caret = self.doc().buffer.selections().primary().head;
+        let line = self.doc().buffer.line_of(caret);
+        let selections = self.doc().buffer.selections().len();
         let carets = if selections > 1 { format!("{selections} carets  ") } else { String::new() };
 
         let right = format!(
             "{carets}Ln {}, Col {}  {}",
             line + 1,
-            self.buffer.column_of(caret) + 1,
-            match self.buffer.line_ending() {
+            self.doc().buffer.column_of(caret) + 1,
+            match self.doc().buffer.line_ending() {
                 nun_core::LineEnding::Lf => "LF",
                 nun_core::LineEnding::Crlf => "CRLF",
             }
@@ -777,22 +863,37 @@ impl App {
     /// Draw the editor, the sidebar, the status line, and any menu.
     pub fn render(&self, area: Rect, cells: &mut Cells) {
         // Drawn into whatever rectangle the caller gives, which is the
-        // viewport in the editor and a fixed grid in the tests.
+        // viewport in the editor and a fixed grid in the tests. The sidebar
+        // takes columns from the left and the tab strip a row from the top,
+        // the same way the layout pass reckons them.
         let beside = self.sidebar_area().map_or(0, |sidebar| sidebar.width).min(area.width);
+        let above = u16::from(self.tabs_area().is_some()).min(area.height);
         let text_area = Rect {
             x: area.x + beside,
+            y: area.y + above,
             width: area.width - beside,
-            height: area.height.saturating_sub(1),
-            ..area
+            height: area.height.saturating_sub(1 + above),
         };
         let status =
             Rect { y: area.bottom().saturating_sub(1), height: area.height.min(1), ..area };
-        EditorView::new(&self.buffer, &self.palette)
-            .scrolled_to(self.scroll)
+        EditorView::new(&self.doc().buffer, &self.palette)
+            .scrolled_to(self.doc().scroll)
             .with_drop_marker(self.drop_marker())
             .render(text_area, cells);
 
         self.render_sidebar(cells);
+        if above > 0 {
+            let strip = Rect { x: text_area.x, y: area.y, width: text_area.width, height: 1 };
+            let hovered = match self.hover.current() {
+                Some(Target::Tab(index) | Target::TabClose(index)) => Some(index),
+                _ => None,
+            };
+            TabStrip::new(&self.tab_items(), &self.palette, self.active)
+                .hovered(hovered)
+                .scrolled_by(self.tab_scroll)
+                .drop_at(self.tab_drag.and_then(|drag| drag.drop_at))
+                .render(strip, cells);
+        }
 
         if status.height > 0 {
             self.render_status(status, cells);
@@ -877,15 +978,19 @@ impl App {
         if let Some(undo) = parts.undo {
             write_at(cells, undo, undo.x, self.undo_label(), button(Target::StatusUndo));
         }
+        if let Some(close) = parts.close {
+            write_at(cells, close, close.x, " × ", button(Target::StatusClose));
+        }
 
         let width = u16::try_from(right.chars().count()).unwrap_or(0);
         // Dropped entirely rather than overlapping when the two halves would
         // collide on a narrow terminal.
+        let right_edge = parts.close.map_or(area.right(), |close| close.x);
         let used = parts.undo.map_or_else(
             || parts.text + u16::try_from(left.chars().count()).unwrap_or(0),
             Rect::right,
         );
-        if let Some(start) = area.right().checked_sub(width + 1)
+        if let Some(start) = right_edge.checked_sub(width + 1)
             && start > used
         {
             write_at(cells, area, start, &right, style);
@@ -932,6 +1037,9 @@ struct StatusParts {
     files: Option<Rect>,
     /// The Undo button after a file operation.
     undo: Option<Rect>,
+    /// The cross that closes the open file, when there is no tab strip to
+    /// close it from.
+    close: Option<Rect>,
     /// Where the text starts.
     text: u16,
 }

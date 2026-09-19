@@ -40,6 +40,12 @@ pub enum Command {
     Delete,
     /// Show or hide files the ignore rules leave out.
     ToggleIgnored,
+    /// Close the tab being edited.
+    CloseTab,
+    /// Go to the next tab.
+    NextTab,
+    /// Go to the previous tab.
+    PreviousTab,
 }
 
 impl Command {
@@ -56,6 +62,9 @@ impl Command {
         Self::Rename,
         Self::Delete,
         Self::ToggleIgnored,
+        Self::CloseTab,
+        Self::NextTab,
+        Self::PreviousTab,
     ];
 
     /// The name used in `[keys]` in `nun.toml`.
@@ -73,6 +82,9 @@ impl Command {
             Self::Rename => "files.rename",
             Self::Delete => "files.delete",
             Self::ToggleIgnored => "files.toggle_ignored",
+            Self::CloseTab => "tab.close",
+            Self::NextTab => "tab.next",
+            Self::PreviousTab => "tab.previous",
         }
     }
 
@@ -91,6 +103,9 @@ impl Command {
             Self::Rename => "Rename",
             Self::Delete => "Delete",
             Self::ToggleIgnored => "Show or hide ignored files",
+            Self::CloseTab => "Close tab",
+            Self::NextTab => "Next tab",
+            Self::PreviousTab => "Previous tab",
         }
     }
 
@@ -117,7 +132,9 @@ const BASIC: &[(&str, Command)] = &[
     ("ctrl+y", Command::Redo),
     ("ctrl+a", Command::SelectAll),
     ("ctrl+q", Command::Quit),
-    ("ctrl+w", Command::Quit),
+    ("ctrl+w", Command::CloseTab),
+    ("ctrl+pagedown", Command::NextTab),
+    ("ctrl+pageup", Command::PreviousTab),
     ("ctrl+b", Command::ToggleSidebar),
     // File operations are chords on Ctrl+K rather than Alt bindings: on a Mac,
     // Option types characters unless the terminal is set to send it as Meta.
@@ -138,7 +155,7 @@ const FULL: &[(&str, Command)] = &[
     ("cmd+shift+z", Command::Redo),
     ("cmd+a", Command::SelectAll),
     ("cmd+q", Command::Quit),
-    ("cmd+w", Command::Quit),
+    ("cmd+w", Command::CloseTab),
     ("cmd+b", Command::ToggleSidebar),
 ];
 

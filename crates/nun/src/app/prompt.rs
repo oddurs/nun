@@ -27,8 +27,8 @@ pub(super) enum Purpose {
     NewFolder(PathBuf),
     /// Rename this entry to the typed name.
     Rename(PathBuf),
-    /// Unsaved changes are about to be left; then open this file.
-    UnsavedThenOpen(PathBuf),
+    /// Unsaved changes are about to be left; then close this tab.
+    UnsavedThenClose(usize),
 }
 
 /// How the prompt was answered.
@@ -158,15 +158,17 @@ impl App {
             (Purpose::NewFile(dir), _) => self.create(&dir, name, false),
             (Purpose::NewFolder(dir), _) => self.create(&dir, name, true),
             (Purpose::Rename(path), _) => self.rename(&path, name),
-            (Purpose::UnsavedThenOpen(path), Answer::Confirm) => {
+            (Purpose::UnsavedThenClose(index), Answer::Confirm) => {
                 self.save();
-                // A save that failed leaves the changes unsaved; do not carry
-                // on and throw them away.
-                if !self.buffer.is_modified() {
-                    self.load(&path);
+                // A save that failed leaves the changes unsaved; the tab stays
+                // open rather than taking them away with it.
+                if !self.doc().buffer.is_modified() {
+                    self.drop_tab(index);
                 }
             }
-            (Purpose::UnsavedThenOpen(path), Answer::Discard) => self.load(&path),
+            (Purpose::UnsavedThenClose(index), Answer::Discard) => {
+                self.drop_tab(index);
+            }
         }
         Outcome::Redraw
     }
@@ -178,7 +180,7 @@ mod tests {
 
     #[test]
     fn buttons_are_right_aligned_in_order() {
-        let prompt = Prompt::unsaved(Purpose::UnsavedThenOpen(PathBuf::from("x")), "a.rs");
+        let prompt = Prompt::unsaved(Purpose::UnsavedThenClose(0), "a.rs");
         let areas = prompt.button_areas(Rect::new(0, 9, 60, 1));
         assert_eq!(areas.len(), 3);
         assert!(areas[0].x < areas[1].x && areas[1].x < areas[2].x);
@@ -187,7 +189,7 @@ mod tests {
 
     #[test]
     fn on_a_narrow_line_cancel_survives() {
-        let prompt = Prompt::unsaved(Purpose::UnsavedThenOpen(PathBuf::from("x")), "a.rs");
+        let prompt = Prompt::unsaved(Purpose::UnsavedThenClose(0), "a.rs");
         let areas = prompt.button_areas(Rect::new(0, 0, 12, 1));
         assert!(areas[0].width == 0, "Save did not fit");
         assert!(areas[2].width > 0, "Cancel always does");
