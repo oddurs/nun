@@ -105,7 +105,7 @@ impl Sidebar {
     }
 
     /// Ask for a job to be done.
-    fn send(&self, job: Job) {
+    pub(super) fn send(&self, job: Job) {
         self.jobs.send(job);
     }
 
@@ -529,6 +529,10 @@ impl App {
             // Only ever asked for by a caller waiting for the worker to catch
             // up; there is nothing to do when it comes back.
             Done::Echo(_) => Outcome::Continue,
+            Done::Files { count } => self.palette_listed(count),
+            Done::Found { query, generation, results } => {
+                self.palette_found(&query, generation, results)
+            }
             Done::Changed(change) => {
                 self.after_op(&change);
                 Outcome::Redraw

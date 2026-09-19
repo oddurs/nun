@@ -14,6 +14,7 @@ use std::sync::mpsc::{self, Sender};
 use std::thread;
 
 use crate::ops::{Change, FsHistory};
+use crate::search::{self, Match};
 use crate::tree::{Entry, list_dir};
 
 /// Something to do with the filesystem.
@@ -50,6 +51,17 @@ pub enum Job {
     Undo,
     /// Redo the last undone operation.
     Redo,
+    /// List every file in the project, for the palette to search.
+    ListFiles(PathBuf),
+    /// Score `query` against the files listed, and answer with the best.
+    Search {
+        /// What the user has typed.
+        query: String,
+        /// How many results to send back.
+        limit: usize,
+        /// Which keystroke this is, so a late answer can be recognised.
+        generation: u64,
+    },
     /// Nothing: a marker that comes back once everything queued before it is
     /// done. Jobs are done in order, so this is how a caller waits for the
     /// worker to catch up without guessing at a delay.
@@ -70,6 +82,20 @@ pub enum Done {
     Changed(Change),
     /// It did not happen, and this is why, as a sentence.
     Failed(String),
+    /// The project's files were listed.
+    Files {
+        /// How many there are, so the palette can say what it is searching.
+        count: usize,
+    },
+    /// The best matches for a query.
+    Found {
+        /// What was searched for.
+        query: String,
+        /// Which keystroke asked.
+        generation: u64,
+        /// The matches, best first, with the path each one is.
+        results: Vec<(PathBuf, Match)>,
+    },
     /// The marker from [`Job::Echo`], and with it the news that everything
     /// asked for before it has been done.
     Echo(u64),
@@ -99,9 +125,31 @@ impl Jobs {
         let (sender, receiver) = mpsc::channel::<Job>();
         let trash = trash.into();
         thread::spawn(move || {
-            let mut history = FsHistory::new(trash);
-            for job in receiver {
-                report(run(&mut history, job));
+            let mut worker =
+                Worker { history: FsHistory::new(trash), files: Vec::new(), names: Vec::new() };
+            while let Ok(first) = receiver.recv() {
+                // Everything waiting is taken at once so that searches the
+                // user has already typed past can be skipped: only the latest
+                // one is worth the work, and the rest would answer questions
+                // nobody is asking any more.
+                let mut batch = vec![first];
+                batch.extend(receiver.try_iter());
+                let latest = batch
+                    .iter()
+                    .filter_map(|job| match job {
+                        Job::Search { generation, .. } => Some(*generation),
+                        _ => None,
+                    })
+                    .max();
+
+                for job in batch {
+                    if let Job::Search { generation, .. } = &job
+                        && Some(*generation) != latest
+                    {
+                        continue;
+                    }
+                    report(worker.run(job));
+                }
             }
         });
         Self { sender }
@@ -122,24 +170,46 @@ impl Jobs {
     }
 }
 
-fn run(history: &mut FsHistory, job: Job) -> Done {
-    let outcome = match job {
-        Job::List { dir, show_ignored } => {
-            let entries = list_dir(&dir, show_ignored);
-            return Done::Listed { dir, entries };
+/// The worker's own state: the undo history, and the project's files.
+struct Worker {
+    history: FsHistory,
+    files: Vec<PathBuf>,
+    /// The same paths as strings, which is what the matcher wants.
+    names: Vec<String>,
+}
+
+impl Worker {
+    fn run(&mut self, job: Job) -> Done {
+        let outcome = match job {
+            Job::List { dir, show_ignored } => {
+                let entries = list_dir(&dir, show_ignored);
+                return Done::Listed { dir, entries };
+            }
+            Job::ListFiles(root) => {
+                self.files = search::list_files(&root);
+                self.names = self.files.iter().map(|path| path.display().to_string()).collect();
+                return Done::Files { count: self.files.len() };
+            }
+            Job::Search { query, limit, generation } => {
+                let results = search::search(&self.names, &query, limit)
+                    .into_iter()
+                    .map(|found| (self.files[found.index].clone(), found))
+                    .collect();
+                return Done::Found { query, generation, results };
+            }
+            Job::Echo(marker) => return Done::Echo(marker),
+            Job::CreateFile(path) => self.history.create_file(path),
+            Job::CreateDir(path) => self.history.create_dir(path),
+            Job::Rename { from, name } => self.history.rename(from, &name),
+            Job::MoveInto { from, dir } => self.history.move_into(from, dir),
+            Job::Delete(path) => self.history.delete(path),
+            Job::Undo => return step(self.history.undo(), true),
+            Job::Redo => return step(self.history.redo(), false),
+        };
+        match outcome {
+            Ok(change) => Done::Changed(change),
+            Err(error) => Done::Failed(error.to_string()),
         }
-        Job::CreateFile(path) => history.create_file(path),
-        Job::CreateDir(path) => history.create_dir(path),
-        Job::Rename { from, name } => history.rename(from, &name),
-        Job::MoveInto { from, dir } => history.move_into(from, dir),
-        Job::Delete(path) => history.delete(path),
-        Job::Echo(marker) => return Done::Echo(marker),
-        Job::Undo => return step(history.undo(), true),
-        Job::Redo => return step(history.redo(), false),
-    };
-    match outcome {
-        Ok(change) => Done::Changed(change),
-        Err(error) => Done::Failed(error.to_string()),
     }
 }
 
@@ -164,13 +234,14 @@ pub fn is_inside(path: &Path, dir: &Path) -> bool {
     path.starts_with(dir)
 }
 
+/// Shared by the test modules below.
 #[cfg(test)]
-mod tests {
+mod tests_support {
     use super::*;
     use std::sync::mpsc::Receiver;
     use std::time::Duration;
 
-    fn worker(trash: &Path) -> (Jobs, Receiver<Done>) {
+    pub(super) fn worker(trash: &Path) -> (Jobs, Receiver<Done>) {
         let (sender, receiver) = mpsc::channel();
         let jobs = Jobs::new(
             trash,
@@ -181,9 +252,15 @@ mod tests {
         (jobs, receiver)
     }
 
-    fn next(receiver: &Receiver<Done>) -> Done {
+    pub(super) fn next(receiver: &Receiver<Done>) -> Done {
         receiver.recv_timeout(Duration::from_secs(5)).expect("the worker answered")
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tests_support::*;
+    use super::*;
 
     #[test]
     fn a_listing_comes_back_as_a_message() {
@@ -287,6 +364,91 @@ mod tests {
                 }
                 other => panic!("{other:?}"),
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod search_tests {
+    use super::tests_support::*;
+    use super::*;
+
+    #[test]
+    fn the_project_is_listed_and_then_searched() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("src")).unwrap();
+        std::fs::write(dir.path().join("src/main.rs"), "").unwrap();
+        std::fs::write(dir.path().join("README.md"), "").unwrap();
+        let (jobs, receiver) = worker(&dir.path().join(".trash"));
+
+        jobs.send(Job::ListFiles(dir.path().to_path_buf()));
+        assert_eq!(next(&receiver), Done::Files { count: 2 });
+
+        jobs.send(Job::Search { query: "main".into(), limit: 10, generation: 1 });
+        match next(&receiver) {
+            Done::Found { query, generation, results } => {
+                assert_eq!(query, "main");
+                assert_eq!(generation, 1);
+                assert_eq!(results.len(), 1);
+                assert!(results[0].0.ends_with("main.rs"));
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_search_the_user_has_typed_past_is_not_answered() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.rs"), "").unwrap();
+        let (jobs, receiver) = worker(&dir.path().join(".trash"));
+        jobs.send(Job::ListFiles(dir.path().to_path_buf()));
+        next(&receiver);
+
+        // Three keystrokes in a row: only the last one is worth answering.
+        for generation in 1..=3 {
+            jobs.send(Job::Search {
+                query: "a".repeat(generation),
+                limit: 10,
+                generation: generation as u64,
+            });
+        }
+        jobs.send(Job::Echo(9));
+
+        let mut answered = Vec::new();
+        loop {
+            match next(&receiver) {
+                Done::Found { generation, .. } => answered.push(generation),
+                Done::Echo(9) => break,
+                other => panic!("{other:?}"),
+            }
+        }
+        assert!(answered.len() <= 3, "{answered:?}");
+        assert!(answered.contains(&3), "the last one is always answered: {answered:?}");
+    }
+
+    #[test]
+    fn work_that_is_not_a_search_is_never_skipped() {
+        let dir = tempfile::tempdir().unwrap();
+        let (jobs, receiver) = worker(&dir.path().join(".trash"));
+        for name in ["a", "b", "c"] {
+            jobs.send(Job::CreateFile(dir.path().join(name)));
+        }
+        jobs.send(Job::Search { query: "x".into(), limit: 1, generation: 1 });
+        jobs.send(Job::Search { query: "y".into(), limit: 1, generation: 2 });
+        jobs.send(Job::Echo(1));
+
+        let mut changes = 0;
+        loop {
+            match next(&receiver) {
+                Done::Changed(_) => changes += 1,
+                Done::Echo(1) => break,
+                Done::Found { .. } => {}
+                other => panic!("{other:?}"),
+            }
+        }
+        assert_eq!(changes, 3, "every file was created");
+        for name in ["a", "b", "c"] {
+            assert!(dir.path().join(name).exists());
         }
     }
 }

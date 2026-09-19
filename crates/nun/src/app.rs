@@ -23,6 +23,7 @@ use ratatui::widgets::Widget;
 
 use crate::commands::Command;
 
+mod palette;
 mod panes;
 mod pointer;
 mod prompt;
@@ -82,6 +83,14 @@ pub enum Target {
     Divider(usize),
     /// The file-tree toggle at the left of the status line.
     StatusFiles,
+    /// The button at the left of the status line that opens the palette.
+    StatusSearch,
+    /// The palette itself.
+    Palette,
+    /// One of its rows.
+    PaletteRow(usize),
+    /// Everywhere outside it, which a click there closes it from.
+    PaletteOutside,
     /// The Undo offered after a file operation.
     StatusUndo,
     /// The cross that closes the open file when there is no tab strip.
@@ -122,9 +131,10 @@ impl Target {
 }
 
 /// What has the keyboard.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Focus {
     /// The text.
+    #[default]
     Editor,
     /// The file tree.
     Sidebar,
@@ -188,6 +198,15 @@ pub struct App {
     tab_drag: Option<tabs::TabDrag>,
     /// A divider being dragged, by its index.
     divider_drag: Option<usize>,
+    /// The palette, while it is open.
+    finder: Option<palette::Palette>,
+    /// How often each file has been opened from the palette.
+    frecency: palette::Frecency,
+    /// How many files the project has, once they have been counted.
+    file_count: Option<usize>,
+    /// How many palette searches have been asked for, ever. Monotonic, so an
+    /// answer can always be matched to the keystroke that asked.
+    searches: u64,
 }
 
 impl App {
@@ -239,6 +258,10 @@ impl App {
             open_when_created: None,
             tab_drag: None,
             divider_drag: None,
+            finder: None,
+            frecency: palette::Frecency::new(),
+            file_count: None,
+            searches: 0,
         };
         app.relayout();
         app
@@ -272,6 +295,18 @@ impl App {
     /// Columns the line-number gutter takes.
     fn gutter_width(&self) -> u16 {
         EditorView::new(&self.doc().buffer, &self.palette).gutter_width()
+    }
+
+    /// The folder the file tree is rooted at, when one is open.
+    fn workspace_root(&self) -> Option<std::path::PathBuf> {
+        self.sidebar.as_ref().map(|sidebar| sidebar.tree.root().to_path_buf())
+    }
+
+    /// Ask the worker for something.
+    fn send_job(&self, job: nun_workspace::Job) {
+        if let Some(sidebar) = self.sidebar.as_ref() {
+            sidebar.send(job);
+        }
     }
 
     /// Say something once in the status line.
@@ -332,10 +367,16 @@ impl App {
         hits.push(cells(status), Target::Status, false);
         self.layout_sidebar(&mut hits);
         self.layout_panes(&mut hits);
+        self.layout_palette(&mut hits);
 
         let parts = self.status_parts(status);
         if let Some(files) = parts.files {
             hits.push(cells(files), Target::StatusFiles, true);
+        }
+        if let Some(search) = parts.search {
+            // Clickable, but not a hover target: one small button is no reason
+            // to have the terminal report every pointer movement all session.
+            hits.push(cells(search), Target::StatusSearch, false);
         }
         if let Some(undo) = parts.undo {
             hits.push(cells(undo), Target::StatusUndo, true);
@@ -369,10 +410,21 @@ impl App {
     /// Where the status line's own buttons go.
     fn status_parts(&self, status: Rect) -> StatusParts {
         if self.prompt.is_some() || status.height == 0 {
-            return StatusParts { files: None, undo: None, close: None, text: status.x };
+            return StatusParts {
+                files: None,
+                search: None,
+                undo: None,
+                close: None,
+                text: status.x,
+            };
         }
         let files = self.sidebar.as_ref().map(|_| Rect { width: 3.min(status.width), ..status });
-        let text = files.map_or(status.x, Rect::right);
+        let after_files = files.map_or(status.x, Rect::right);
+        // The palette is the one thing every command is reachable through, so
+        // it has a button of its own rather than only a key.
+        let search =
+            (status.width > 12).then(|| Rect::new(after_files, status.y, 3, status.height.min(1)));
+        let text = search.map_or(after_files, Rect::right);
         let undo = self.undo_offer.then(|| {
             let (left, _) = self.status();
             let x = text + u16::try_from(left.chars().count() + 2).unwrap_or(u16::MAX);
@@ -383,7 +435,7 @@ impl App {
         // one, this is how the open file is closed with the mouse.
         let close = (self.strip_area(self.panes.focus()).is_none() && status.width > 10)
             .then(|| Rect::new(status.right() - 3, status.y, 3, 1));
-        StatusParts { files, undo, close, text }
+        StatusParts { files, search, undo, close, text }
     }
 
     /// Whether anything on screen reacts to the pointer merely passing over it.
@@ -454,6 +506,10 @@ impl App {
                 self.prompt_paste(&text);
                 Outcome::Redraw
             }
+            Event::Paste(text) if self.finder.is_some() => {
+                self.palette_paste(&text);
+                Outcome::Redraw
+            }
             Event::Paste(text) => {
                 // A paste is not the second half of a chord.
                 self.chords.cancel();
@@ -493,6 +549,9 @@ impl App {
         self.end_drag();
         if self.prompt.is_some() {
             return self.prompt_key(&event);
+        }
+        if self.finder.is_some() {
+            return self.palette_key(&event);
         }
         if self.menu.take().is_some() && event.code == KeyCode::Esc {
             return Outcome::Redraw;
@@ -591,6 +650,8 @@ impl App {
             Command::SplitBelow => return self.split_pane(nun_ui::Dir::Below),
             Command::ClosePane => return self.close_pane(self.panes.focus()),
             Command::NextPane => return self.focus_next_pane(),
+            Command::Palette => return self.open_palette(""),
+            Command::Commands => return self.open_palette(">"),
             Command::NextTab => return self.step_tab(1),
             Command::PreviousTab => return self.step_tab(-1),
         }
@@ -659,6 +720,9 @@ impl App {
 
         let target = hit.map(|hit| hit.target);
         match mouse.kind {
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown if self.finder.is_some() => {
+                self.palette_scroll(mouse.kind == MouseEventKind::ScrollDown)
+            }
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
                 if target.is_some_and(Target::in_sidebar) =>
             {
@@ -749,7 +813,24 @@ impl App {
             return Outcome::Continue;
         }
 
+        if self.finder.is_some() {
+            let split = mouse.modifiers.contains(KeyModifiers::ALT)
+                || mouse.kind == MouseEventKind::Down(MouseButton::Middle);
+            return match target {
+                // Alt-click, like Alt+Enter, opens the file in a split.
+                Target::PaletteRow(index) => self.pick_row(index, split),
+                Target::Palette => Outcome::Continue,
+                // A click anywhere else puts the palette away, as with any
+                // overlay.
+                _ => self.close_palette(),
+            };
+        }
+
         match target {
+            Target::StatusSearch => {
+                self.acknowledge();
+                self.open_palette("")
+            }
             // The same button both ways: after an undo it offers the redo.
             Target::StatusClose => {
                 self.acknowledge();
@@ -913,6 +994,7 @@ impl App {
             self.render_status(status, cells);
         }
 
+        self.render_palette(cells);
         if let Some(menu) = &self.menu {
             let hovered = match self.hover.current() {
                 Some(Target::MenuItem(index)) => Some(index),
@@ -986,6 +1068,9 @@ impl App {
             let glyph = if self.sidebar_area().is_some() { " ◧ " } else { " ▯ " };
             write_at(cells, files, files.x, glyph, button(Target::StatusFiles));
         }
+        if let Some(search) = parts.search {
+            write_at(cells, search, search.x, " ⌕ ", button(Target::StatusSearch));
+        }
 
         let (left, right) = self.status();
         write_at(cells, area, parts.text, &left, style);
@@ -1049,6 +1134,8 @@ impl App {
 struct StatusParts {
     /// The file-tree toggle, when a folder is open.
     files: Option<Rect>,
+    /// The button that opens the palette.
+    search: Option<Rect>,
     /// The Undo button after a file operation.
     undo: Option<Rect>,
     /// The cross that closes the open file, when there is no tab strip to

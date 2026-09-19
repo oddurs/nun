@@ -15,6 +15,7 @@ mod harness;
 mod layout;
 mod lifecycle;
 mod menu;
+mod palette;
 mod screen;
 mod signals;
 mod style;
@@ -29,6 +30,7 @@ pub use lifecycle::{
     Capabilities, CrosstermControl, TerminalControl, TerminalGuard, install_panic_hook,
 };
 pub use menu::{Menu, MenuItem};
+pub use palette::{Entry as PaletteEntry, MOST_ROWS, PaletteView};
 pub use screen::Screen;
 pub use signals::{Signal, suspend_self, watch as watch_signals};
 pub use style::Palette;
