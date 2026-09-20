@@ -2,10 +2,12 @@
 id: 30
 title: Multi-cursor and column selection
 type: feature
-status: backlog
+status: doing
 milestone: m3
+assignee: Oddur Sigurdsson
+claimed: 2026-09-19
 created: 2026-09-10
-updated: 2026-09-10
+updated: 2026-09-19
 priority: p1
 effort: m
 area: core
@@ -24,7 +26,7 @@ collapses to the primary caret.
 
 ## Acceptance criteria
 
-- [ ] Every editing command is caret-count agnostic
-- [ ] Carets that collide after an edit merge without losing the primary
-- [ ] The primary caret is visually distinguishable from the rest
-- [ ] Typing with 500 carets stays within the frame budget
+- [x] Every editing command is caret-count agnostic
+- [x] Carets that collide after an edit merge without losing the primary
+- [x] The primary caret is visually distinguishable from the rest
+- [x] Typing with 500 carets stays within the frame budget

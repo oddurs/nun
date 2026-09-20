@@ -68,6 +68,16 @@ pub enum Command {
     SearchWord,
     /// Make the search look in ignored files too, or stop.
     SearchIgnored,
+    /// Add a caret on the line above every selection.
+    AddCaretAbove,
+    /// Add a caret on the line below every selection.
+    AddCaretBelow,
+    /// Select the word under the caret, then the next occurrence of it.
+    AddNextOccurrence,
+    /// Select every occurrence of what is selected.
+    AddAllOccurrences,
+    /// Turn a selection spanning lines into one per line.
+    SplitIntoLines,
 }
 
 impl Command {
@@ -98,6 +108,11 @@ impl Command {
         Self::SearchCase,
         Self::SearchWord,
         Self::SearchIgnored,
+        Self::AddCaretAbove,
+        Self::AddCaretBelow,
+        Self::AddNextOccurrence,
+        Self::AddAllOccurrences,
+        Self::SplitIntoLines,
     ];
 
     /// The name used in `[keys]` in `nun.toml`.
@@ -129,6 +144,11 @@ impl Command {
             Self::SearchCase => "search.toggle_case",
             Self::SearchWord => "search.toggle_word",
             Self::SearchIgnored => "search.toggle_ignored",
+            Self::AddCaretAbove => "caret.add_above",
+            Self::AddCaretBelow => "caret.add_below",
+            Self::AddNextOccurrence => "caret.add_next",
+            Self::AddAllOccurrences => "caret.add_all",
+            Self::SplitIntoLines => "caret.split_lines",
         }
     }
 
@@ -161,6 +181,11 @@ impl Command {
             Self::SearchCase => "Search: toggle match case",
             Self::SearchWord => "Search: toggle whole words",
             Self::SearchIgnored => "Search: toggle ignored files",
+            Self::AddCaretAbove => "Add a caret above",
+            Self::AddCaretBelow => "Add a caret below",
+            Self::AddNextOccurrence => "Select the next occurrence",
+            Self::AddAllOccurrences => "Select every occurrence",
+            Self::SplitIntoLines => "One caret per line",
         }
     }
 
@@ -212,6 +237,13 @@ const BASIC: &[(&str, Command)] = &[
     ("ctrl+k c", Command::SearchCase),
     ("ctrl+k shift+w", Command::SearchWord),
     ("ctrl+k shift+i", Command::SearchIgnored),
+    // Chords, because the shifted and alt-ed forms these have elsewhere are
+    // not distinguishable without the Kitty protocol.
+    ("ctrl+k up", Command::AddCaretAbove),
+    ("ctrl+k down", Command::AddCaretBelow),
+    ("ctrl+d", Command::AddNextOccurrence),
+    ("ctrl+k d", Command::AddAllOccurrences),
+    ("ctrl+k l", Command::SplitIntoLines),
 ];
 
 /// Bindings that need the Kitty keyboard protocol, added over [`BASIC`].
@@ -231,6 +263,11 @@ const FULL: &[(&str, Command)] = &[
     ("ctrl+shift+p", Command::Commands),
     ("cmd+shift+f", Command::SearchProject),
     ("ctrl+shift+f", Command::SearchProject),
+    ("cmd+d", Command::AddNextOccurrence),
+    ("alt+up", Command::AddCaretAbove),
+    ("alt+down", Command::AddCaretBelow),
+    ("ctrl+shift+l", Command::AddAllOccurrences),
+    ("cmd+shift+l", Command::AddAllOccurrences),
 ];
 
 /// The default bindings for `set`.

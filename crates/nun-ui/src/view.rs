@@ -210,7 +210,22 @@ impl EditorView<'_> {
         carets: &[usize],
     ) {
         let is_caret = |at: usize| carets.binary_search(&at).is_ok();
-        let caret_line = self.buffer.line_of(self.buffer.selections().primary().head);
+        let primary = self.buffer.selections().primary().head;
+        let caret_line = self.buffer.line_of(primary);
+        // With several carets the one being driven has to be findable, or
+        // every key press is a guess about where the text will appear. The
+        // others are still carets and still solid; they are just not the one
+        // the arrows move.
+        // The drop marker is not a caret at all — it is where text is about to
+        // land — so it keeps the loud treatment rather than being mistaken for
+        // one of the quiet ones.
+        let caret_style = |at: usize| {
+            if at == primary || Some(at) == self.marker {
+                self.palette.on(Role::Accent, Role::OnAccent)
+            } else {
+                self.palette.on(Role::LineStrong, Role::Ground)
+            }
+        };
         let selections = self.buffer.selections();
         let text = self.buffer.line_text(line);
 
@@ -255,7 +270,7 @@ impl EditorView<'_> {
                 style = style.patch(self.palette.selection());
             }
             if is_caret(char_index) {
-                style = self.palette.on(Role::Accent, Role::OnAccent);
+                style = caret_style(char_index);
             }
 
             let symbol = if cluster == "\t" { " " } else { cluster };
@@ -279,7 +294,7 @@ impl EditorView<'_> {
 
         // The caret may sit one past the last character on the line.
         if is_caret(char_index) && x < area.right() {
-            cells[(x, y)].set_symbol(" ").set_style(self.palette.on(Role::Accent, Role::OnAccent));
+            cells[(x, y)].set_symbol(" ").set_style(caret_style(char_index));
         }
     }
 }

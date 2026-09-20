@@ -117,6 +117,15 @@ and are previewed with the matcher that will do the writing, so what you see
 is what you get. A file written to since the search is left alone rather than
 rewritten from a stale preview, and one undo takes the whole thing back.
 
+Carets are plural wherever they can be. `Ctrl+D` selects the word under the
+caret and then each next occurrence of it; `Ctrl+Shift+L` takes every
+occurrence at once; `Alt+Up` and `Alt+Down` put a caret on the line above or
+below, keeping the column they were aiming for so a run past a short line
+comes out straight again. A selection spanning lines splits into one caret per
+line. Escape goes back to one, and so does clicking anywhere. The caret the
+arrows move is drawn in the accent and the others are quieter, because
+otherwise every key press is a guess about where the text will appear.
+
 Not there yet: folds, language servers and git. Those are the rest of
 milestone 3 and milestones 4 and 5.
 

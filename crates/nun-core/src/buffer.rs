@@ -702,6 +702,164 @@ impl Buffer {
         self.history.commit();
     }
 
+    // ── several carets ──────────────────────────────────────────────────────
+
+    /// Add a caret on the line above every selection, or below.
+    ///
+    /// Each new caret lands on the column its selection is aiming for, so a
+    /// column of carets walked down past short lines comes out straight again
+    /// rather than collapsing against the ragged edge.
+    ///
+    /// Nothing is added for a selection already on the first or last line;
+    /// pressing the key at the top of a file should not stack carets on each
+    /// other.
+    pub fn add_caret_vertically(&mut self, up: bool) {
+        let last_line = self.len_lines() - 1;
+        let mut ranges: Vec<Range> = self.selections.ranges().to_vec();
+        let mut added: Vec<Range> = Vec::new();
+        for range in self.selections.ranges() {
+            let line = self.line_of(range.head);
+            if (up && line == 0) || (!up && line == last_line) {
+                continue;
+            }
+            let target = if up { line - 1 } else { line + 1 };
+            let goal = range.sticky.unwrap_or_else(|| self.column_of(range.head));
+            let text = self.line_text(target);
+            let offset = grapheme::char_off_at_width(&text, goal, self.tab_width);
+            let mut caret = Range::caret(self.line_start(target) + offset);
+            caret.sticky = Some(goal);
+            added.push(caret);
+        }
+        if added.is_empty() {
+            return;
+        }
+        // The newest caret is the one being driven, so pressing again carries
+        // on from where it got to.
+        let primary = ranges.len() + added.len() - 1;
+        ranges.append(&mut added);
+        self.selections = Selections::new(ranges, primary);
+        self.history.commit();
+    }
+
+    /// Select the word the primary caret is in, or — when it already covers
+    /// something — add the next occurrence of that text and drive it.
+    ///
+    /// Returns whether anything happened, so a keystroke that found nothing
+    /// can say so rather than looking like it worked.
+    pub fn add_next_occurrence(&mut self) -> bool {
+        let primary = self.selections.primary();
+        if primary.from() == primary.to() {
+            let (from, to) = self.word_range(primary.head);
+            if from == to {
+                return false;
+            }
+            self.selections.set_primary(Range::new(from, to));
+            self.history.commit();
+            return true;
+        }
+
+        let Some(next) = self.occurrence_after(primary) else { return false };
+        let mut ranges: Vec<Range> = self.selections.ranges().to_vec();
+        if ranges.contains(&next) {
+            // Every occurrence is taken already; wrapping onto one of them
+            // would move the primary around for ever and add nothing.
+            return false;
+        }
+        ranges.push(next);
+        let primary = ranges.len() - 1;
+        self.selections = Selections::new(ranges, primary);
+        self.history.commit();
+        true
+    }
+
+    /// Select every occurrence of what the primary selection covers.
+    ///
+    /// From a bare caret the word it sits in is selected first, so one press
+    /// does what two would.
+    pub fn add_all_occurrences(&mut self) -> bool {
+        if self.selections.primary().from() == self.selections.primary().to()
+            && !self.add_next_occurrence()
+        {
+            return false;
+        }
+        let primary = self.selections.primary();
+        let needle = self.slice(primary.from(), primary.to());
+        if needle.is_empty() {
+            return false;
+        }
+        let text = self.rope.to_string();
+        let mut ranges: Vec<Range> = Vec::new();
+        let mut at = 0;
+        while let Some(found) = text[at..].find(&needle) {
+            let byte = at + found;
+            let from = self.rope.byte_to_char(byte);
+            ranges.push(Range::new(from, from + needle.chars().count()));
+            at = byte + needle.len();
+        }
+        if ranges.is_empty() {
+            return false;
+        }
+        // Whichever was being driven stays the one being driven.
+        let primary = ranges.iter().position(|range| *range == primary).unwrap_or(0);
+        self.selections = Selections::new(ranges, primary);
+        self.history.commit();
+        true
+    }
+
+    /// Turn every selection that spans lines into one selection per line.
+    ///
+    /// A selection within one line is left alone: there is nothing to split,
+    /// and replacing it with itself would only look like the key had failed.
+    pub fn split_into_lines(&mut self) -> bool {
+        let mut ranges: Vec<Range> = Vec::new();
+        let mut split = false;
+        for range in self.selections.ranges() {
+            let (from, to) = (range.from(), range.to());
+            let (first, last) = (self.line_of(from), self.line_of(to));
+            if first == last {
+                ranges.push(*range);
+                continue;
+            }
+            split = true;
+            for line in first..=last {
+                let start = self.line_start(line).max(from);
+                let end = self.line_end(line).min(to);
+                if start <= end {
+                    ranges.push(Range::new(start, end));
+                }
+            }
+        }
+        if !split {
+            return false;
+        }
+        self.selections = Selections::new(ranges, 0);
+        self.history.commit();
+        true
+    }
+
+    /// The first occurrence of what `range` covers that starts after it,
+    /// wrapping back to the start of the buffer.
+    fn occurrence_after(&self, range: Range) -> Option<Range> {
+        let needle = self.slice(range.from(), range.to());
+        if needle.is_empty() {
+            return None;
+        }
+        let text = self.rope.to_string();
+        let after = self.rope.char_to_byte(range.to());
+        let found = text[after..]
+            .find(&needle)
+            .map(|at| after + at)
+            .or_else(|| text[..after].find(&needle))?;
+        let from = self.rope.byte_to_char(found);
+        Some(Range::new(from, from + needle.chars().count()))
+    }
+
+    /// The text between two char indices.
+    fn slice(&self, from: usize, to: usize) -> String {
+        let end = to.min(self.len_chars());
+        self.rope.slice(from.min(end)..end).to_string()
+    }
+
     // ── pointer selection ───────────────────────────────────────────────────
 
     /// The word, space run or symbol run under `char_idx`, as `(start, end)`:

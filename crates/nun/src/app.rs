@@ -776,6 +776,24 @@ impl App {
             Command::SearchCase => return self.toggle_search(nun_ui::SearchButton::Case),
             Command::SearchWord => return self.toggle_search(nun_ui::SearchButton::Word),
             Command::SearchIgnored => return self.toggle_search(nun_ui::SearchButton::Ignored),
+            Command::AddCaretAbove => self.doc_mut().buffer.add_caret_vertically(true),
+            Command::AddCaretBelow => self.doc_mut().buffer.add_caret_vertically(false),
+            Command::AddNextOccurrence => {
+                if !self.doc_mut().buffer.add_next_occurrence() {
+                    self.message = Some("No other occurrence of that.".into());
+                }
+            }
+            Command::AddAllOccurrences => {
+                if !self.doc_mut().buffer.add_all_occurrences() {
+                    self.message = Some("Nothing to select every occurrence of.".into());
+                }
+            }
+            Command::SplitIntoLines => {
+                if !self.doc_mut().buffer.split_into_lines() {
+                    self.message = Some("The selection is already on one line.".into());
+                }
+            }
+
             Command::NextTab => return self.step_tab(1),
             Command::PreviousTab => return self.step_tab(-1),
         }
@@ -793,6 +811,18 @@ impl App {
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
 
         match key.code {
+            // Not a bound command: a binding for this would have to be Escape,
+            // and Escape belongs to the sidebar and the search panel, where it
+            // means "leave". Here, with several carets, it means "back to
+            // one"; with a single caret it has nothing to do and falls through
+            // to whatever else wants it. The mouse already does this — a plain
+            // click puts the caret somewhere and takes the others away.
+            KeyCode::Esc if self.doc().buffer.selections().len() > 1 => {
+                let mut selections = self.doc().buffer.selections().clone();
+                selections.collapse_to_primary();
+                self.doc_mut().buffer.set_selections(selections);
+                self.follow_caret();
+            }
             KeyCode::Char(ch) if !control => {
                 let mut text = [0u8; 4];
                 self.doc_mut().buffer.insert(ch.encode_utf8(&mut text));
