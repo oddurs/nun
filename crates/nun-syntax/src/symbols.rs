@@ -77,7 +77,18 @@ pub(crate) fn of_tree(
 
     // In the order they appear, so nesting can be read off a stack.
     found.sort_by_key(|one| (one.whole.0, std::cmp::Reverse(one.whole.1)));
-    found.dedup_by(|a, b| a.whole == b.whole && a.name == b.name);
+    // Two patterns can tag the same node under different kinds — Rust's query
+    // tags every function as a function and any function in a declaration list
+    // as a method, and every function in a module body is both. Which one
+    // survives is otherwise decided by the order the query happened to match
+    // them in, which is stable today and a silent change on a grammar bump.
+    found.dedup_by(|later, kept| {
+        let same = later.whole == kept.whole && later.name == kept.name;
+        if same && kept.kind == "function" {
+            kept.kind = later.kind;
+        }
+        same
+    });
 
     // The enclosing definitions, each with where it landed in the outline.
     let mut open: Vec<((usize, usize), usize)> = Vec::new();
@@ -95,6 +106,20 @@ pub(crate) fn of_tree(
             parent: open.last().map(|(_, at)| *at),
         });
         open.push((one.whole, index));
+    }
+
+    // A method is a function that belongs to something. Grammars cannot always
+    // tell: in Rust a module body and an implementation body are both
+    // declaration lists, so a free function inside `mod` is tagged a method by
+    // the same pattern that tags a real one. What it is enclosed by settles it.
+    for index in 0..outline.len() {
+        if outline[index].kind != "method" {
+            continue;
+        }
+        let inside = outline[index].parent.map(|at| outline[at].kind);
+        if inside.is_none_or(|kind| kind == "module") {
+            outline[index].kind = "function";
+        }
     }
     outline
 }
@@ -165,6 +190,38 @@ mod tests {
             2,
             "both blocks are headings of their own: {found:?}"
         );
+    }
+
+    #[test]
+    fn an_implementation_heads_its_methods_whatever_it_is_for() {
+        // An implementation for a reference, a slice, a tuple or a path is as
+        // much an implementation as one for a plain name, and its methods
+        // should not be left sitting beside the file's free functions.
+        for self_type in ["Point", "&str", "[T; 4]", "(A, B)", "*const T", "foo::Bar", "Vec<T>"] {
+            let found =
+                outline("rust", &format!("impl Trait for {self_type} {{\n    fn m() {{}}\n}}\n"));
+            let method = found.iter().find(|row| row.ends_with(" m")).expect("the method");
+            assert!(method.starts_with('1'), "for `{self_type}`: {found:?}");
+        }
+    }
+
+    #[test]
+    fn a_free_function_in_a_module_is_a_function_not_a_method() {
+        // Rust's query tags any function in a declaration list as a method,
+        // and a module body is one. What encloses it settles what it is.
+        let found = outline(
+            "rust",
+            "mod inner {\n    fn free() {}\n}\n\nimpl Point {\n    fn real() {}\n}\n",
+        );
+        let kind_of = |name: &str| {
+            found
+                .iter()
+                .find(|row| row.ends_with(name))
+                .map(|row| row.split(':').nth(1).unwrap().split(' ').next().unwrap().to_string())
+                .expect("listed")
+        };
+        assert_eq!(kind_of("free"), "function", "{found:?}");
+        assert_eq!(kind_of("real"), "method", "and a real method still is: {found:?}");
     }
 
     #[test]
