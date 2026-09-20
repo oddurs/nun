@@ -2,10 +2,9 @@
 id: 27
 title: Symbol palette
 type: feature
-status: doing
+status: done
 milestone: m3
 assignee: Oddur Sigurdsson
-claimed: 2026-09-19
 created: 2026-09-10
 updated: 2026-09-19
 priority: p1
