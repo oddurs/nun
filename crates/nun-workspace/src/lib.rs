@@ -16,6 +16,10 @@
 //! - [`Jobs`] does the actual filesystem work — listing directories and
 //!   running operations — on a worker thread, and reports each result as a
 //!   message, so nothing the editor draws ever waits on a disk.
+//! - [`Grep`] searches the project's text on a thread of its own, streaming
+//!   hits as it finds them and stopping the moment the query changes. It is
+//!   separate from [`Jobs`] on purpose: a search of a large repository would
+//!   otherwise sit in front of the listings the tree is waiting on.
 //! - [`Watcher`] watches the expanded directories and reports, coalesced per
 //!   directory, that something in one of them changed. It never touches the
 //!   tree itself: the editor state has one owner on the main thread, so the
@@ -24,6 +28,7 @@
 //! No terminal dependency; all of this is unit tested directly against temporary
 //! directories.
 
+pub mod grep;
 pub mod jobs;
 pub mod labels;
 pub mod ops;
@@ -32,6 +37,7 @@ pub mod search;
 pub mod tree;
 pub mod watch;
 
+pub use grep::{Case, Found, Grep, Hit, MOST_CHARS, Options};
 pub use jobs::{Done, Job, Jobs, trash_or_temp};
 pub use labels::{UNNAMED, tab_labels};
 pub use ops::{Change, FsHistory, OpError, Operation, default_trash_dir};
