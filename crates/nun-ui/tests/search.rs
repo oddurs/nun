@@ -502,6 +502,59 @@ fn the_gutter_widens_to_the_longest_line_number() {
 }
 
 #[test]
+fn a_window_of_the_results_gets_the_gutter_the_whole_list_would_have() {
+    let palette = palette();
+    let whole = vec![
+        SearchRow::Hit { line: 3, text: "a", matched: &[] },
+        SearchRow::Hit { line: 14_872, text: "b", matched: &[] },
+    ];
+    let mut harness = Harness::new(30, 6);
+    harness.draw(SearchView::new("x", &whole, &palette));
+    let expected = harness.to_text();
+
+    // The same two rows, handed over as a window with the list's own answer
+    // for the widest line number, draw identically.
+    let mut harness = Harness::new(30, 6);
+    harness.draw(SearchView::new("x", &whole, &palette).widest_line(14_872));
+    assert_eq!(harness.to_text(), expected, "widest_line agrees with measuring the list");
+}
+
+#[test]
+fn a_window_of_short_line_numbers_keeps_room_for_the_long_ones_outside_it() {
+    let palette = palette();
+    // The window holds nothing wider than two digits, but the list it came
+    // from runs to five, so the text must still start where it does there.
+    let window = vec![SearchRow::Hit { line: 42, text: "a", matched: &[] }];
+    let mut harness = Harness::new(30, 6);
+    harness.draw(SearchView::new("x", &window, &palette).widest_line(14_872));
+    let line = harness.to_text().lines().nth(usize::from(FIRST)).unwrap_or_default().to_string();
+    assert_eq!(line, "      42 a", "sized for five digits, not two");
+
+    // And without it the same window shrinks to its own contents, which is
+    // exactly the jitter widest_line exists to prevent.
+    let mut harness = Harness::new(30, 6);
+    harness.draw(SearchView::new("x", &window, &palette));
+    let line = harness.to_text().lines().nth(usize::from(FIRST)).unwrap_or_default().to_string();
+    assert_eq!(line, "    42 a", "the floor of three digits, measured from the window");
+}
+
+#[test]
+fn the_gutter_floor_holds_however_short_the_line_numbers_are() {
+    let palette = palette();
+    let rows = vec![SearchRow::Hit { line: 1, text: "a", matched: &[] }];
+    for view in [
+        SearchView::new("x", &rows, &palette),
+        SearchView::new("x", &rows, &palette).widest_line(1),
+    ] {
+        let mut harness = Harness::new(30, 6);
+        harness.draw(view);
+        let line =
+            harness.to_text().lines().nth(usize::from(FIRST)).unwrap_or_default().to_string();
+        assert_eq!(line, "     1 a");
+    }
+}
+
+#[test]
 fn the_selection_wash_follows_the_focus() {
     let rows = rows();
     let palette = palette();

@@ -68,9 +68,12 @@ pub(super) struct Search {
     index: HashMap<PathBuf, usize>,
     /// Files whose hits are folded away.
     collapsed: BTreeSet<PathBuf>,
-    /// The rows as drawn: rebuilt when the results or the folding change,
-    /// rather than on every frame.
+    /// The rows as drawn: kept up to date as hits arrive, rather than rebuilt
+    /// on every frame or on every batch.
     rows: Vec<Line>,
+    /// The widest line number any hit has, so the gutter the panel draws does
+    /// not change width as the window moves over the list.
+    widest: u32,
     pub(super) scroll: usize,
     pub(super) selected: Option<usize>,
     /// Which search the rows on screen belong to. An answer to an older one
@@ -88,8 +91,15 @@ pub(super) struct Search {
 
 impl Search {
     /// The rows the panel draws, borrowed from the results.
-    fn view_rows(&self) -> Vec<SearchRow<'_>> {
+    ///
+    /// Only the window asked for. A broad query on a large repository finds
+    /// hundreds of thousands of lines, and building all of them to draw twenty
+    /// would make a frame cost what the repository costs rather than what the
+    /// screen costs.
+    fn view_rows(&self, window: std::ops::Range<usize>) -> Vec<SearchRow<'_>> {
         self.rows
+            .get(window)
+            .unwrap_or_default()
             .iter()
             .map(|line| match *line {
                 Line::File(group) => {
@@ -145,6 +155,8 @@ impl Search {
         self.groups.clear();
         self.index.clear();
         self.rows.clear();
+        self.collapsed.clear();
+        self.widest = 0;
         self.scroll = 0;
         self.selected = None;
         self.tally = None;
@@ -188,6 +200,15 @@ impl App {
         // Reopening with a query already there selects it in the sense that
         // typing replaces nothing but the caret is at the end, ready to refine.
         self.search.caret = self.search.query.chars().count();
+        // A search that was abandoned half way through left no answer behind,
+        // and an empty list under a query reads as "nothing matched". Asking
+        // again is the only honest thing to show.
+        if !self.search.query.is_empty()
+            && self.search.tally.is_none()
+            && self.search.error.is_none()
+        {
+            self.restart_search(Instant::now());
+        }
         self.relayout();
         Outcome::Redraw
     }
@@ -198,8 +219,17 @@ impl App {
         if self.focus == Focus::Search {
             self.focus = Focus::Sidebar;
         }
-        // The walk is worth nothing to a panel nobody can see.
+        // The walk is worth nothing to a panel nobody can see. The deadline
+        // goes with it: it is armed before the search starts, so cancelling
+        // without disarming would start one anyway, a few milliseconds later,
+        // for a panel that has gone.
         self.cancel_search();
+        self.search_deadline = None;
+        // Half a search is not an answer. Keeping what it had found would
+        // show part of a walk on the way back in as though it were all of it.
+        if self.search.running {
+            self.search.forget();
+        }
         self.search.running = false;
         self.search.resummarise();
         self.relayout();
@@ -253,11 +283,20 @@ impl App {
             _ => (None, None),
         };
         let hint = self.hover.current().and_then(|target| self.search_hint(target));
-        let rows = self.search.view_rows();
+        // The widget is given the window and nothing else, so the selection
+        // and the hover are rebased into it and the scroll has already been
+        // taken. Anything outside is not drawn and so is neither.
+        let first = self.search.scroll;
+        let last = first.saturating_add(SearchView::visible_rows(area));
+        let within = |row: Option<usize>| {
+            row.filter(|row| (first..last).contains(row)).map(|row| row - first)
+        };
+        let rows = self.search.view_rows(first..last);
         SearchView::new(&self.search.query, &rows, &self.palette)
-            .scrolled_to(self.search.scroll)
-            .selected(self.search.selected)
-            .hovered(hovered)
+            .scrolled_to(0)
+            .widest_line(self.search.widest)
+            .selected(within(self.search.selected))
+            .hovered(within(hovered))
             .hovered_button(button)
             .hovered_back(self.hover.current() == Some(Target::SearchBack))
             .toggles(self.search.toggles)
@@ -449,7 +488,14 @@ impl App {
                 let (line, column) = (hit.line, hit.column);
                 let path = root.join(&group.path);
                 self.open_file(&path);
-                self.place_caret_at(line, column);
+                // Opening can fail — the file deleted since it was found, or
+                // its folder gone — and it says so rather than throwing.
+                // Moving the caret then would move it in whatever was already
+                // open, which is someone else's file and someone else's place
+                // in it.
+                if self.doc().buffer.path() == Some(path.as_path()) {
+                    self.place_caret_at(line, column);
+                }
                 // The panel keeps the keyboard: finding one hit usually means
                 // looking at the next one too.
                 Outcome::Redraw
@@ -542,10 +588,13 @@ impl App {
 
         match found {
             Found::Hits { hits, .. } => {
+                let mut ordered = true;
                 for hit in hits {
-                    self.absorb(hit);
+                    ordered &= self.absorb(hit);
                 }
-                self.search.relist();
+                if !ordered {
+                    self.search.relist();
+                }
             }
             Found::Done { hits, files, cancelled, .. } => {
                 self.search.running = false;
@@ -562,9 +611,19 @@ impl App {
         Outcome::Redraw
     }
 
-    /// File one hit under its group, making the group if it is the first.
-    fn absorb(&mut self, hit: Hit) {
+    /// File one hit under its group, making the group if it is the first, and
+    /// extend the row list with it.
+    ///
+    /// Returns whether the rows still describe the results. The walk reports a
+    /// file at a time, so a hit almost always either opens a new group or
+    /// extends the newest one, and both of those are a push. Only a hit
+    /// landing in an older group needs a row inserted in the middle, and that
+    /// is what a rebuild is for — rebuilding on every batch instead would make
+    /// taking in a search quadratic in what it finds.
+    fn absorb(&mut self, hit: Hit) -> bool {
         let search = &mut self.search;
+        search.widest = search.widest.max(hit.line);
+        let fresh = !search.index.contains_key(&hit.path);
         let at = if let Some(at) = search.index.get(&hit.path) {
             *at
         } else {
@@ -577,7 +636,22 @@ impl App {
             });
             at
         };
+        if fresh {
+            search.rows.push(Line::File(at));
+        }
+        let index = search.groups[at].hits.len();
         search.groups[at].hits.push(hit);
+
+        // A folded file shows no lines, so there is no row to add.
+        if search.collapsed.contains(&search.groups[at].path) {
+            return true;
+        }
+        // Newest group: its rows are the tail of the list, so this goes there.
+        if at + 1 == search.groups.len() {
+            search.rows.push(Line::Hit(at, index));
+            return true;
+        }
+        false
     }
 
     /// What the status line says about whatever the pointer is over.
@@ -939,6 +1013,147 @@ mod tests {
 
         t.app.handle(Event::Key(KeyEvent::from(KeyCode::Backspace)));
         assert_eq!(t.app.search.query, "日本語");
+    }
+
+    #[test]
+    fn closing_the_panel_does_not_leave_a_walk_queued_behind_it() {
+        // The deadline is armed before the search starts, so cancelling
+        // without disarming would start a walk of the whole project a few
+        // milliseconds after the panel had gone — and every batch it found
+        // would ask for a redraw of something nobody can see.
+        let dir = project(&[("a.rs", "alpha\n")]);
+        let mut t = Tester::new(&dir);
+        t.app.run(crate::commands::Command::SearchProject);
+        t.type_text("alpha");
+        assert!(t.app.search_deadline.is_some(), "typing arms it");
+
+        t.app.run(crate::commands::Command::ToggleSidebar);
+        assert!(!t.app.searching());
+        assert_eq!(t.app.search_deadline, None, "and leaving disarms it");
+        assert_eq!(t.app.tick(Instant::now() + DEBOUNCE * 4), Outcome::Continue);
+    }
+
+    #[test]
+    fn reopening_after_closing_mid_search_asks_again() {
+        // Closed half way through, the panel has a query and part of an
+        // answer. Showing that on the way back in would be a lie of omission:
+        // an empty list under a query reads as "nothing matched", and a
+        // partial one reads as the whole of it.
+        let dir = project(&[("a.rs", "alpha\n")]);
+        let mut t = Tester::new(&dir);
+        t.app.run(crate::commands::Command::SearchProject);
+        t.type_text("alpha");
+        t.app.run(crate::commands::Command::ToggleSidebar);
+
+        t.app.run(crate::commands::Command::SearchProject);
+        assert!(t.app.search_deadline.is_some(), "it asks again rather than sitting there");
+        t.settle_search();
+        assert_eq!(t.rows().len(), 2, "and the answer is a whole one");
+        assert!(t.app.search.summary.is_some(), "with a summary rather than silence");
+    }
+
+    #[test]
+    fn a_hit_whose_file_has_gone_leaves_the_open_one_where_it_was() {
+        // Results outlive the files they came from: a checkout, a build
+        // clean, or deleting the folder from the tree while the list is up.
+        // Opening then fails and says so, and the caret must not wander off
+        // in whatever was already on screen.
+        let dir = project(&[("keep.rs", "untouched\n"), ("gone/hit.rs", "one\ntwo\nalpha\n")]);
+        let mut t = Tester::new(&dir);
+        t.app.open_file(&dir.path().join("keep.rs"));
+        t.settle_jobs();
+        t.search("alpha");
+
+        fs::remove_dir_all(dir.path().join("gone")).unwrap();
+        let hit = t
+            .app
+            .search
+            .rows
+            .iter()
+            .position(|line| matches!(line, Line::Hit(..)))
+            .expect("the hit is listed");
+        t.click_row(hit);
+        t.settle_jobs();
+
+        let doc = t.app.doc();
+        assert_eq!(
+            doc.buffer.path().and_then(|path| path.file_name()),
+            Some(std::ffi::OsStr::new("keep.rs")),
+            "the file that is still there stayed open"
+        );
+        assert_eq!(doc.buffer.selections().primary().head, 0, "and its caret did not move");
+    }
+
+    #[test]
+    fn a_frame_builds_only_the_rows_it_draws() {
+        // A broad query on a large repository finds far more than fits. The
+        // cost of a frame has to be the screen's, not the result list's.
+        let dir = project(&[("a.rs", &"hit\n".repeat(40)), ("b.rs", &"hit\n".repeat(40))]);
+        let mut t = Tester::new(&dir);
+        t.search("hit");
+        assert_eq!(t.app.search.rows.len(), 82, "two files and eighty lines");
+
+        assert_eq!(t.app.search.view_rows(2..7).len(), 5, "only the window");
+        assert!(t.app.search.view_rows(9_000..9_010).is_empty(), "past the end is empty");
+        assert!(t.app.search.view_rows(80..9_000).len() <= 2, "and a window is clipped to it");
+    }
+
+    #[test]
+    fn the_rows_built_as_hits_arrive_are_the_rows_built_from_scratch() {
+        // Hits extend the list as they come; folding rebuilds it. The two
+        // have to agree, or a streamed search would show one thing until it
+        // was folded and another afterwards.
+        let dir =
+            project(&[("a.rs", "hit\nhit\n"), ("b.rs", "hit\n"), ("c/d.rs", "hit\nno\nhit\n")]);
+        let mut t = Tester::new(&dir);
+        t.search("hit");
+
+        let streamed = t.app.search.rows.clone();
+        t.app.search.relist();
+        assert_eq!(streamed, t.app.search.rows, "streamed and rebuilt disagree");
+        assert_eq!(streamed.len(), 8, "three files and five lines");
+    }
+
+    #[test]
+    fn a_hit_for_a_file_already_left_behind_lands_in_it_rather_than_at_the_end() {
+        // The walk reports a file at a time, so a hit almost always opens a
+        // new group or extends the newest. One that arrives late for an older
+        // file needs a row in the middle, which is the case the fast path
+        // cannot take.
+        let dir = project(&[("a.rs", "alpha\n")]);
+        let mut t = Tester::new(&dir);
+        t.search("alpha");
+        let generation = t.app.search.generation;
+
+        let hit = |path: &str, line: u32| Hit {
+            path: path.into(),
+            line,
+            column: 1,
+            text: "alpha".into(),
+            matched: std::iter::once(0..5).collect(),
+        };
+        // A second file, then a hit belonging to the first one after it.
+        t.app.handle(Event::Found(Found::Hits {
+            generation,
+            hits: vec![hit("b.rs", 1), hit("a.rs", 9)],
+        }));
+
+        assert_eq!(t.app.search.groups[0].hits.len(), 2, "the late hit joined its file");
+        let streamed = t.app.search.rows.clone();
+        t.app.search.relist();
+        assert_eq!(streamed, t.app.search.rows, "and the list was rebuilt to match");
+        let rows = t.rows();
+        assert_eq!(rows[2], "9: alpha", "under its own file, not under the newer one");
+    }
+
+    #[test]
+    fn the_gutter_is_sized_for_the_whole_list_not_the_window() {
+        // Otherwise the hit text would shift sideways as a four-digit line
+        // number scrolled into view.
+        let dir = project(&[("a.rs", &("no\n".repeat(1_200) + "alpha\n"))]);
+        let mut t = Tester::new(&dir);
+        t.search("alpha");
+        assert_eq!(t.app.search.widest, 1_201, "tracked as the hits arrive");
     }
 
     #[test]

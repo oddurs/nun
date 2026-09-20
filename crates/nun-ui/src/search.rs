@@ -171,6 +171,20 @@ pub enum SearchRow<'a> {
 }
 
 /// The search panel, drawn.
+///
+/// `rows` may be the whole result list or only the window of it that is on
+/// screen — a search over a large repository finds far more than a sidebar can
+/// show, and building a row for every hit on every frame is work thrown away.
+/// A caller passing a window scrolls the slice itself and hands this a scroll
+/// of zero, with `selected` and `hovered` rebased into it, so nothing here has
+/// to know which it was given.
+///
+/// One thing does: the line-number gutter is as wide as the widest line number
+/// needs, and derived from a window it would change width as the window moved
+/// over a longer number, stepping the hit text sideways while scrolling. A
+/// caller passing a window therefore passes [`SearchView::widest_line`] as
+/// well, which is the whole list's answer to a question the window cannot
+/// answer for itself.
 #[derive(Debug)]
 pub struct SearchView<'a> {
     query: &'a str,
@@ -186,6 +200,7 @@ pub struct SearchView<'a> {
     editing: bool,
     caret: usize,
     summary: Option<&'a str>,
+    widest_line: Option<u32>,
 }
 
 impl<'a> SearchView<'a> {
@@ -206,6 +221,7 @@ impl<'a> SearchView<'a> {
             editing: false,
             caret: 0,
             summary: None,
+            widest_line: None,
         }
     }
 
@@ -273,6 +289,18 @@ impl<'a> SearchView<'a> {
     #[must_use]
     pub const fn summary(mut self, summary: Option<&'a str>) -> Self {
         self.summary = summary;
+        self
+    }
+
+    /// The widest line number in the whole result list, so the gutter does not
+    /// change width as the window moves over it.
+    ///
+    /// Only a caller passing a window of its results needs this; left unset,
+    /// the gutter is measured from the rows it was handed, which is the same
+    /// answer when those rows are the whole list.
+    #[must_use]
+    pub const fn widest_line(mut self, line: u32) -> Self {
+        self.widest_line = Some(line);
         self
     }
 
@@ -540,9 +568,15 @@ impl SearchView<'_> {
         put(cells, x, area.y, area.right().saturating_sub(x), summary, style);
     }
 
-    /// Columns the line numbers need, taken over every row rather than the
-    /// visible ones so the text does not step sideways as the list scrolls.
+    /// Columns the line numbers need.
+    ///
+    /// From `widest_line` when the caller gave one, because only it knows what
+    /// lies outside the window; otherwise measured over every row it was
+    /// handed, which is the same answer when those rows are the whole list.
     fn gutter(&self) -> u16 {
+        if let Some(line) = self.widest_line {
+            return digits(line).max(MIN_GUTTER);
+        }
         self.rows
             .iter()
             .filter_map(|row| match row {
