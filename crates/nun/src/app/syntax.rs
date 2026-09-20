@@ -39,6 +39,9 @@ pub(super) struct Highlighting {
     dirty: bool,
     /// Whether the worker is following this document at all.
     open: bool,
+    /// Whether its grammar gave up, as opposed to there never having been
+    /// one. The two look the same from outside and mean opposite things.
+    off: bool,
     /// What language it was recognised as, remembered from when it was opened.
     ///
     /// Kept here rather than worked out from the path on demand: the status
@@ -49,7 +52,73 @@ pub(super) struct Highlighting {
     language: Option<&'static str>,
 }
 
+/// The outline of the document the palette is looking at.
+#[derive(Debug, Default)]
+pub(super) struct Outline {
+    /// What it declares, in the order it declares it.
+    pub(super) found: Vec<nun_syntax::Symbol>,
+    /// Their names, kept beside them so filtering does not clone every one of
+    /// them on every keystroke.
+    pub(super) labels: Vec<String>,
+    /// Whether the request is owed but has not been sent, because the parser
+    /// has not been given the text it would be read from yet.
+    owed: bool,
+    /// Which document it is of, so one file's outline is never shown for
+    /// another's.
+    of: Option<DocId>,
+    /// Which version of that document, so an answer to an older one is not
+    /// taken for the current one.
+    version: u64,
+    /// Whether the parser has been asked and has not answered.
+    pub(super) waiting: bool,
+}
+
 impl App {
+    /// Ask for the outline of the document being edited, unless it is already
+    /// in hand.
+    ///
+    /// The parse is on the worker, so the palette opens on whatever is known
+    /// and fills in when the answer arrives — the alternative is a palette
+    /// that does not appear until a large file has been read.
+    pub(super) fn want_outline(&mut self, now: Instant) {
+        let id = self.doc().id;
+        let version = self.doc().syntax.latest;
+        if self.symbols.of == Some(id) && self.symbols.version == version {
+            return;
+        }
+        // A different document, or one that has been edited since: what is
+        // held describes neither.
+        self.symbols.found.clear();
+        self.symbols.labels.clear();
+        self.symbols.of = Some(id);
+        self.symbols.version = version;
+        self.symbols.waiting = false;
+        self.symbols.owed = false;
+        if !self.doc().syntax.open || self.syntax.is_none() {
+            return;
+        }
+        self.symbols.waiting = true;
+        // The parser answers from the text it has been given, and stamps the
+        // answer with the version that was asked for. Asking before the text
+        // behind that version has reached it would get an outline of the old
+        // text under the new version's name — accepted as current, and never
+        // asked for again. So the request waits for the update it belongs to.
+        if self.doc().syntax.dirty {
+            self.symbols.owed = true;
+            self.syntax_deadline = Some(self.syntax_deadline.unwrap_or(now + DEBOUNCE));
+        } else {
+            self.send_outline(id, version);
+        }
+    }
+
+    /// Ask the parser for one document's outline.
+    fn send_outline(&mut self, id: DocId, version: u64) {
+        if let Some(worker) = self.syntax.as_ref() {
+            worker.send(Request::Symbols { id, version });
+        }
+        self.symbols.owed = false;
+    }
+
     /// Start following a document, if nun knows its language.
     pub(super) fn syntax_open(&mut self, id: DocId) {
         let Some(worker) = self.syntax.as_ref() else { return };
@@ -157,6 +226,14 @@ impl App {
                 worker.send(Request::Window { id, version: document.syntax.latest, window });
             }
         }
+        // After the updates, so it reads the text they carried rather than
+        // whatever the parser held before them.
+        if self.symbols.owed
+            && let Some(id) = self.symbols.of
+        {
+            let version = self.symbols.version;
+            self.send_outline(id, version);
+        }
         Outcome::Continue
     }
 
@@ -193,7 +270,13 @@ impl App {
             }
             Reply::Disabled { id, language, why } => {
                 if let Some(document) = self.docs.iter_mut().find(|document| document.id == id) {
-                    document.syntax = Highlighting::default();
+                    // The language is kept: the file is still Rust, and the
+                    // status line saying so is not a claim about colours.
+                    document.syntax = Highlighting {
+                        language: Some(language),
+                        off: true,
+                        ..Highlighting::default()
+                    };
                 }
                 // Nothing will ask about this document again, and the worker is
                 // still holding it and a clone of its text.
@@ -203,6 +286,23 @@ impl App {
                 ));
                 Outcome::Redraw
             }
+            Reply::Symbols { id, version, symbols } => {
+                // The palette may have moved on to another file, or the file
+                // may have been edited while the worker was reading it.
+                if self.symbols.of != Some(id) || self.symbols.version != version {
+                    return Outcome::Continue;
+                }
+                self.symbols.labels = symbols.iter().map(|symbol| symbol.name.clone()).collect();
+                self.symbols.found = symbols;
+                self.symbols.waiting = false;
+                // Only if the palette is still showing an outline. Refreshing
+                // it in Files mode would start a project search for an answer
+                // that has nothing to do with one.
+                if self.palette_wants_symbols() {
+                    self.refresh_palette();
+                }
+                Outcome::Redraw
+            }
             Reply::Echo(_) => Outcome::Continue,
         }
     }
@@ -210,6 +310,11 @@ impl App {
     /// The runs to draw for a document.
     pub(super) fn spans_of(document: &Document) -> &[Span] {
         &document.syntax.spans
+    }
+
+    /// Whether a document's grammar gave up on it.
+    pub(super) const fn syntax_off(document: &Document) -> bool {
+        document.syntax.off
     }
 
     /// Which language a document is in, for the status line.
@@ -360,6 +465,210 @@ mod tests {
         assert_eq!(App::language_of(tester.app.doc()), Some("rust"));
         assert!(!tester.spans().is_empty(), "nothing was highlighted");
         assert!(tester.capture_of("fn").unwrap().starts_with("keyword"));
+    }
+
+    /// The palette's labels, trimmed of the indent that shows nesting, each
+    /// prefixed by its depth so nesting is visible in the assertion.
+    fn outline_rows(app: &App) -> Vec<String> {
+        app.finder
+            .as_ref()
+            .expect("the palette is open")
+            .rows
+            .iter()
+            .map(|row| {
+                let depth = row.entry.label.len() - row.entry.label.trim_start().len();
+                format!("{}{}", depth / 2, row.entry.label.trim_start())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_palette_lists_what_the_file_declares() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut t = Tester::new(
+            &dir,
+            "shapes.rs",
+            "struct Point;
+
+impl Point {
+    fn new() -> Self { Self }
+}
+
+fn main() {}
+",
+        );
+        t.app.open_palette("@");
+        t.settle();
+
+        let rows = outline_rows(&t.app);
+        assert!(rows.iter().any(|row| row == "0Point"), "{rows:?}");
+        assert!(rows.iter().any(|row| row == "1new"), "a method nests: {rows:?}");
+        assert!(rows.iter().any(|row| row == "0main"), "{rows:?}");
+    }
+
+    #[test]
+    fn filtering_the_outline_keeps_the_ancestors_of_a_match() {
+        // A method's name means little without the type it hangs off, and a
+        // list of bare names is not an outline.
+        let dir = tempfile::tempdir().unwrap();
+        let mut t = Tester::new(
+            &dir,
+            "shapes.rs",
+            "impl Circle {
+    fn radius() {}
+}
+
+impl Square {
+    fn side() {}
+}
+",
+        );
+        t.app.open_palette("@");
+        t.settle();
+        t.type_text("radius");
+
+        let rows = outline_rows(&t.app);
+        assert!(rows.iter().any(|row| row == "1radius"), "the match: {rows:?}");
+        assert!(rows.iter().any(|row| row == "0Circle"), "and what it belongs to: {rows:?}");
+        assert!(!rows.iter().any(|row| row.ends_with("side")), "but not the rest: {rows:?}");
+    }
+
+    #[test]
+    fn going_to_a_symbol_leaves_room_above_it() {
+        // Landing a definition on the top row hides what it belongs to.
+        let dir = tempfile::tempdir().unwrap();
+        let mut body = "// filler\n".repeat(60);
+        body.push_str("fn needle() {}\n");
+        let mut t = Tester::new(&dir, "long.rs", &body);
+        t.app.open_palette("@");
+        t.settle();
+        t.type_text("needle");
+
+        assert_eq!(t.app.pick_row(0, false), Outcome::Redraw);
+        let doc = t.app.doc();
+        let line = doc.buffer.line_of(doc.buffer.selections().primary().head);
+        assert_eq!(line, 60, "the caret is on the definition");
+        assert!(doc.scroll < line, "with something above it");
+        assert_eq!(line - doc.scroll, 3, "three lines of it");
+    }
+
+    #[test]
+    fn editing_the_file_makes_the_outline_stale() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut t = Tester::new(&dir, "grow.rs", "fn first() {}\n");
+        t.app.open_palette("@");
+        t.settle();
+        assert!(outline_rows(&t.app).iter().any(|row| row == "0first"));
+
+        t.app.handle(Event::Key(KeyEvent::from(KeyCode::Esc)));
+        let end = t.app.doc().buffer.len_chars();
+        t.app
+            .doc_mut()
+            .buffer
+            .set_selections(nun_core::Selections::single(nun_core::Range::caret(end)));
+        t.type_text("fn second() {}\n");
+        t.settle();
+
+        t.app.open_palette("@");
+        t.settle();
+        let rows = outline_rows(&t.app);
+        assert!(rows.iter().any(|row| row == "0second"), "the outline was read again: {rows:?}");
+    }
+
+    #[test]
+    fn the_outline_is_read_from_the_text_the_parser_has_been_given() {
+        // The reply is stamped with the version that was asked for, so asking
+        // before the text behind that version has reached the worker would get
+        // an outline of the old text under the new text's name — accepted as
+        // current, and never asked for again.
+        let dir = tempfile::tempdir().unwrap();
+        let mut t = Tester::new(&dir, "grow.rs", "fn first() {}\n");
+
+        // Type without letting the debounce fall due, so the parser has not
+        // been told, and then ask for the outline.
+        let end = t.app.doc().buffer.len_chars();
+        t.app
+            .doc_mut()
+            .buffer
+            .set_selections(nun_core::Selections::single(nun_core::Range::caret(end)));
+        t.type_text("fn second() {}\n");
+        assert!(t.app.doc().syntax.dirty, "the parser has not been told yet");
+
+        t.app.open_palette("@");
+        assert!(t.app.symbols.waiting, "the outline is owed");
+        t.settle();
+
+        let rows = outline_rows(&t.app);
+        assert!(rows.iter().any(|row| row == "0second"), "it waited for the text: {rows:?}");
+    }
+
+    #[test]
+    fn an_empty_outline_stops_the_palette_waiting() {
+        // A grammar in trouble answers with an empty outline rather than with
+        // nothing, because nothing leaves the palette saying "Reading the
+        // file…" for the rest of the session.
+        let dir = tempfile::tempdir().unwrap();
+        let mut t = Tester::new(&dir, "main.rs", "fn main() {}\n");
+        t.app.open_palette("@");
+        t.settle();
+
+        // The state the palette is in while it waits, and then the answer a
+        // grammar in trouble sends: an outline with nothing in it.
+        t.app.symbols.found.clear();
+        t.app.symbols.labels.clear();
+        t.app.symbols.waiting = true;
+        let (id, version) = (t.app.doc().id, t.app.symbols.version);
+        t.app.handle(Event::Syntax(Reply::Symbols { id, version, symbols: Vec::new() }));
+
+        assert!(!t.app.symbols.waiting, "it is not still waiting");
+        let labels: Vec<String> =
+            t.app.finder.as_ref().unwrap().rows.iter().map(|row| row.entry.label.clone()).collect();
+        assert!(
+            labels.iter().all(|label| !label.contains("Reading")),
+            "and does not claim to be reading: {labels:?}"
+        );
+    }
+
+    #[test]
+    fn a_grammar_that_gave_up_is_not_a_language_nun_has_never_heard_of() {
+        // The two look the same from outside and mean opposite things: one
+        // sends you looking for a grammar you already have.
+        let dir = tempfile::tempdir().unwrap();
+        let mut t = Tester::new(&dir, "main.rs", "fn main() {}\n");
+        let id = t.app.doc().id;
+        t.app.handle(Event::Syntax(Reply::Disabled {
+            id,
+            language: "rust",
+            why: "took too long".into(),
+        }));
+
+        assert_eq!(App::language_of(t.app.doc()), Some("rust"), "the file is still Rust");
+        assert!(App::syntax_off(t.app.doc()), "with its grammar given up on");
+
+        t.app.open_palette("@");
+        let labels: Vec<String> =
+            t.app.finder.as_ref().unwrap().rows.iter().map(|row| row.entry.label.clone()).collect();
+        assert!(
+            labels.iter().any(|label| label.contains("gave up")),
+            "it says what happened: {labels:?}"
+        );
+    }
+
+    #[test]
+    fn an_outline_arriving_late_does_not_start_a_file_search() {
+        // The palette may have moved on. Refreshing it in Files mode would
+        // send a project search for an answer that has nothing to do with one.
+        let dir = tempfile::tempdir().unwrap();
+        let mut t = Tester::new(&dir, "main.rs", "fn main() {}\n");
+        t.app.open_palette("@");
+        t.settle();
+
+        t.app.open_palette("");
+        let before = t.app.searches;
+        let (id, version) = (t.app.doc().id, t.app.symbols.version);
+        t.app.symbols.waiting = true;
+        t.app.handle(Event::Syntax(Reply::Symbols { id, version, symbols: Vec::new() }));
+        assert_eq!(t.app.searches, before, "no search was asked for");
     }
 
     #[test]

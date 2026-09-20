@@ -255,6 +255,8 @@ pub struct App {
     syntax_deadline: Option<Instant>,
     /// Searching the project, and what it has found.
     search: search::Search,
+    /// The outline of the file the palette was last asked about.
+    symbols: syntax::Outline,
     /// Which of its two views the sidebar is showing.
     sidebar_view: SidebarView,
     /// When the typing has settled enough to start a walk.
@@ -322,6 +324,7 @@ impl App {
             syntax: None,
             syntax_deadline: None,
             search: search::Search::default(),
+            symbols: syntax::Outline::default(),
             sidebar_view: SidebarView::Files,
             search_deadline: None,
         };

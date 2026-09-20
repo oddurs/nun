@@ -52,6 +52,13 @@ pub enum Request {
         /// The char range worth highlighting.
         window: std::ops::Range<u32>,
     },
+    /// What does this document declare?
+    Symbols {
+        /// Which document.
+        id: DocId,
+        /// Which version of it is being asked about.
+        version: u64,
+    },
     /// Stop following a document.
     Close(DocId),
     /// A marker that comes back once everything before it is done.
@@ -80,6 +87,15 @@ pub enum Reply {
         language: &'static str,
         /// What it did.
         why: String,
+    },
+    /// What a document declares, in the order it declares it.
+    Symbols {
+        /// Which document.
+        id: DocId,
+        /// Which version they were read from.
+        version: u64,
+        /// The outline.
+        symbols: Vec<crate::Symbol>,
     },
     /// The marker from [`Request::Echo`].
     Echo(u64),
@@ -164,7 +180,13 @@ fn coalesce(batch: Vec<Request>) -> Vec<Request> {
                 absorbing.remove(&id);
                 out.push(request);
             }
-            Request::Echo(_) => out.push(request),
+            // Neither is folded. An outline folded backwards would move in
+            // front of an `Update` in the same batch and read the text that
+            // update was about to replace — the same hazard the `Window` rule
+            // above exists to avoid, and reading a cached parse twice is
+            // cheaper than answering from the wrong text once. An echo keeps
+            // its place because its place is the whole point of it.
+            Request::Symbols { .. } | Request::Echo(_) => out.push(request),
         }
     }
     out
@@ -210,6 +232,24 @@ fn handle(documents: &mut HashMap<DocId, Document>, request: Request) -> Vec<Rep
         Request::Window { id, version, window } => {
             let Some(document) = documents.get_mut(&id) else { return Vec::new() };
             highlights(id, version, window, document)
+        }
+        Request::Symbols { id, version } => {
+            let Some(document) = documents.get_mut(&id) else { return Vec::new() };
+            // A grammar that timed out or panicked still owes an answer:
+            // without the first the palette waits for ever, and without the
+            // second the document loses its colours with nothing said.
+            let Some(symbols) = document.symbols() else {
+                let mut replies = vec![Reply::Symbols { id, version, symbols: Vec::new() }];
+                if let Some(trouble) = document.trouble() {
+                    replies.push(Reply::Disabled {
+                        id,
+                        language: document.language().name,
+                        why: trouble.to_string(),
+                    });
+                }
+                return replies;
+            };
+            vec![Reply::Symbols { id, version, symbols }]
         }
         Request::Close(id) => {
             documents.remove(&id);
@@ -269,6 +309,51 @@ mod tests {
             Request::Window { id, version, window } => (*id, *version, window.clone()),
             other => panic!("expected a window, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_grammar_in_trouble_still_answers_an_outline_and_says_what_happened() {
+        // Silence would leave the editor waiting for an outline for ever, and
+        // would switch a document's colours off with nothing said.
+        let language = crate::language::of_name("rust").expect("rust is compiled in");
+        // Big enough that the parser checks its progress at all — a handful of
+        // bytes finishes before the first check, whatever the budget is.
+        let mut text = String::new();
+        for index in 0..20_000 {
+            use std::fmt::Write;
+            let _ = writeln!(text, "fn function{index}() {{ let x = {index}; }}");
+        }
+        let mut documents = HashMap::new();
+        documents.insert(
+            1,
+            Document::new(language, Rope::from_str(&text)).with_budget(std::time::Duration::ZERO),
+        );
+
+        let replies = handle(&mut documents, Request::Symbols { id: 1, version: 4 });
+        assert!(
+            matches!(replies.first(), Some(Reply::Symbols { version: 4, symbols, .. }) if symbols.is_empty()),
+            "an empty outline comes back: {replies:?}"
+        );
+        assert!(
+            matches!(replies.get(1), Some(Reply::Disabled { .. })),
+            "and the trouble is reported: {replies:?}"
+        );
+    }
+
+    #[test]
+    fn an_outline_is_not_folded_in_front_of_the_text_it_reads() {
+        // Folding it backwards would put it before the update in the same
+        // batch and read the text that update was about to replace.
+        let folded = coalesce(vec![
+            Request::Symbols { id: 1, version: 4 },
+            update(1, 5, "fn second() {}", None),
+            Request::Symbols { id: 1, version: 5 },
+        ]);
+        let last = folded.last().expect("something survived");
+        assert!(
+            matches!(last, Request::Symbols { version: 5, .. }),
+            "the outline stays behind the update: {folded:?}"
+        );
     }
 
     #[test]
