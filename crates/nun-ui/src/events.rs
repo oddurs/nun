@@ -29,6 +29,8 @@ pub enum Event {
     Signal(Signal),
     /// A filesystem job the editor asked for is done.
     Workspace(nun_workspace::Done),
+    /// The parser has something to say about a document.
+    Syntax(nun_syntax::Reply),
     /// Something changed inside a watched directory, or watching one failed.
     Files {
         /// The directory whose contents changed.

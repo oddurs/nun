@@ -12,7 +12,7 @@ will mostly never open.
 Early. The editor is being built one milestone at a time; the roadmap lives in
 [`cairn/`](cairn/) and is the source of truth.
 
-What works today — milestones 1 and 2, "buffer and screen" and "mouse and shell":
+What works today — milestones 1 and 2, and the start of 3:
 
 ```sh
 nun <file>         # open it, edit it, save it
@@ -91,8 +91,16 @@ goes to a line, and `?` lists the prefixes. Matching happens off the drawing
 thread, so it stays answerable on a large repository, and files you have
 opened before come first among equals. Alt+Enter opens the file in a split.
 
-Not there yet: syntax highlighting, search, language servers and git. Those
-are milestones 3 to 5.
+Code is highlighted by tree-sitter: Rust, JavaScript, Python, HTML, CSS,
+JSON, TOML and SQL, with embedded languages picked up where they appear —
+the SQL inside a `query!` macro, the CSS inside a `<style>` element. Parsing
+happens on its own thread and reparses only what changed, so the colours keep
+up with typing rather than the other way round. There are no themes to pick:
+captures resolve to semantic roles, and the roles come from your terminal's
+own palette.
+
+Not there yet: folds, project search, language servers and git. Those are the
+rest of milestone 3 and milestones 4 and 5.
 
 Do not install this yet.
 
