@@ -190,6 +190,25 @@ impl Document {
         Some(flatten(spans, &self.text))
     }
 
+    /// Parse, and give back what the file declares, in the order it declares
+    /// it.
+    ///
+    /// Returns `None` when the document's language is switched off. A language
+    /// nun has no tags query for gives an empty outline rather than `None`:
+    /// there is nothing wrong, there is just nothing to list.
+    pub fn symbols(&mut self) -> Option<Vec<crate::Symbol>> {
+        if self.trouble.is_some() {
+            return None;
+        }
+        if let Err(trouble) = self.parse() {
+            self.trouble = Some(trouble);
+            self.tree = None;
+            return None;
+        }
+        let tree = self.tree.clone()?;
+        Some(crate::symbols::of_tree(self.language, &tree, &self.text))
+    }
+
     /// Parse the current text, reusing the previous tree where there is one.
     fn parse(&mut self) -> Result<(), Trouble> {
         if !self.stale && self.tree.is_some() {
@@ -392,7 +411,7 @@ fn flatten(mut spans: Vec<Raw>, text: &Rope) -> Vec<Span> {
 ///
 /// The alternative is handing tree-sitter the whole file as one string on
 /// every keystroke, which is a copy of the document per frame for no reason.
-struct RopeText<'a>(&'a Rope);
+pub(crate) struct RopeText<'a>(pub(crate) &'a Rope);
 
 impl<'a> tree_sitter::TextProvider<&'a [u8]> for RopeText<'a> {
     type I = std::iter::Map<ropey::iter::Chunks<'a>, fn(&'a str) -> &'a [u8]>;

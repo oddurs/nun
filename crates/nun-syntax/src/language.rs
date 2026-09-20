@@ -20,6 +20,9 @@ pub struct Language {
     pub highlights: Query,
     /// Where other languages are embedded, if anywhere.
     pub injections: Option<Query>,
+    /// What counts as a definition worth listing in an outline, if the
+    /// grammar has an opinion.
+    pub symbols: Option<Query>,
 }
 
 impl Language {
@@ -80,11 +83,13 @@ pub fn all() -> &'static [Language] {
                 &tree_sitter_rust::LANGUAGE.into(),
                 tree_sitter_rust::HIGHLIGHTS_QUERY,
                 Some(tree_sitter_rust::INJECTIONS_QUERY),
+                Some(tree_sitter_rust::TAGS_QUERY),
             ),
             build(
                 "json",
                 &tree_sitter_json::LANGUAGE.into(),
                 tree_sitter_json::HIGHLIGHTS_QUERY,
+                None,
                 None,
             ),
             build(
@@ -92,35 +97,41 @@ pub fn all() -> &'static [Language] {
                 &tree_sitter_toml_ng::LANGUAGE.into(),
                 tree_sitter_toml_ng::HIGHLIGHTS_QUERY,
                 None,
+                None,
             ),
             build(
                 "javascript",
                 &tree_sitter_javascript::LANGUAGE.into(),
                 tree_sitter_javascript::HIGHLIGHT_QUERY,
                 Some(tree_sitter_javascript::INJECTIONS_QUERY),
+                Some(tree_sitter_javascript::TAGS_QUERY),
             ),
             build(
                 "python",
                 &tree_sitter_python::LANGUAGE.into(),
                 tree_sitter_python::HIGHLIGHTS_QUERY,
                 None,
+                Some(tree_sitter_python::TAGS_QUERY),
             ),
             build(
                 "html",
                 &tree_sitter_html::LANGUAGE.into(),
                 tree_sitter_html::HIGHLIGHTS_QUERY,
                 Some(tree_sitter_html::INJECTIONS_QUERY),
+                None,
             ),
             build(
                 "css",
                 &tree_sitter_css::LANGUAGE.into(),
                 tree_sitter_css::HIGHLIGHTS_QUERY,
                 None,
+                None,
             ),
             build(
                 "sql",
                 &tree_sitter_sequel::LANGUAGE.into(),
                 tree_sitter_sequel::HIGHLIGHTS_QUERY,
+                None,
                 None,
             ),
         ]
@@ -150,6 +161,19 @@ const RUST_INJECTIONS: &str = r#"
  (#set! injection.language "sql"))
 "#;
 
+/// Symbols nun adds to what a grammar's tags query finds.
+///
+/// Rust's own query tags a method inside a `declaration_list` but does not tag
+/// the `impl` block holding it, so every method in a file comes out at the top
+/// level beside the functions — an outline with no outline in it. Tagging the
+/// block gives the methods something to nest under, and gives a type's
+/// inherent and trait implementations the separate headings they have in the
+/// file.
+const RUST_SYMBOLS: &str = r"
+(impl_item type: (type_identifier) @name) @definition.impl
+(impl_item type: (generic_type type: (type_identifier) @name)) @definition.impl
+";
+
 /// Build one language, or leave it out.
 ///
 /// A grammar whose query does not compile is dropped rather than taken down
@@ -160,6 +184,7 @@ fn build(
     grammar: &Grammar,
     highlights: &str,
     injections: Option<&str>,
+    symbols: Option<&str>,
 ) -> Option<Language> {
     let highlights = Query::new(grammar, highlights).ok()?;
     let extra = match name {
@@ -169,7 +194,16 @@ fn build(
     let source = format!("{}{extra}", injections.unwrap_or_default());
     let injections =
         (!source.trim().is_empty()).then(|| Query::new(grammar, &source).ok()).flatten();
-    Some(Language { name, grammar: grammar.clone(), highlights, injections })
+    // A grammar whose tags query does not compile simply has no outline; it
+    // is not a reason to drop the language, which still highlights.
+    let more = match name {
+        "rust" => RUST_SYMBOLS,
+        _ => "",
+    };
+    let symbols = format!("{}{more}", symbols.unwrap_or_default());
+    let symbols =
+        (!symbols.trim().is_empty()).then(|| Query::new(grammar, &symbols).ok()).flatten();
+    Some(Language { name, grammar: grammar.clone(), highlights, injections, symbols })
 }
 
 #[cfg(test)]

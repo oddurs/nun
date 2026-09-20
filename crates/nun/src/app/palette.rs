@@ -31,8 +31,10 @@ pub(super) enum Mode {
     Commands,
     /// A line in the file being edited, by `:`.
     Line,
-    /// Symbols in this file, by `@`, or in the project, by `#`.
+    /// Symbols in this file, by `@`.
     Symbols,
+    /// Symbols across the project, by `#`, which needs a language server.
+    ProjectSymbols,
     /// What the prefixes are, by `?`.
     Help,
 }
@@ -43,7 +45,8 @@ impl Mode {
         match query.chars().next() {
             Some('>') => (Self::Commands, &query[1..]),
             Some(':') => (Self::Line, &query[1..]),
-            Some('@' | '#') => (Self::Symbols, &query[1..]),
+            Some('@') => (Self::Symbols, &query[1..]),
+            Some('#') => (Self::ProjectSymbols, &query[1..]),
             Some('?') => (Self::Help, &query[1..]),
             _ => (Self::Files, query),
         }
@@ -55,7 +58,8 @@ impl Mode {
             Self::Files => "Go to a file — `>` commands, `:` line, `?` help",
             Self::Commands => "Run a command",
             Self::Line => "Go to a line",
-            Self::Symbols => "Symbols",
+            Self::Symbols => "Go to a symbol in this file",
+            Self::ProjectSymbols => "Symbols across the project",
             Self::Help => "What the prefixes do",
         }
     }
@@ -70,6 +74,8 @@ pub(super) enum Pick {
     Run(Command),
     /// Go to this line, counting from one.
     Line(usize),
+    /// Go to this char offset, which is where a symbol's name starts.
+    At(u32),
     /// Start the query again with this prefix, which is how the help list
     /// leads into every other mode with the mouse.
     Prefix(&'static str),
@@ -203,7 +209,7 @@ impl App {
     }
 
     /// Work out the rows for what has been typed.
-    fn refresh_palette(&mut self) {
+    pub(super) fn refresh_palette(&mut self) {
         let Some(palette) = self.finder.as_mut() else { return };
         let (mode, rest) = Mode::of(&palette.query);
         let rest = rest.to_string();
@@ -249,8 +255,15 @@ impl App {
                 }
             }
             Mode::Symbols => {
+                self.want_outline(std::time::Instant::now());
+                let rows = self.symbol_rows(&rest);
+                if let Some(palette) = self.finder.as_mut() {
+                    palette.rows = rows;
+                }
+            }
+            Mode::ProjectSymbols => {
                 palette.rows = vec![note(
-                    "Symbols arrive with tree-sitter and the language servers — milestones 3 and 4",
+                    "Symbols across the project arrive with the language servers — milestone 4",
                 )];
             }
             Mode::Help => {
@@ -291,6 +304,84 @@ impl App {
             },
             pick: Pick::Line(line),
         }]
+    }
+
+    /// The outline of the file being edited, filtered by `query`.
+    ///
+    /// Filtering keeps the ancestors of a match, because a method's name means
+    /// little without the type it hangs off, and a list of bare names is not
+    /// an outline.
+    fn symbol_rows(&self, query: &str) -> Vec<Row> {
+        let symbols = &self.symbols.found;
+        if symbols.is_empty() {
+            return vec![note(if self.symbols.waiting {
+                "Reading the file…"
+            } else if App::language_of(self.doc()).is_some() {
+                "Nothing in this file declares anything nun can see"
+            } else {
+                "nun does not know this file's language"
+            })];
+        }
+
+        let keep: Vec<(usize, Vec<u32>)> = if query.trim().is_empty() {
+            // Capped like every other mode: an outline is a list to scroll,
+            // not a reason to build ten thousand rows nobody will read.
+            (0..symbols.len().min(LIMIT)).map(|index| (index, Vec::new())).collect()
+        } else {
+            let found = nun_workspace::search(&self.symbols.labels, query, LIMIT);
+            // Every ancestor of a match comes with it, unmatched, so the
+            // nesting the rows are indented by still means something. Each
+            // symbol knows its parent, so this walks the chain rather than
+            // scanning backwards through the file for something shallower.
+            let mut wanted: std::collections::BTreeMap<usize, Vec<u32>> =
+                found.into_iter().map(|found| (found.index, found.matched)).collect();
+            let mut ancestors: Vec<usize> = Vec::new();
+            for index in wanted.keys() {
+                let mut at = symbols[*index].parent;
+                while let Some(parent) = at {
+                    ancestors.push(parent);
+                    at = symbols[parent].parent;
+                }
+            }
+            for ancestor in ancestors {
+                wanted.entry(ancestor).or_default();
+            }
+            wanted.into_iter().collect()
+        };
+
+        keep.into_iter()
+            .map(|(index, matched)| {
+                let symbol = &symbols[index];
+                // Indented in the label rather than by the widget, so the
+                // matched offsets the search gave still line up.
+                let indent = "  ".repeat(symbol.depth);
+                let shift = u32::try_from(indent.chars().count()).unwrap_or(0);
+                Row {
+                    entry: PaletteEntry {
+                        label: format!("{indent}{}", symbol.name),
+                        matched: matched.into_iter().map(|at| at + shift).collect(),
+                        hint: symbol.kind.to_string(),
+                    },
+                    pick: Pick::At(symbol.at),
+                }
+            })
+            .collect()
+    }
+
+    /// Scroll so `at` is visible with a few lines above it.
+    ///
+    /// Landing a definition on the top row hides what it belongs to. A little
+    /// room above is the difference between arriving somewhere and arriving
+    /// somewhere you can read.
+    fn show_with_context(&mut self, at: usize) {
+        const ABOVE: usize = 3;
+        let line = self.doc().buffer.line_of(at);
+        let height = self.text_height();
+        let doc = self.doc_mut();
+        if line < doc.scroll + ABOVE || line >= doc.scroll + height {
+            doc.scroll = line.saturating_sub(ABOVE);
+        }
+        self.follow_caret();
     }
 
     /// The worker answered a file search.
@@ -400,6 +491,14 @@ impl App {
                     .set_selections(nun_core::Selections::single(nun_core::Range::caret(start)));
                 self.follow_caret();
             }
+            Pick::At(at) => {
+                self.finder = None;
+                let at = (at as usize).min(self.doc().buffer.len_chars());
+                self.doc_mut()
+                    .buffer
+                    .set_selections(nun_core::Selections::single(nun_core::Range::caret(at)));
+                self.show_with_context(at);
+            }
         }
         Outcome::Redraw
     }
@@ -483,7 +582,7 @@ fn help_rows() -> Vec<Row> {
         ("(nothing)", "Files in the project"),
         (">", "Commands, with the keys that run them"),
         (":", "A line in this file"),
-        ("@", "Symbols in this file (milestone 3)"),
+        ("@", "Symbols in this file"),
         ("#", "Symbols in the project (milestone 4)"),
         ("?", "This list"),
     ]
@@ -698,11 +797,13 @@ mod tests {
     }
 
     #[test]
-    fn symbol_modes_say_when_they_arrive() {
+    fn project_symbols_say_when_they_arrive() {
+        // `@` reads the file's own tree and is tested where a parser is
+        // attached; `#` needs a language server and is still milestone 4.
         let dir = tempfile::tempdir().unwrap();
         let mut t = Tester::new(&dir, &["a.rs"]);
-        t.open("@");
-        assert!(t.labels()[0].contains("tree-sitter"), "{:?}", t.labels());
+        t.open("#");
+        assert!(t.labels()[0].contains("language servers"), "{:?}", t.labels());
     }
 
     #[test]

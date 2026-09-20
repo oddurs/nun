@@ -87,7 +87,11 @@ out, and closing a pane's last tab closes the pane and gives its space back.
 
 The palette is `Ctrl+P`, or the button in the status line. It opens on the
 project's files; `>` runs a command and shows the key that does the same, `:`
-goes to a line, and `?` lists the prefixes. Matching happens off the drawing
+goes to a line, `@` goes to something the open file declares, and `?` lists
+the prefixes. The outline behind `@` comes from the parse tree rather than
+from a language server, so it works in a project that has none; it is
+indented by nesting, and filtering it keeps the ancestors of a match, because
+a method's name means little without the type it hangs off. Matching happens off the drawing
 thread, so it stays answerable on a large repository, and files you have
 opened before come first among equals. Alt+Enter opens the file in a split.
 

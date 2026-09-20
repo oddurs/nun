@@ -6,14 +6,19 @@
 //! on screen. [`Worker`] runs those documents on a thread of their own, because
 //! parsing is exactly the kind of work a frame must never wait for.
 //!
+//! [`Document::symbols`] answers the other question a parse can: what the file
+//! declares, and how those declarations nest.
+//!
 //! Capture names come out as they are — `function.method`, `string`,
 //! `keyword` — and stay strings. What colour they take is a question about
 //! themes, and this crate has no business knowing the answer.
 
 mod highlight;
 mod language;
+mod symbols;
 mod worker;
 
 pub use highlight::{Document, PARSE_BUDGET, Span, TextEdit, Trouble};
 pub use language::{Language, all, of_name, of_path};
+pub use symbols::Symbol;
 pub use worker::{DocId, Reply, Request, Worker};
