@@ -8,16 +8,18 @@
 use std::ops::Range;
 
 use nun_theme::{Probe, Role, derive};
-use nun_ui::{Harness, Palette, SearchButton, SearchRow, SearchView, Toggles, changed_rows};
+use nun_ui::{
+    Field, Harness, HitState, Palette, SearchButton, SearchRow, SearchView, Toggles, changed_rows,
+};
 use ratatui::buffer::Buffer as Cells;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 use ratatui::widgets::Widget;
 use unicode_width::UnicodeWidthStr;
 
-/// The first result row: the header, the query, the toggles and the summary
-/// sit above it.
-const FIRST: u16 = 4;
+/// The first result row: the header, the query, the replacement, the toggles
+/// and the summary sit above it.
+const FIRST: u16 = 5;
 
 /// Columns the query row's prompt occupies, before the query itself.
 const PROMPT_COLS: u16 = 2;
@@ -26,8 +28,14 @@ const PROMPT_COLS: u16 = 2;
 /// indent under its file, the narrowest line-number gutter, and a space.
 const HIT_TEXT_X: u16 = 7;
 
+/// The column a hit's include marker sits in.
+const MARKER_X: u16 = 1;
+
 /// The header button that hands the sidebar back to the file tree.
 const BACK: &str = "▤";
+
+/// The replace row's button, which writes the replacement into the files.
+const APPLY: &str = "⇓";
 
 /// What an empty query field says when nobody is typing into it.
 const PLACEHOLDER: &str = "Search the project";
@@ -39,8 +47,8 @@ fn palette() -> Palette {
 fn rows<'a>() -> Vec<SearchRow<'a>> {
     vec![
         SearchRow::File { path: "src/main.rs", hits: 2, collapsed: false },
-        SearchRow::Hit { line: 7, text: "fn main() {", matched: &[] },
-        SearchRow::Hit { line: 91, text: "    render();", matched: &[] },
+        SearchRow::Hit { line: 7, text: "fn main() {", matched: &[], state: HitState::Plain },
+        SearchRow::Hit { line: 91, text: "    render();", matched: &[], state: HitState::Plain },
         SearchRow::File { path: "README.md", hits: 1, collapsed: true },
     ]
 }
@@ -68,7 +76,7 @@ fn the_query_row_starts_with_a_prompt_two_columns_wide() {
 fn the_panel_draws_its_chrome_then_its_rows() {
     let rows = rows();
     let palette = palette();
-    let mut harness = Harness::new(24, 8);
+    let mut harness = Harness::new(24, 9);
     harness.draw(
         SearchView::new("main", &rows, &palette).summary(Some("3 hits in 2 files")).focused(true),
     );
@@ -77,6 +85,7 @@ fn the_panel_draws_its_chrome_then_its_rows() {
         harness.to_text(),
         " SEARCH               ▤\n\
          ⌕ main\n\
+         → Replace with        ⇓\n\
          \u{20}* A ▭ ○\n\
          \u{20}3 hits in 2 files\n\
          \u{20}▾ src/main.rs        2\n\
@@ -91,19 +100,21 @@ fn every_band_agrees_with_the_row_it_draws() {
     let area = Rect::new(0, 0, 24, 9);
     assert_eq!(SearchView::header_area(area), Rect::new(0, 0, 24, 1));
     assert_eq!(SearchView::query_area(area), Rect::new(0, 1, 24, 1));
-    assert_eq!(SearchView::toggles_area(area), Rect::new(0, 2, 24, 1));
-    assert_eq!(SearchView::summary_area(area), Rect::new(0, 3, 24, 1));
-    assert_eq!(SearchView::rows_area(area), Rect::new(0, 4, 24, 5));
-    assert_eq!(SearchView::visible_rows(area), 5);
+    assert_eq!(SearchView::replace_area(area), Rect::new(0, 2, 24, 1));
+    assert_eq!(SearchView::toggles_area(area), Rect::new(0, 3, 24, 1));
+    assert_eq!(SearchView::summary_area(area), Rect::new(0, 4, 24, 1));
+    assert_eq!(SearchView::rows_area(area), Rect::new(0, 5, 24, 4));
+    assert_eq!(SearchView::visible_rows(area), 4);
 }
 
 #[test]
 fn a_panel_too_short_for_a_band_gives_it_no_rows() {
-    for height in 0..=3u16 {
+    for height in 0..=4u16 {
         let area = Rect::new(0, 0, 24, height);
         let bands = [
             SearchView::header_area(area),
             SearchView::query_area(area),
+            SearchView::replace_area(area),
             SearchView::toggles_area(area),
             SearchView::summary_area(area),
         ];
@@ -120,18 +131,21 @@ fn a_panel_too_short_for_a_band_gives_it_no_rows() {
 fn a_squeezed_panel_draws_only_the_bands_it_has_room_for() {
     let rows = rows();
     let palette = palette();
-    for height in 1..=4u16 {
+    for height in 1..=6u16 {
         let mut harness = Harness::new(24, height);
         harness.draw(
             SearchView::new("q", &rows, &palette)
+                .replacement("zz")
                 .summary(Some("later"))
                 .toggles(Toggles { regex: true, ..Toggles::default() }),
         );
         let text = harness.to_text();
         assert!(text.contains("SEARCH"), "height {height}: {text:?}");
         assert_eq!(text.contains('q'), height >= 2, "height {height}: {text:?}");
-        assert_eq!(text.contains('*'), height >= 3, "height {height}: {text:?}");
-        assert_eq!(text.contains("later"), height >= 4, "height {height}: {text:?}");
+        assert_eq!(text.contains("zz"), height >= 3, "height {height}: {text:?}");
+        assert_eq!(text.contains('*'), height >= 4, "height {height}: {text:?}");
+        assert_eq!(text.contains("later"), height >= 5, "height {height}: {text:?}");
+        assert_eq!(text.contains("src/main.rs"), height >= 6, "height {height}: {text:?}");
     }
 }
 
@@ -155,13 +169,13 @@ fn a_panel_with_no_area_draws_nothing() {
 
 #[test]
 fn row_at_round_trips_with_the_scroll() {
-    let area = Rect::new(0, 0, 24, 8);
-    assert_eq!(SearchView::row_at(area, 0, 3, 4), None, "the chrome is not a row");
+    let area = Rect::new(0, 0, 24, 9);
+    assert_eq!(SearchView::row_at(area, 0, 4, 4), None, "the chrome is not a row");
     assert_eq!(SearchView::row_at(area, 0, FIRST, 4), Some(0));
     assert_eq!(SearchView::row_at(area, 0, FIRST + 3, 4), Some(3));
     assert_eq!(SearchView::row_at(area, 12, FIRST + 1, 20), Some(13), "scrolled");
     assert_eq!(SearchView::row_at(area, 0, FIRST + 3, 3), None, "past the last row");
-    assert_eq!(SearchView::row_at(area, 0, 8, 40), None, "below the panel");
+    assert_eq!(SearchView::row_at(area, 0, 9, 40), None, "below the panel");
 }
 
 #[test]
@@ -174,10 +188,11 @@ fn only_the_visible_window_of_results_is_drawn() {
             line: u32::try_from(i + 1).unwrap_or(1),
             text,
             matched: &[],
+            state: HitState::Plain,
         })
         .collect();
     let palette = palette();
-    let mut harness = Harness::new(24, 7);
+    let mut harness = Harness::new(24, 8);
     harness.draw(SearchView::new("hit", &rows, &palette).scrolled_to(500));
     let text = harness.to_text();
     assert!(text.contains("hit 500") && text.contains("hit 502"), "{text}");
@@ -277,7 +292,7 @@ fn a_panel_narrower_than_its_buttons_drops_them() {
 fn a_collapsed_file_points_its_disclosure_the_other_way() {
     let rows = rows();
     let palette = palette();
-    let mut harness = Harness::new(24, 8);
+    let mut harness = Harness::new(24, 9);
     harness.draw(SearchView::new("main", &rows, &palette));
     let text = harness.to_text();
     assert!(text.contains("▾ src/main.rs"), "{text}");
@@ -288,7 +303,7 @@ fn a_collapsed_file_points_its_disclosure_the_other_way() {
 fn a_file_row_right_aligns_its_hit_count() {
     let rows = vec![SearchRow::File { path: "a.rs", hits: 128, collapsed: false }];
     let palette = palette();
-    let mut harness = Harness::new(24, 5);
+    let mut harness = Harness::new(24, 7);
     harness.draw(SearchView::new("x", &rows, &palette));
     let line = harness.to_text().lines().nth(usize::from(FIRST)).unwrap_or_default().to_string();
     assert!(line.ends_with("128"), "{line:?}");
@@ -302,9 +317,13 @@ fn caret_at_round_trips_with_the_caret_the_query_row_draws() {
     let area = Rect::new(0, 0, 24, 8);
     for caret in 0..=query.chars().count() {
         let mut harness = Harness::new(24, 8);
-        harness.draw(SearchView::new(query, &[], &palette).editing(true, caret));
+        harness.draw(SearchView::new(query, &[], &palette).editing(Some(Field::Query), caret));
         let x = caret_column(&harness);
-        assert_eq!(SearchView::caret_at(area, query, caret, x), caret, "caret {caret} at {x}");
+        assert_eq!(
+            SearchView::caret_at(area, Field::Query, query, caret, x),
+            caret,
+            "caret {caret} at {x}"
+        );
     }
 }
 
@@ -317,17 +336,33 @@ fn caret_at_round_trips_with_the_query_scrolled_horizontally() {
     let palette = palette();
     let area = Rect::new(0, 0, 20, 8);
     let mut harness = Harness::new(20, 8);
-    harness.draw(SearchView::new(&query, &[], &palette).editing(true, chars));
+    harness.draw(SearchView::new(&query, &[], &palette).editing(Some(Field::Query), chars));
 
     // Room for the text is the panel less the prompt, less the column the
     // caret keeps for itself.
     let room = usize::from(area.width - PROMPT_COLS);
     let first = chars + 1 - room;
     assert_eq!(caret_column(&harness), area.width - 1, "the caret sits at the right edge");
-    assert_eq!(SearchView::caret_at(area, &query, chars, area.width - 1), chars, "the end");
-    assert_eq!(SearchView::caret_at(area, &query, chars, PROMPT_COLS), first, "the leftmost char");
-    assert_eq!(SearchView::caret_at(area, &query, chars, PROMPT_COLS + 5), first + 5, "and on");
-    assert_eq!(SearchView::caret_at(area, &query, chars, 0), first, "a click on the prompt");
+    assert_eq!(
+        SearchView::caret_at(area, Field::Query, &query, chars, area.width - 1),
+        chars,
+        "the end"
+    );
+    assert_eq!(
+        SearchView::caret_at(area, Field::Query, &query, chars, PROMPT_COLS),
+        first,
+        "the leftmost char"
+    );
+    assert_eq!(
+        SearchView::caret_at(area, Field::Query, &query, chars, PROMPT_COLS + 5),
+        first + 5,
+        "and on"
+    );
+    assert_eq!(
+        SearchView::caret_at(area, Field::Query, &query, chars, 0),
+        first,
+        "a click on the prompt"
+    );
 
     let text = harness.to_text().lines().nth(1).unwrap_or_default().to_string();
     assert!(text.ends_with('N') && !text.contains('a'), "the tail is shown: {text:?}");
@@ -342,7 +377,7 @@ fn caret_at_is_exact_with_the_caret_in_the_middle_of_a_scrolled_query() {
     let area = Rect::new(0, 0, 20, 8);
     let caret = 20;
     let mut harness = Harness::new(20, 8);
-    harness.draw(SearchView::new(&query, &[], &palette).editing(true, caret));
+    harness.draw(SearchView::new(&query, &[], &palette).editing(Some(Field::Query), caret));
 
     // Every column holding query text answers with the character drawn on it.
     // The clip mark and the caret's own cell are not query text.
@@ -352,19 +387,22 @@ fn caret_at_is_exact_with_the_caret_in_the_middle_of_a_scrolled_query() {
         if drawn == "…" || drawn == " " {
             continue;
         }
-        let offset = SearchView::caret_at(area, &query, caret, x);
+        let offset = SearchView::caret_at(area, Field::Query, &query, caret, x);
         let under = query.chars().nth(offset).map(String::from);
         assert_eq!(under.as_deref(), Some(drawn.as_str()), "column {x}");
         checked += 1;
     }
     assert!(checked > 10, "the query filled the row: {checked} columns");
-    assert_eq!(SearchView::caret_at(area, &query, caret, caret_column(&harness)), caret);
+    assert_eq!(
+        SearchView::caret_at(area, Field::Query, &query, caret, caret_column(&harness)),
+        caret
+    );
 
     // And the answer genuinely turns on the caret: the window an end-anchored
     // row would show starts somewhere else entirely.
     assert_ne!(
-        SearchView::caret_at(area, &query, caret, PROMPT_COLS),
-        SearchView::caret_at(area, &query, query.chars().count(), PROMPT_COLS),
+        SearchView::caret_at(area, Field::Query, &query, caret, PROMPT_COLS),
+        SearchView::caret_at(area, Field::Query, &query, query.chars().count(), PROMPT_COLS),
     );
 }
 
@@ -377,10 +415,10 @@ fn a_wide_character_does_not_shift_the_caret() {
     let area = Rect::new(0, 0, 24, 8);
     for (caret, column) in [(0usize, 0u16), (1, 2), (2, 4), (3, 5)] {
         let mut harness = Harness::new(24, 8);
-        harness.draw(SearchView::new(query, &[], &palette).editing(true, caret));
+        harness.draw(SearchView::new(query, &[], &palette).editing(Some(Field::Query), caret));
         let expected = PROMPT_COLS + column;
         assert_eq!(caret_column(&harness), expected, "caret {caret}");
-        assert_eq!(SearchView::caret_at(area, query, caret, expected), caret);
+        assert_eq!(SearchView::caret_at(area, Field::Query, query, caret, expected), caret);
     }
 }
 
@@ -392,9 +430,301 @@ fn an_empty_query_shows_a_placeholder_until_it_is_typed_into() {
     assert!(harness.to_text().contains(PLACEHOLDER));
 
     let mut harness = Harness::new(24, 8);
-    harness.draw(SearchView::new("", &[], &palette).editing(true, 0));
+    harness.draw(SearchView::new("", &[], &palette).editing(Some(Field::Query), 0));
     assert!(!harness.to_text().contains(PLACEHOLDER), "the caret is not typed over");
     assert_eq!(caret_column(&harness), PROMPT_COLS);
+}
+
+/// A file with one hit in each of the three states, and the `After` row the
+/// included one is followed by.
+fn diff_rows<'a>() -> Vec<SearchRow<'a>> {
+    vec![
+        SearchRow::File { path: "a.rs", hits: 3, collapsed: false },
+        SearchRow::Hit { line: 1, text: "let old = 1;", matched: &[], state: HitState::Included },
+        SearchRow::After { line: 1, text: "let new = 1;" },
+        SearchRow::Hit { line: 2, text: "let old = 2;", matched: &[], state: HitState::Excluded },
+        SearchRow::Hit { line: 3, text: "let old = 3;", matched: &[], state: HitState::Plain },
+    ]
+}
+
+/// The ink one row of the results is drawn in, taken from a column of its
+/// text rather than its marker, so the two are checked separately.
+fn row_ink(harness: &Harness, row: u16) -> Color {
+    harness.cells()[(HIT_TEXT_X, FIRST + row)].fg
+}
+
+#[test]
+fn the_three_hit_states_draw_their_own_marker_and_colour() {
+    let rows = diff_rows();
+    let palette = palette();
+    let mut harness = Harness::new(30, 11);
+    harness.draw(SearchView::new("old", &rows, &palette).replacement("new"));
+
+    let marker = |row: u16| harness.cells()[(MARKER_X, FIRST + row)].symbol().to_string();
+    assert_eq!(marker(1), "-", "an included hit is a line going away");
+    assert_eq!(marker(2), "+", "the after row is the line arriving");
+    assert_eq!(marker(3), "·", "an excluded hit is neither");
+    assert_eq!(marker(4), " ", "a plain hit is not part of a diff");
+
+    let ink = |role| palette.ink(role).fg.expect("a role is a colour");
+    assert_eq!(row_ink(&harness, 1), ink(Role::Removed));
+    assert_eq!(row_ink(&harness, 2), ink(Role::Added));
+    assert_eq!(row_ink(&harness, 3), ink(Role::Faint));
+    assert_eq!(row_ink(&harness, 4), ink(Role::Text), "a plain hit is drawn as it was");
+}
+
+#[test]
+fn an_after_row_lines_up_under_the_hit_it_replaces() {
+    let rows = diff_rows();
+    let palette = palette();
+    let mut harness = Harness::new(30, 11);
+    harness.draw(SearchView::new("old", &rows, &palette).replacement("new"));
+    let text = harness.to_text();
+    let lines: Vec<&str> = text.lines().skip(usize::from(FIRST)).collect();
+
+    assert_eq!(lines[1], " -   1 let old = 1;");
+    assert_eq!(lines[2], " +   1 let new = 1;", "the same line number, so the eye reads down");
+    assert_eq!(lines[3], " ·   2 let old = 2;");
+    assert_eq!(lines[4], "     3 let old = 3;");
+}
+
+#[test]
+fn the_marker_is_its_own_hit_region_only_where_there_is_one_to_click() {
+    let rows = diff_rows();
+    let area = Rect::new(0, 0, 30, 11);
+
+    let marker = |row| SearchView::marker_area(area, &rows, row, 0);
+    assert_eq!(marker(0), None, "a file row is not included or excluded");
+    assert_eq!(marker(1), Some(Rect::new(MARKER_X, FIRST + 1, 1, 1)), "the included hit");
+    assert_eq!(marker(2), None, "an after row is not a thing to toggle");
+    assert_eq!(marker(3), Some(Rect::new(MARKER_X, FIRST + 3, 1, 1)), "the excluded hit");
+    assert_eq!(marker(4), None, "nothing is being replaced on a plain hit");
+    assert_eq!(marker(5), None, "past the last row");
+
+    // It sits inside the row it belongs to, and on the cell that draws it.
+    let cell = SearchView::marker_area(area, &rows, 1, 0).expect("the included hit has one");
+    assert_eq!(SearchView::row_at(area, 0, cell.y, rows.len()), Some(1));
+}
+
+#[test]
+fn a_marker_scrolled_off_the_panel_has_no_hit_region() {
+    let rows = diff_rows();
+    // Four result rows fit; row 1 is the first included hit.
+    let area = Rect::new(0, 0, 30, 9);
+    assert_eq!(SearchView::visible_rows(area), 4);
+    assert!(SearchView::marker_area(area, &rows, 3, 0).is_some(), "the last row that fits");
+    assert_eq!(SearchView::marker_area(area, &rows, 4, 0), None, "one row past the window");
+
+    // Scrolled, the same row moves up into view and the one above it leaves.
+    assert_eq!(SearchView::marker_area(area, &rows, 1, 2), None, "scrolled off the top");
+    let cell = SearchView::marker_area(area, &rows, 3, 2).expect("now the second row shown");
+    assert_eq!(cell.y, FIRST + 1);
+
+    // And a panel with no room for results has no markers at all.
+    let short = Rect::new(0, 0, 30, 5);
+    assert_eq!(SearchView::marker_area(short, &rows, 1, 0), None, "no results band");
+    let narrow = Rect::new(0, 0, 1, 11);
+    assert_eq!(SearchView::marker_area(narrow, &rows, 1, 0), None, "no column to spare");
+}
+
+#[test]
+fn a_diff_draws_at_every_size_without_reaching_past_the_panel() {
+    let rows = diff_rows();
+    let palette = palette();
+    for height in 1..=8u16 {
+        for width in 1..=14u16 {
+            let mut harness = Harness::new(width, height);
+            harness.draw(
+                SearchView::new("old", &rows, &palette)
+                    .replacement("a much longer replacement than fits")
+                    .summary(Some("3 hits in 1 file"))
+                    .selected(Some(1))
+                    .hovered(Some(2))
+                    .hovered_apply(true)
+                    .editing(Some(Field::Replace), 30),
+            );
+            // Nothing panicked, and the panel painted every cell it was given
+            // rather than leaving the terminal's own colour showing through.
+            for y in 0..height {
+                for x in harness.visible_cells(y) {
+                    assert_ne!(
+                        harness.cells()[(x, y)].bg,
+                        Color::Reset,
+                        "({x}, {y}) at {width}x{height}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn the_replace_row_prompts_differently_from_the_query() {
+    let palette = palette();
+    let mut harness = Harness::new(24, 9);
+    harness.draw(SearchView::new("abc", &[], &palette).replacement("xyz"));
+    let cells = harness.cells();
+    assert_eq!(cells[(0, 1)].symbol(), "⌕", "the query is searched for");
+    assert_eq!(cells[(0, 2)].symbol(), "→", "the replacement is what it becomes");
+    assert_eq!(cells[(1, 2)].symbol(), " ");
+    assert_eq!(cells[(PROMPT_COLS, 2)].symbol(), "x", "and its text starts after the prompt");
+}
+
+#[test]
+fn an_empty_replacement_says_what_the_field_is_for() {
+    let palette = palette();
+    let mut harness = Harness::new(24, 9);
+    harness.draw(SearchView::new("abc", &[], &palette));
+    assert!(harness.to_text().contains("Replace with"));
+
+    let mut harness = Harness::new(24, 9);
+    harness.draw(SearchView::new("abc", &[], &palette).editing(Some(Field::Replace), 0));
+    let text = harness.to_text();
+    assert!(!text.contains("Replace with"), "the caret is not typed over: {text:?}");
+}
+
+#[test]
+fn only_the_field_with_the_keyboard_carries_a_caret() {
+    let palette = palette();
+    let accent = palette.on(Role::Accent, Role::OnAccent).bg.expect("the caret has a wash");
+    let lit = |harness: &Harness, row: u16| {
+        (0..harness.area().width).any(|x| harness.cells()[(x, row)].bg == accent)
+    };
+
+    let mut harness = Harness::new(24, 9);
+    harness.draw(
+        SearchView::new("abc", &[], &palette).replacement("xyz").editing(Some(Field::Query), 1),
+    );
+    assert!(lit(&harness, 1) && !lit(&harness, 2), "the query has it");
+
+    let mut harness = Harness::new(24, 9);
+    harness.draw(
+        SearchView::new("abc", &[], &palette).replacement("xyz").editing(Some(Field::Replace), 1),
+    );
+    assert!(!lit(&harness, 1) && lit(&harness, 2), "the replacement has it");
+
+    let mut harness = Harness::new(24, 9);
+    harness.draw(SearchView::new("abc", &[], &palette).replacement("xyz").editing(None, 0));
+    assert!(!lit(&harness, 1) && !lit(&harness, 2), "neither does");
+}
+
+#[test]
+fn caret_at_round_trips_in_the_replace_field_too() {
+    let text = "let x";
+    let palette = palette();
+    let area = Rect::new(0, 0, 24, 9);
+    for caret in 0..=text.chars().count() {
+        let mut harness = Harness::new(24, 9);
+        harness.draw(
+            SearchView::new("q", &[], &palette)
+                .replacement(text)
+                .editing(Some(Field::Replace), caret),
+        );
+        let accent = palette.on(Role::Accent, Role::OnAccent).bg.expect("a wash");
+        let x = (0..area.width)
+            .find(|x| harness.cells()[(*x, 2)].bg == accent)
+            .expect("the caret is drawn on the replace row");
+        assert_eq!(SearchView::caret_at(area, Field::Replace, text, caret, x), caret, "at {x}");
+    }
+}
+
+#[test]
+fn caret_at_is_exact_with_the_replacement_scrolled_and_the_caret_mid_text() {
+    // Distinct characters throughout, so an assertion about which of them a
+    // column holds means something.
+    let text: String = ('a'..='z').chain('A'..='N').collect();
+    let palette = palette();
+    let area = Rect::new(0, 0, 20, 9);
+    let caret = 20;
+    let mut harness = Harness::new(20, 9);
+    harness.draw(
+        SearchView::new("q", &[], &palette).replacement(&text).editing(Some(Field::Replace), caret),
+    );
+
+    let mut checked = 0;
+    for x in PROMPT_COLS..area.width {
+        let drawn = harness.cells()[(x, 2)].symbol().to_string();
+        if drawn == "…" || drawn == " " || drawn == "⇓" {
+            continue;
+        }
+        let offset = SearchView::caret_at(area, Field::Replace, &text, caret, x);
+        assert_eq!(text.chars().nth(offset).map(String::from).as_deref(), Some(drawn.as_str()));
+        checked += 1;
+    }
+    assert!(checked > 5, "the replacement filled the row: {checked} columns");
+
+    // The replace field is narrower than the query one by the apply button's
+    // columns, so the same text and caret scroll to a different place.
+    assert_ne!(
+        SearchView::caret_at(area, Field::Replace, &text, caret, PROMPT_COLS),
+        SearchView::caret_at(area, Field::Query, &text, caret, PROMPT_COLS),
+    );
+}
+
+#[test]
+fn the_apply_button_never_overlaps_the_replacement() {
+    let long = "x".repeat(40);
+    let palette = palette();
+    for width in 1..=20u16 {
+        let area = Rect::new(0, 0, width, 9);
+        let mut harness = Harness::new(width, 9);
+        harness.draw(SearchView::new("q", &[], &palette).replacement(&long));
+
+        let Some(cell) = SearchView::apply_area(area) else {
+            assert!(!harness.to_text().contains(APPLY), "width {width}");
+            continue;
+        };
+        assert_eq!(harness.cells()[(cell.x, cell.y)].symbol(), APPLY, "width {width}");
+        assert_eq!(cell.y, SearchView::replace_area(area).y, "it sits on the replace row");
+        // A blank between the text and the button, however long the text.
+        assert_eq!(harness.cells()[(cell.x - 1, cell.y)].symbol(), " ", "width {width}");
+    }
+
+    assert_eq!(SearchView::apply_area(Rect::new(0, 0, 3, 9)), None, "too narrow");
+    assert_eq!(SearchView::apply_area(Rect::new(0, 0, 24, 2)), None, "no replace row");
+}
+
+#[test]
+fn the_apply_button_is_the_one_control_that_is_not_drawn_in_the_accent() {
+    let palette = palette();
+    let area = Rect::new(0, 0, 24, 9);
+    let cell = SearchView::apply_area(area).expect("wide enough");
+
+    let mut harness = Harness::new(24, 9);
+    harness.draw(SearchView::new("q", &[], &palette));
+    let warn = palette.ink(Role::Warn).fg.expect("a role is a colour");
+    assert_eq!(harness.cells()[(cell.x, cell.y)].fg, warn);
+
+    // Hovering does not light it up the way the reversible buttons light up:
+    // it keeps the warning colour and takes the quieter wash.
+    let mut harness = Harness::new(24, 9);
+    harness.draw(SearchView::new("q", &[], &palette).hovered_apply(true));
+    let accent = palette.on(Role::Accent, Role::OnAccent).bg.expect("a wash");
+    assert_eq!(harness.cells()[(cell.x, cell.y)].fg, warn, "still a warning");
+    assert_ne!(harness.cells()[(cell.x, cell.y)].bg, accent, "not an invitation");
+    assert_eq!(harness.cells()[(cell.x, cell.y)].bg, palette.cursor_line().bg.expect("a wash"));
+}
+
+#[test]
+fn an_included_hit_keeps_its_match_picked_out() {
+    let matched = [4..5, 5..7];
+    let rows = vec![SearchRow::Hit {
+        line: 1,
+        text: "let old = 1;",
+        matched: &matched,
+        state: HitState::Included,
+    }];
+    let palette = palette();
+    let mut harness = Harness::new(40, 7);
+    harness.draw(SearchView::new("old", &rows, &palette).replacement("new"));
+
+    let accent = palette.ink(Role::Accent).fg.expect("a role is a colour");
+    let lit: Vec<u16> = harness
+        .visible_cells(FIRST)
+        .into_iter()
+        .filter(|x| harness.cells()[(*x, FIRST)].fg == accent)
+        .collect();
+    assert_eq!(lit, vec![HIT_TEXT_X + 4, HIT_TEXT_X + 5, HIT_TEXT_X + 6]);
 }
 
 /// The columns of the first result row drawn in the accent.
@@ -403,9 +733,9 @@ fn an_empty_query_shows_a_placeholder_until_it_is_typed_into() {
 /// so that cell is not the panel's to colour and the diff never carries it.
 fn highlighted(text: &str, matched: Range<u32>) -> Vec<u16> {
     let matched = [matched];
-    let rows = vec![SearchRow::Hit { line: 1, text, matched: &matched }];
+    let rows = vec![SearchRow::Hit { line: 1, text, matched: &matched, state: HitState::Plain }];
     let palette = palette();
-    let mut harness = Harness::new(40, 5);
+    let mut harness = Harness::new(40, 7);
     harness.draw(SearchView::new("x", &rows, &palette));
     let accent = palette.ink(Role::Accent).fg.expect("the accent is a colour");
     harness
@@ -417,9 +747,9 @@ fn highlighted(text: &str, matched: Range<u32>) -> Vec<u16> {
 
 /// What is drawn at one column of the first result row.
 fn symbol_at(text: &str, x: u16) -> String {
-    let rows = vec![SearchRow::Hit { line: 1, text, matched: &[] }];
+    let rows = vec![SearchRow::Hit { line: 1, text, matched: &[], state: HitState::Plain }];
     let palette = palette();
-    let mut harness = Harness::new(40, 5);
+    let mut harness = Harness::new(40, 7);
     harness.draw(SearchView::new("x", &rows, &palette));
     harness.cells()[(x, FIRST)].symbol().to_string()
 }
@@ -465,9 +795,10 @@ fn an_emoji_does_not_shift_the_highlight() {
 #[test]
 fn several_matches_on_one_line_are_all_picked_out() {
     let matched = [1..2, 4..6];
-    let rows = vec![SearchRow::Hit { line: 1, text: "abcdef", matched: &matched }];
+    let rows =
+        vec![SearchRow::Hit { line: 1, text: "abcdef", matched: &matched, state: HitState::Plain }];
     let palette = palette();
-    let mut harness = Harness::new(40, 5);
+    let mut harness = Harness::new(40, 7);
     harness.draw(SearchView::new("x", &rows, &palette));
     let accent = palette.ink(Role::Accent).fg.expect("the accent is a colour");
     let lit: Vec<u16> = harness
@@ -489,11 +820,11 @@ fn a_match_running_past_the_end_of_the_line_is_clipped() {
 #[test]
 fn the_gutter_widens_to_the_longest_line_number() {
     let rows = vec![
-        SearchRow::Hit { line: 3, text: "a", matched: &[] },
-        SearchRow::Hit { line: 14_872, text: "b", matched: &[] },
+        SearchRow::Hit { line: 3, text: "a", matched: &[], state: HitState::Plain },
+        SearchRow::Hit { line: 14_872, text: "b", matched: &[], state: HitState::Plain },
     ];
     let palette = palette();
-    let mut harness = Harness::new(30, 6);
+    let mut harness = Harness::new(30, 8);
     harness.draw(SearchView::new("x", &rows, &palette));
     let text = harness.to_text();
     let lines: Vec<&str> = text.lines().skip(usize::from(FIRST)).collect();
@@ -505,16 +836,16 @@ fn the_gutter_widens_to_the_longest_line_number() {
 fn a_window_of_the_results_gets_the_gutter_the_whole_list_would_have() {
     let palette = palette();
     let whole = vec![
-        SearchRow::Hit { line: 3, text: "a", matched: &[] },
-        SearchRow::Hit { line: 14_872, text: "b", matched: &[] },
+        SearchRow::Hit { line: 3, text: "a", matched: &[], state: HitState::Plain },
+        SearchRow::Hit { line: 14_872, text: "b", matched: &[], state: HitState::Plain },
     ];
-    let mut harness = Harness::new(30, 6);
+    let mut harness = Harness::new(30, 8);
     harness.draw(SearchView::new("x", &whole, &palette));
     let expected = harness.to_text();
 
     // The same two rows, handed over as a window with the list's own answer
     // for the widest line number, draw identically.
-    let mut harness = Harness::new(30, 6);
+    let mut harness = Harness::new(30, 8);
     harness.draw(SearchView::new("x", &whole, &palette).widest_line(14_872));
     assert_eq!(harness.to_text(), expected, "widest_line agrees with measuring the list");
 }
@@ -524,15 +855,15 @@ fn a_window_of_short_line_numbers_keeps_room_for_the_long_ones_outside_it() {
     let palette = palette();
     // The window holds nothing wider than two digits, but the list it came
     // from runs to five, so the text must still start where it does there.
-    let window = vec![SearchRow::Hit { line: 42, text: "a", matched: &[] }];
-    let mut harness = Harness::new(30, 6);
+    let window = vec![SearchRow::Hit { line: 42, text: "a", matched: &[], state: HitState::Plain }];
+    let mut harness = Harness::new(30, 8);
     harness.draw(SearchView::new("x", &window, &palette).widest_line(14_872));
     let line = harness.to_text().lines().nth(usize::from(FIRST)).unwrap_or_default().to_string();
     assert_eq!(line, "      42 a", "sized for five digits, not two");
 
     // And without it the same window shrinks to its own contents, which is
     // exactly the jitter widest_line exists to prevent.
-    let mut harness = Harness::new(30, 6);
+    let mut harness = Harness::new(30, 8);
     harness.draw(SearchView::new("x", &window, &palette));
     let line = harness.to_text().lines().nth(usize::from(FIRST)).unwrap_or_default().to_string();
     assert_eq!(line, "    42 a", "the floor of three digits, measured from the window");
@@ -541,12 +872,12 @@ fn a_window_of_short_line_numbers_keeps_room_for_the_long_ones_outside_it() {
 #[test]
 fn the_gutter_floor_holds_however_short_the_line_numbers_are() {
     let palette = palette();
-    let rows = vec![SearchRow::Hit { line: 1, text: "a", matched: &[] }];
+    let rows = vec![SearchRow::Hit { line: 1, text: "a", matched: &[], state: HitState::Plain }];
     for view in [
         SearchView::new("x", &rows, &palette),
         SearchView::new("x", &rows, &palette).widest_line(1),
     ] {
-        let mut harness = Harness::new(30, 6);
+        let mut harness = Harness::new(30, 8);
         harness.draw(view);
         let line =
             harness.to_text().lines().nth(usize::from(FIRST)).unwrap_or_default().to_string();

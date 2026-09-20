@@ -110,6 +110,13 @@ case, whole word and whether to look at ignored files are four toggles in the
 panel, and the search running when you type again is cancelled rather than
 finished.
 
+It replaces as well as finds, and shows you every change before making any of
+them: each line that would change is drawn as it is now and as it would be,
+and any of them can be struck out by clicking its mark. Capture groups work,
+and are previewed with the matcher that will do the writing, so what you see
+is what you get. A file written to since the search is left alone rather than
+rewritten from a stale preview, and one undo takes the whole thing back.
+
 Not there yet: folds, language servers and git. Those are the rest of
 milestone 3 and milestones 4 and 5.
 

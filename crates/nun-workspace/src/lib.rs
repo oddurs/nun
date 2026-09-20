@@ -20,6 +20,10 @@
 //!   hits as it finds them and stopping the moment the query changes. It is
 //!   separate from [`Jobs`] on purpose: a search of a large repository would
 //!   otherwise sit in front of the listings the tree is waiting on.
+//! - [`Replacer`] rewrites what [`Grep`] found, with one engine answering both
+//!   the panel's preview and the bytes that are written, so the two cannot
+//!   disagree. The writing itself is a [`Job`], because it is filesystem work
+//!   and it records into the same undo history everything else does.
 //! - [`Watcher`] watches the expanded directories and reports, coalesced per
 //!   directory, that something in one of them changed. It never touches the
 //!   tree itself: the editor state has one owner on the main thread, so the
@@ -33,6 +37,7 @@ pub mod jobs;
 pub mod labels;
 pub mod ops;
 mod order;
+pub mod replace;
 pub mod search;
 pub mod tree;
 pub mod watch;
@@ -42,6 +47,7 @@ pub use jobs::{Done, Job, Jobs, trash_or_temp};
 pub use labels::{UNNAMED, tab_labels};
 pub use ops::{Change, FsHistory, OpError, Operation, default_trash_dir};
 pub use order::compare_names;
+pub use replace::{Outcome, Recorded, Replacer, Report, Skipped, preview};
 pub use search::{MOST_FILES, Match, list_files, search};
 pub use tree::{Entry, FileTree, Kind, Row, list_dir};
 pub use watch::{FsChange, WatchError, Watcher};
