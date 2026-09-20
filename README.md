@@ -146,6 +146,7 @@ git clone https://github.com/oddurs/nun.git
 cd nun
 scripts/setup          # wires the tracked git hooks; run once
 scripts/task check     # format, lint, test, build
+scripts/task install   # try it: puts this working copy on your PATH
 ```
 
 All automation reaches the project through one seam, `scripts/task`, so CI and
@@ -158,6 +159,7 @@ the local hooks can never drift apart:
 | `test` | Full test suite |
 | `build` | Compile the workspace |
 | `check` | All of the above |
+| `install` | Release build, onto your `PATH` |
 
 Work happens one branch per worktree, driven by `scripts/agent` — see
 [CONTRIBUTING.md](CONTRIBUTING.md). `main` only ever advances through a merged

@@ -16,6 +16,7 @@ Targets:
   test       Full test suite
   build      Compile the workspace
   check      fmt:check && lint && test && build
+  install    Build in release and put this working copy on your PATH
 USAGE
 }
 
@@ -34,6 +35,11 @@ case "${1:-}" in
         ;;
     build)
         cargo build --workspace --all-features
+        ;;
+    install)
+        # Release, because the debug build is slow enough to feel on a large
+        # repository — which is exactly what you install it to try it on.
+        cargo install --path crates/nun --locked --force
         ;;
     check)
         "$0" fmt:check
