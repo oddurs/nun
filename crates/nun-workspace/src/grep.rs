@@ -106,6 +106,14 @@ pub struct Hit {
     /// The line itself, with its terminator removed and capped at
     /// [`MOST_CHARS`] characters around the first match.
     pub text: String,
+    /// Whether `text` is the whole line rather than a window onto it.
+    ///
+    /// Worth carrying rather than inferring: a window is not always
+    /// [`MOST_CHARS`] characters — one taken near the end of a long line is
+    /// shorter — so nothing downstream can tell the two apart from the text.
+    /// Anything that has to know whether it is holding a whole line, such as
+    /// a replace checking that what it previewed is still there, needs this.
+    pub whole: bool,
     /// Every match on the line, in order, as character offsets into `text`.
     /// Never empty.
     ///
@@ -429,7 +437,7 @@ fn to_hit(matcher: &RegexMatcher, path: &Path, whole: &SinkMatch<'_>) -> Option<
     let &(first, first_ends) = spans.first()?;
 
     let text = String::from_utf8_lossy(raw);
-    let (text, from) = window(&text, first, first_ends);
+    let Windowed { text, from, whole } = window(&text, first, first_ends);
     let width = text.chars().count();
 
     // The first match is always carried, clipped to the window if it is itself
@@ -445,7 +453,7 @@ fn to_hit(matcher: &RegexMatcher, path: &Path, whole: &SinkMatch<'_>) -> Option<
     );
 
     let column = u32::try_from(first + 1).unwrap_or(u32::MAX);
-    Some(Hit { path: path.to_path_buf(), line, column, text, matched: ranges })
+    Some(Hit { path: path.to_path_buf(), line, column, text, whole, matched: ranges })
 }
 
 /// Every match on `raw`, in order, as character offsets into it.
@@ -492,21 +500,34 @@ fn chars(bytes: &[u8]) -> usize {
     String::from_utf8_lossy(bytes).chars().count()
 }
 
+/// As much of a line as a hit carries, and where in the line it came from.
+struct Windowed {
+    text: String,
+    /// The character offset `text` starts at within the line.
+    from: usize,
+    /// Whether `text` is the whole line rather than a part of it.
+    whole: bool,
+}
+
 /// At most [`MOST_CHARS`] characters of `line`, keeping the match in view.
 ///
-/// Returns the text and the character offset it starts at, so a caller can
-/// turn a position in the line into a position in the text. A match beyond the
-/// cap slides the window rather than falling off the end of it, with a quarter
-/// of the window kept in front for context.
-fn window(line: &str, start: usize, end: usize) -> (String, usize) {
+/// Says whether what it returns is the whole line, because nothing downstream
+/// can work that out afterwards: a window is not always [`MOST_CHARS`] long —
+/// one taken near the end of a line is shorter — so its length proves nothing.
+///
+/// A match beyond the cap slides the window rather than falling off the end of
+/// it, with a quarter of the window kept in front for context.
+fn window(line: &str, start: usize, end: usize) -> Windowed {
     if line.chars().count() <= MOST_CHARS {
-        return (line.to_owned(), 0);
+        return Windowed { text: line.to_owned(), from: 0, whole: true };
     }
     if end <= MOST_CHARS {
-        return (line.chars().take(MOST_CHARS).collect(), 0);
+        let text = line.chars().take(MOST_CHARS).collect();
+        return Windowed { text, from: 0, whole: false };
     }
     let from = start.saturating_sub(MOST_CHARS / 4);
-    (line.chars().skip(from).take(MOST_CHARS).collect(), from)
+    let text = line.chars().skip(from).take(MOST_CHARS).collect();
+    Windowed { text, from, whole: false }
 }
 
 /// The line without whatever ended it.
@@ -889,6 +910,35 @@ mod tests {
     }
 
     #[test]
+    fn a_hit_says_whether_it_carries_the_whole_line() {
+        let dir = project(&[("short.txt", "needle here\n")]);
+        let (hits, _) = once(dir.path(), literal("needle"));
+        assert!(hits[0].whole, "a line under the cap is carried whole");
+
+        let dir =
+            project(&[("long.js", &format!("{}needle{}\n", "x".repeat(2_000), "y".repeat(2_000)))]);
+        let (hits, _) = once(dir.path(), literal("needle"));
+        assert!(!hits[0].whole, "a line over it is a window");
+        assert_eq!(hits[0].text.chars().count(), MOST_CHARS);
+    }
+
+    #[test]
+    fn a_window_taken_near_the_end_of_a_line_is_shorter_than_the_cap() {
+        // The reason a hit has to *say* whether it is whole rather than let
+        // anyone work it out: this window is well under MOST_CHARS, so length
+        // proves nothing about which of the two it is.
+        let line = format!("{}needle", "x".repeat(MOST_CHARS + 100));
+        let dir = project(&[("long.js", &format!("{line}\n"))]);
+        let (hits, _) = once(dir.path(), literal("needle"));
+
+        let hit = &hits[0];
+        assert!(!hit.whole, "it is a window");
+        assert!(hit.text.chars().count() < MOST_CHARS, "{}", hit.text.chars().count());
+        assert!(line.contains(&hit.text), "and it is still a part of the line");
+        assert_eq!(cuts(hit), ["needle"]);
+    }
+
+    #[test]
     fn a_binary_file_is_skipped_rather_than_dumped() {
         let dir = tempfile::tempdir().unwrap();
         let mut binary = b"needle".to_vec();
@@ -1035,6 +1085,13 @@ mod tests {
             );
             proptest::prop_assert!(hit.text.chars().count() <= MOST_CHARS);
             proptest::prop_assert!(!hit.matched.is_empty(), "a hit always has a match");
+
+            // `whole` says exactly what it claims, whatever the line is made
+            // of, because a replace decides from it whether the text it was
+            // given can be compared to a line for equality.
+            let line = format!("{before}needle{after}");
+            proptest::prop_assert_eq!(hit.whole, hit.text == line, "whole: {:?}", hit.whole);
+            proptest::prop_assert!(line.contains(&hit.text), "a window is part of its line");
 
             let width = hit.text.chars().count();
             for range in &hit.matched {

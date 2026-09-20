@@ -22,11 +22,17 @@
 //! line that *was* named is replaced, not the first, which is why
 //! [`Hit::matched`](crate::Hit::matched) is a list.
 //!
-//! **What was previewed has to still be there.** Two checks stand between a
-//! preview and a write — the file's modification time against when the search
-//! started, and every chosen line still being there and still matching — and a
-//! file that fails either is left alone and said so in the [`Report`] rather
-//! than being rewritten quietly.
+//! **What was previewed has to still be there.** The caller names each line by
+//! its number *and* by the text the search recorded for it, and a line is
+//! rewritten only if it is still the line that text came from. Asking instead
+//! whether the line still matches the query would be asking the question the
+//! search has already answered: it passes by construction in the case worth
+//! fearing, where a checkout or a format-on-save leaves line 42 matching while
+//! making it a different line 42. The file's modification time is checked too,
+//! but only as a cheap early-out — it cannot be leant on, because it is
+//! measured in whole seconds on filesystems people really use. A file failing
+//! either check is left alone and said so in the [`Report`] rather than being
+//! rewritten quietly.
 
 use std::cell::RefCell;
 use std::fmt;
@@ -37,7 +43,7 @@ use std::time::SystemTime;
 use grep_matcher::{Captures as _, Matcher as _};
 use grep_regex::{RegexCaptures, RegexMatcher};
 
-use crate::grep::{Options, build_matcher};
+use crate::grep::{Hit, Options, build_matcher};
 
 /// A replacement, compiled once and applied to many lines.
 ///
@@ -185,7 +191,8 @@ pub enum Skipped {
     /// Something wrote to it after the search ran, so what was previewed is
     /// not what is there now.
     Written,
-    /// A line that was chosen is no longer there, or no longer matches.
+    /// A line that was chosen is no longer there, or is no longer the line
+    /// that was previewed.
     Moved,
     /// It is not UTF-8 text, or the replacement would not leave it as text.
     /// Either way, writing it back would mangle it.
@@ -276,32 +283,37 @@ pub(crate) enum Plan {
 
 /// Work out what `path` should become, without writing anything.
 ///
-/// `lines` are line numbers counting from one, sorted and without repeats.
+/// `lines` are the chosen lines with what the search recorded of each, sorted
+/// by line number and without repeats.
 ///
 /// Two checks stand between the preview and the write, and either one leaves
 /// the file untouched.
 ///
 /// The first is `searched_at`: a file whose modification time is newer than
 /// the moment the search *started* has been written to since, so nothing on
-/// screen for it can be trusted, whichever lines still happen to match. This
-/// is the check that catches the dangerous case — a `git checkout` or a
-/// format-on-save that rewrites a file into something where line 42 still
-/// matches but is a different line 42 — and it is the reason a timestamp is
-/// worth carrying through the job. Taking the search's *start* rather than its
-/// end errs towards skipping a file that was written while the walk was still
-/// running, which is the safe direction.
+/// screen for it can be trusted. Taking the search's *start* rather than its
+/// end errs towards skipping a file written while the walk was still running,
+/// which is the safe direction. It is a cheap early-out that needs no read,
+/// but it cannot be relied on alone: `searched_at` has nanosecond resolution
+/// and a file's modification time has one second on HFS+ and many network
+/// mounts, two on FAT, so a write lands unseen whenever it falls in the rest
+/// of the clock second the search started in. Widening the comparison to cover
+/// that would skip any file edited in the two seconds before a search, which
+/// is a thing people do constantly and would be reported to them as a lie.
 ///
-/// The second is that every chosen line must still be there and still match.
-/// That is weaker on its own — it cannot see an edit that left the line
-/// matching — but it is what makes a bug in line numbering harmless rather
-/// than silent: nothing is ever written over a line the query does not match.
+/// The second closes that window, and is the one that means something: every
+/// chosen line must still be *the line that was previewed* — see
+/// [`Recorded::still_there`]. Not "does it still match the query", which is
+/// the same question the search already answered and passes by construction in
+/// exactly the case worth fearing, where a checkout or a format-on-save leaves
+/// line 42 matching while making it a different line 42.
 ///
 /// A file failing either check fails as a whole. Applying half of a preview
 /// would be worse than applying none of it.
 pub(crate) fn plan(
     path: &Path,
     replacer: &Replacer,
-    lines: &[u32],
+    lines: &[Recorded],
     searched_at: SystemTime,
 ) -> Plan {
     let modified = match fs::metadata(path).and_then(|metadata| metadata.modified()) {
@@ -322,13 +334,20 @@ pub(crate) fn plan(
 
     let split = split(text);
     let mut rewritten: Vec<(usize, String)> = Vec::new();
-    for &number in lines {
-        let Some(index) = (number as usize).checked_sub(1) else {
+    for recorded in lines {
+        let Some(index) = (recorded.line() as usize).checked_sub(1) else {
             return Plan::Leave(Outcome::Skipped(Skipped::Moved));
         };
         let Some(&(content, _)) = split.get(index) else {
             return Plan::Leave(Outcome::Skipped(Skipped::Moved));
         };
+        if !recorded.still_there(content) {
+            return Plan::Leave(Outcome::Skipped(Skipped::Moved));
+        }
+        // Redundant beside the check above — identical text matches the same
+        // query — and kept anyway, because it is the invariant rather than an
+        // inference from one: nothing is written over a line this query does
+        // not match, whatever else has gone wrong upstream.
         if !replacer.matches(content) {
             return Plan::Leave(Outcome::Skipped(Skipped::Moved));
         }
@@ -362,6 +381,90 @@ pub(crate) fn plan(
     Plan::Write(out, changed)
 }
 
+/// One line the person chose, and what the search recorded of it.
+///
+/// Build it from the hit the panel is showing, with [`Recorded::of`]. That is
+/// deliberately the only convenient way to get one: whether a hit carries a
+/// whole line or a window onto it is something the *search* knows and nothing
+/// downstream can recover from the text, since a window is not always
+/// [`MOST_CHARS`](crate::MOST_CHARS) characters long.
+///
+/// Comparing a window against a whole line is the mistake this type exists to
+/// make unavailable. Done by equality it would turn every hit on a long line
+/// into [`Skipped::Moved`] and report that the file had changed when it had
+/// not; done by substring it would accept `cat` as the preview of
+/// `if (cat) { return cat; }`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Recorded {
+    /// The whole line, because the search read all of it.
+    Whole {
+        /// Which line, counting from one, as [`Hit::line`](crate::Hit::line).
+        line: u32,
+        /// The line, with its terminator removed.
+        text: String,
+    },
+    /// A window onto a line too long for a hit to carry whole.
+    Window {
+        /// Which line, counting from one.
+        line: u32,
+        /// The part of it the search recorded.
+        text: String,
+    },
+}
+
+impl Recorded {
+    /// What `hit` recorded of the line it is on.
+    #[must_use]
+    pub fn of(hit: &Hit) -> Self {
+        let (line, text) = (hit.line, hit.text.clone());
+        if hit.whole { Self::Whole { line, text } } else { Self::Window { line, text } }
+    }
+
+    /// Which line this was recorded from, counting from one.
+    #[must_use]
+    pub const fn line(&self) -> u32 {
+        match self {
+            Self::Whole { line, .. } | Self::Window { line, .. } => *line,
+        }
+    }
+
+    /// Whether `current` is still the line this was recorded from.
+    ///
+    /// A whole line has to be the same text. Nothing weaker will do: accepting
+    /// a line that merely contains it would accept `cat` as the preview of
+    /// `if (cat) { return cat; }`, a line the person never saw.
+    ///
+    /// A window only has to still be somewhere in the line, because being
+    /// identical was never on offer — the search read a thousand characters of
+    /// a line that may be a megabyte long, and that is all anyone ever had.
+    /// Two alternatives were weighed and are worse.
+    ///
+    /// Falling back to the timestamp and "does it still match the query" is
+    /// the check this one replaced, for being unable to answer the question
+    /// being asked. Reaching for it on precisely the lines that are hardest to
+    /// verify is where it is least defensible, not most.
+    ///
+    /// Requiring the window at the *same character offset* is tempting and
+    /// buys nothing. It would reject any edit earlier in the line while
+    /// forfeiting nothing real, because a windowed line has matches outside
+    /// the window that are rewritten without ever having been previewed — that
+    /// is inherent to the line being too long to show, and no offset test
+    /// changes it. It would also mean carrying the offset, giving the panel
+    /// one more thing to get right.
+    ///
+    /// What is left unguarded is a thousand characters still present verbatim
+    /// in a long line that changed around them. No check can rule that out:
+    /// the search never saw the rest of that line, so there is nothing else to
+    /// compare against.
+    #[must_use]
+    pub fn still_there(&self, current: &str) -> bool {
+        match self {
+            Self::Whole { text, .. } => current == text,
+            Self::Window { text, .. } => current.contains(text.as_str()),
+        }
+    }
+}
+
 /// The lines of `text`, each with whatever ended it.
 ///
 /// A line's ending is `\n`, `\r\n`, or — for a last line the file does not
@@ -384,15 +487,19 @@ fn split(text: &str) -> Vec<(&str, &str)> {
     lines
 }
 
-/// One file's chosen lines, sorted, without repeats, and with a path named
-/// twice folded into one entry.
+/// One file's chosen lines, sorted by line number, without repeats, and with
+/// a path named twice folded into one entry.
 ///
 /// The panel builds its list from rows the user clicked, so it is under no
 /// obligation to hand them over in any particular order — and a file
 /// rewritten twice in one pass would find its own output on the second go and
 /// skip it, which would be a confusing way to learn that.
-pub(crate) fn tidy(chosen: &[(PathBuf, Vec<u32>)]) -> Vec<(PathBuf, Vec<u32>)> {
-    let mut tidied: Vec<(PathBuf, Vec<u32>)> = Vec::with_capacity(chosen.len());
+///
+/// A line number given twice keeps the first record offered for it. The two
+/// can only differ if the panel is holding two hits for one line, which the
+/// search does not produce.
+pub(crate) fn tidy(chosen: &[(PathBuf, Vec<Recorded>)]) -> Vec<(PathBuf, Vec<Recorded>)> {
+    let mut tidied: Vec<(PathBuf, Vec<Recorded>)> = Vec::with_capacity(chosen.len());
     for (path, lines) in chosen {
         match tidied.iter_mut().find(|(seen, _)| seen == path) {
             Some((_, seen)) => seen.extend_from_slice(lines),
@@ -400,16 +507,45 @@ pub(crate) fn tidy(chosen: &[(PathBuf, Vec<u32>)]) -> Vec<(PathBuf, Vec<u32>)> {
         }
     }
     for (_, lines) in &mut tidied {
-        lines.sort_unstable();
-        lines.dedup();
+        lines.sort_by_key(Recorded::line);
+        lines.dedup_by_key(|recorded| recorded.line());
     }
     tidied
+}
+
+/// `n` characters that repeat nothing, so a window of them appears in a line
+/// exactly once.
+///
+/// Shared with [`crate::ops`]'s tests. Filler of one repeated character will
+/// not do for testing a window: a thousand `x` are still found in a line of
+/// two thousand with three of them changed, so the test would pass without
+/// testing anything.
+#[cfg(test)]
+pub(crate) fn filler(n: usize) -> String {
+    let mut text = String::new();
+    for number in 0.. {
+        if text.chars().count() >= n {
+            break;
+        }
+        text.push_str(&number.to_string());
+        text.push(' ');
+    }
+    text.chars().take(n).collect()
+}
+
+/// `body` with the character at `at` made into one it contains nowhere else,
+/// so any window spanning it is gone rather than found again somewhere.
+#[cfg(test)]
+pub(crate) fn tweak(body: &str, at: usize) -> String {
+    let mut chars: Vec<char> = body.chars().collect();
+    chars[at] = 'Z';
+    chars.into_iter().collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::grep::Case;
+    use crate::grep::{Case, MOST_CHARS};
 
     fn literal(query: &str) -> Options {
         Options { query: query.into(), case: Case::Sensitive, ..Options::default() }
@@ -514,17 +650,83 @@ mod tests {
         assert_eq!(split("\n\n"), [("", "\n"), ("", "\n")]);
     }
 
+    fn at(line: u32, text: &str) -> Recorded {
+        Recorded::Whole { line, text: text.to_owned() }
+    }
+
+    fn whole(text: &str) -> Recorded {
+        Recorded::Whole { line: 1, text: text.to_owned() }
+    }
+
+    fn windowed(text: &str) -> Recorded {
+        Recorded::Window { line: 1, text: text.to_owned() }
+    }
+
     #[test]
     fn chosen_lines_are_sorted_and_a_path_named_twice_is_folded_in() {
         let chosen = vec![
-            (PathBuf::from("a.rs"), vec![7, 3, 3]),
-            (PathBuf::from("b.rs"), vec![1]),
-            (PathBuf::from("a.rs"), vec![5]),
+            (PathBuf::from("a.rs"), vec![at(7, "g"), at(3, "c"), at(3, "c")]),
+            (PathBuf::from("b.rs"), vec![at(1, "a")]),
+            (PathBuf::from("a.rs"), vec![at(5, "e")]),
         ];
         assert_eq!(
             tidy(&chosen),
-            [(PathBuf::from("a.rs"), vec![3, 5, 7]), (PathBuf::from("b.rs"), vec![1])]
+            [
+                (PathBuf::from("a.rs"), vec![at(3, "c"), at(5, "e"), at(7, "g")]),
+                (PathBuf::from("b.rs"), vec![at(1, "a")]),
+            ]
         );
+    }
+
+    #[test]
+    fn a_whole_line_has_to_be_exactly_what_was_previewed() {
+        assert!(whole("let cat = 1;").still_there("let cat = 1;"));
+        assert!(!whole("let cat = 1;").still_there("let cat = 2;"));
+        assert!(
+            !whole("cat").still_there("if (cat) { return cat; }"),
+            "a line that merely contains it is a line nobody previewed"
+        );
+        assert!(!whole("if (cat) { return cat; }").still_there("cat"), "nor the other way");
+        assert!(whole("").still_there(""), "an empty line is a line");
+        assert!(!whole("").still_there("cat"), "but it is not every line");
+    }
+
+    #[test]
+    fn a_window_only_has_to_still_be_in_the_line() {
+        // Being identical was never on offer for these: the search read a
+        // thousand characters of a line that may be far longer.
+        let body = format!("{}cat{}", filler(2_000), filler(2_000));
+        let window: String = body.chars().skip(1_500).take(MOST_CHARS).collect();
+        assert!(window.contains("cat"), "a real window holds the match");
+
+        assert!(windowed(&window).still_there(&body), "still in the line");
+        assert!(
+            windowed(&window).still_there(&format!("{body} // appended")),
+            "an edit elsewhere in the line does not move it"
+        );
+        assert!(!windowed(&window).still_there(&tweak(&body, 1_800)), "changed through it");
+    }
+
+    #[test]
+    fn a_window_is_never_compared_against_a_line_as_though_it_were_whole() {
+        // The mistake the type exists to prevent, from both directions. By
+        // equality a long line would always be reported as changed; by
+        // substring a short one would accept a line it is only part of.
+        let body = format!("{}cat{}", filler(2_000), filler(2_000));
+        let window: String = body.chars().skip(1_500).take(MOST_CHARS).collect();
+
+        assert!(windowed(&window).still_there(&body));
+        assert!(!whole(&window).still_there(&body), "as a whole line it would be wrong");
+        assert!(whole(&body).still_there(&body), "and the whole line is right");
+
+        // A window can be shorter than the cap — one taken near the end of a
+        // line — so its length proves nothing about which it is. This is why
+        // the search has to say, and why `Recorded::of` is the way to build
+        // one.
+        let short: String = body.chars().skip(3_900).collect();
+        assert!(short.chars().count() < MOST_CHARS, "{}", short.chars().count());
+        assert!(windowed(&short).still_there(&body), "still a window of it");
+        assert!(!whole(&short).still_there(&body));
     }
 
     #[test]

@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use nun_ui::{Field, HitState, SearchButton, SearchRow, SearchView, Toggles};
-use nun_workspace::{Case, Found, Grep, Hit, Options, Replacer};
+use nun_workspace::{Case, Found, Grep, Hit, Options, Recorded, Replacer};
 use ratatui::layout::Rect;
 use ratatui::widgets::Widget;
 
@@ -83,6 +83,13 @@ pub(super) struct Search {
     /// When the search that found the current hits started, so a file written
     /// to since can be left alone rather than rewritten from a stale preview.
     searched_at: Option<std::time::SystemTime>,
+    /// The compiled replacement, and what it was compiled from.
+    ///
+    /// Building one compiles a regex, which is not much but is not nothing
+    /// either, and the previews are wanted on every frame. It depends on
+    /// nothing but the options and the replacement, so it is kept until one
+    /// of those changes.
+    replacer: Option<(Options, String, Replacer)>,
     /// Which of the toggles are lit.
     pub(super) toggles: Toggles,
     /// The files that have hits, in the order they were found.
@@ -213,6 +220,9 @@ impl Search {
         self.index.clear();
         self.rows.clear();
         self.collapsed.clear();
+        // The strikes belonged to the old list. Carrying them into a new
+        // query silently leaves lines unreplaced that nobody struck out.
+        self.excluded.clear();
         self.widest = 0;
         self.scroll = 0;
         self.selected = None;
@@ -396,12 +406,16 @@ impl App {
             if index >= self.search.rows.len() {
                 break;
             }
+            let within = offset;
             let Ok(offset) = u16::try_from(offset) else { break };
             let line = Rect { y: rows.y + offset, height: 1, ..rows };
             hits.push(super::cells(line), Target::SearchRow(index), true);
             // On top of its row, so clicking the mark strikes the hit out
-            // while clicking the line still opens the file.
-            if let Some(cell) = SearchView::marker_area(area, &view, index, self.search.scroll) {
+            // while clicking the line still opens the file. `view` is the
+            // window, indexed from its own start and drawn with a zero
+            // scroll, so it is asked where the row sits in the window rather
+            // than where it sits in the list.
+            if let Some(cell) = SearchView::marker_area(area, &view, within, 0) {
                 hits.push(super::cells(cell), Target::SearchMarker(index), true);
             }
         }
@@ -788,21 +802,38 @@ impl App {
             return;
         }
         let Some(area) = self.search_area() else { return };
-        let Ok(replacer) = Replacer::new(&self.search.options(), &self.search.replacement) else {
+        let options = self.search.options();
+        let stale = !matches!(
+            self.search.replacer.as_ref(),
+            Some((was, with, _)) if *was == options && *with == self.search.replacement
+        );
+        if stale {
             // The query does not compile; the summary already says so, and a
             // preview of nothing would be a second way of saying it.
-            return;
-        };
+            let Ok(built) = Replacer::new(&options, &self.search.replacement) else {
+                self.search.replacer = None;
+                return;
+            };
+            self.search.replacer = Some((options, self.search.replacement.clone(), built));
+        }
+        let Some((.., replacer)) = self.search.replacer.as_ref() else { return };
         let first = self.search.scroll;
         let last = first.saturating_add(SearchView::visible_rows(area));
+        let mut previewed: Vec<(usize, String)> = Vec::new();
         for index in first..last.min(self.search.rows.len()) {
             if let Some(Line::After(group, hit)) = self.search.rows.get(index).copied()
                 && let Some(hit) = self.search.groups[group].hits.get(hit)
             {
+                // What is previewed is the text the panel has, which for a
+                // very long line is a window of it. The write rewrites every
+                // match in the whole line, so past that window the preview
+                // shows fewer changes than the file will get — there being
+                // nothing on screen to show them on.
                 let after = replacer.line(&hit.text);
-                self.search.previews.insert(index, after);
+                previewed.push((index, after));
             }
         }
+        self.search.previews.extend(previewed);
     }
 
     /// Rewrite every hit that has not been struck out.
@@ -816,17 +847,32 @@ impl App {
             self.warn("Search for something first.".to_string());
             return Outcome::Redraw;
         };
+        // What has arrived is not the answer yet. Replacing it would rewrite
+        // whatever part of the project the walk happened to have reached, say
+        // it had replaced everything, and then fill the panel with the rest —
+        // a list mixing done and not-done with nothing to tell them apart.
+        // Pressing again would blame the first pass's own writes on somebody
+        // else having changed the files.
+        if self.search.running {
+            self.warn("The search is still running, so this is not all of it yet.".to_string());
+            return Outcome::Redraw;
+        }
 
-        let chosen: Vec<(PathBuf, Vec<u32>)> = self
+        // Each line goes with the text the preview was taken from, so the
+        // write can ask whether it is still the line that was previewed
+        // rather than only whether it still matches. A rewrite that leaves
+        // line 42 matching while making it a different line 42 — a checkout,
+        // a format on save — passes the second question and fails the first.
+        let chosen: Vec<(PathBuf, Vec<Recorded>)> = self
             .search
             .groups
             .iter()
             .filter_map(|group| {
-                let lines: Vec<u32> = group
+                let lines: Vec<Recorded> = group
                     .hits
                     .iter()
-                    .map(|hit| hit.line)
-                    .filter(|line| self.search.included(&group.path, *line))
+                    .filter(|hit| self.search.included(&group.path, hit.line))
+                    .map(Recorded::of)
                     .collect();
                 (!lines.is_empty()).then(|| (group.path.clone(), lines))
             })
@@ -864,30 +910,59 @@ impl App {
         // would put that back over the replace without saying so. Whichever
         // ones nobody has touched are reloaded; the rest are named, because
         // only the person editing them can say which version they meant.
-        let mut untaken: Vec<String> = Vec::new();
-        if let Some(root) = self.workspace_root() {
-            for (path, outcome) in &report.files {
-                if !matches!(outcome, nun_workspace::Outcome::Changed(lines) if *lines > 0) {
-                    continue;
-                }
-                let full = root.join(path);
-                let Some(document) =
-                    self.docs.iter_mut().find(|document| document.buffer.path() == Some(&full))
-                else {
-                    continue;
-                };
-                if document.buffer.is_modified() {
-                    untaken.push(path.display().to_string());
-                } else if let Ok((buffer, _)) = nun_core::Buffer::load(&full) {
-                    let id = document.id;
-                    document.buffer = buffer;
-                    self.syntax_open(id);
-                }
-            }
-        }
+        let written: Vec<PathBuf> = self.workspace_root().map_or_else(Vec::new, |root| {
+            report
+                .files
+                .iter()
+                .filter(|(_, outcome)| {
+                    matches!(outcome, nun_workspace::Outcome::Changed(lines) if *lines > 0)
+                })
+                .map(|(path, _)| root.join(path))
+                .collect()
+        });
+        let untaken = self.reload_written(&written);
 
         self.message = Some(say_what_happened(report, &untaken));
         Outcome::Redraw
+    }
+
+    /// Bring open documents back in line with files rewritten underneath them.
+    ///
+    /// A file that is open still holds what it held before, and saving it
+    /// would put that back over the change with nothing said. Whichever ones
+    /// nobody has touched are reloaded; the rest are named, because only the
+    /// person editing them can say which version they meant.
+    ///
+    /// Used by the replace and by taking it back. An undo that restored the
+    /// files but left the buffers showing the replacement would be a screen
+    /// disagreeing with the disk, and the next save would undo the undo.
+    pub(super) fn reload_written(&mut self, written: &[PathBuf]) -> Vec<String> {
+        let mut untaken: Vec<String> = Vec::new();
+        for full in written {
+            let Some(document) = self
+                .docs
+                .iter_mut()
+                .find(|document| document.buffer.path() == Some(full.as_path()))
+            else {
+                continue;
+            };
+            if document.buffer.is_modified() {
+                untaken.push(name_of(full));
+                continue;
+            }
+            let Ok((mut buffer, _)) = nun_core::Buffer::load(full) else { continue };
+            // A document keeps its scroll beside the buffer and its caret
+            // inside it, so a straight swap would leave the view where it was
+            // and the caret at the top of the file, off the screen.
+            let was = document.buffer.selections().primary().head;
+            let at = was.min(buffer.len_chars());
+            buffer.set_selections(nun_core::Selections::single(nun_core::Range::caret(at)));
+            buffer.set_tab_width(document.buffer.tab_width());
+            let id = document.id;
+            document.buffer = buffer;
+            self.syntax_open(id);
+        }
+        untaken
     }
 
     /// The engine has something to say.
@@ -982,6 +1057,13 @@ impl App {
             _ => None,
         }
     }
+}
+
+/// How a file reads in a message: its name, since a whole path is usually
+/// longer than the line it has to fit on.
+fn name_of(path: &std::path::Path) -> String {
+    path.file_name()
+        .map_or_else(|| path.display().to_string(), |name| name.to_string_lossy().into_owned())
 }
 
 /// A sentence for the status line: what a replace came to.
@@ -1329,6 +1411,7 @@ mod tests {
                 line: 1,
                 column: 1,
                 text: "ghost".into(),
+                whole: true,
                 matched: std::iter::once(0..5).collect(),
             }],
         };
@@ -1515,6 +1598,7 @@ mod tests {
             line,
             column: 1,
             text: "alpha".into(),
+            whole: true,
             matched: std::iter::once(0..5).collect(),
         };
         for (path, line) in [("b.rs", 1), ("c.rs", 1), ("b.rs", 7), ("d.rs", 1)] {
@@ -1554,6 +1638,7 @@ mod tests {
             line,
             column: 1,
             text: "alpha".into(),
+            whole: true,
             matched: std::iter::once(0..5).collect(),
         };
         // A second file, then a hit belonging to the first one after it.
@@ -1777,6 +1862,251 @@ mod tests {
         );
         let said = t.app.message().unwrap();
         assert!(said.contains("unsaved changes"), "and it is named: {said}");
+    }
+
+    #[test]
+    fn the_replacement_is_compiled_once_and_not_once_a_frame() {
+        // Building it compiles a regex, and the previews are wanted on every
+        // frame. It depends on nothing but the options and the replacement.
+        let dir = project(&[("a.rs", "alpha\n")]);
+        let mut t = Tester::new(&dir);
+        t.search("alpha");
+        t.replace_with("omega");
+
+        let first = t.app.search.replacer.as_ref().map(|(_, with, _)| with.clone());
+        assert_eq!(first.as_deref(), Some("omega"), "it was built");
+
+        // A frame that changes nothing keeps it.
+        let before = std::ptr::from_ref(t.app.search.replacer.as_ref().unwrap());
+        t.app.refresh_search_previews();
+        assert_eq!(
+            std::ptr::from_ref(t.app.search.replacer.as_ref().unwrap()),
+            before,
+            "the same one was reused"
+        );
+
+        // Changing the replacement builds a new one.
+        t.type_text("!");
+        t.app.refresh_search_previews();
+        assert_eq!(
+            t.app.search.replacer.as_ref().map(|(_, with, _)| with.as_str()),
+            Some("omega!"),
+            "and a change rebuilds it"
+        );
+    }
+
+    #[test]
+    fn a_replacement_that_changes_nothing_says_so() {
+        // Every chosen line comes out the same as it went in, so nothing is
+        // written — and the sentence has to say that rather than claiming a
+        // replace that did not happen.
+        let dir = project(&[("a.rs", "alpha\n")]);
+        let mut t = Tester::new(&dir);
+        t.search("alpha");
+        t.replace_with("alpha");
+        t.apply();
+
+        assert_eq!(fs::read_to_string(dir.path().join("a.rs")).unwrap(), "alpha\n");
+        let said = t.app.message().unwrap();
+        assert!(said.contains("Nothing was replaced"), "{said}");
+    }
+
+    #[test]
+    fn a_mark_can_still_be_clicked_once_the_results_have_scrolled() {
+        // The window is indexed from its own start; the row index is into the
+        // whole list. Mixing the two costs every mark its mouse path once the
+        // list has scrolled a page, which is the point at which anyone is
+        // still looking at it.
+        let dir = project(&[("a.rs", &"alpha\n".repeat(60))]);
+        let mut t = Tester::new(&dir);
+        t.search("alpha");
+        t.replace_with("omega");
+
+        let area = t.area();
+        let shown = SearchView::visible_rows(area);
+        t.app.search.scroll = shown + 4;
+        t.app.relayout();
+
+        // The first row of the window that is a hit, whichever it is.
+        let first = t.app.search.scroll;
+        let row = (first..first + shown)
+            .find(|row| matches!(t.app.search.rows.get(*row), Some(Line::Hit(..))))
+            .expect("a hit is on screen");
+        let rows = SearchView::rows_area(area);
+        let offset = u16::try_from(row - first).unwrap();
+        let opened_before = t.app.doc().buffer.path().is_some();
+
+        // Where the widget puts the mark, asked of the widget.
+        let view = t.app.search.view_rows(first..first + shown);
+        let cell = SearchView::marker_area(area, &view, row - first, 0).expect("a mark is drawn");
+        assert_eq!(cell.y, rows.y + offset, "on the row it belongs to");
+        t.click(cell.x, cell.y);
+        assert!(!t.app.search.excluded.is_empty(), "the mark struck the hit out");
+        assert_eq!(
+            t.app.doc().buffer.path().is_some(),
+            opened_before,
+            "and did not open the file instead"
+        );
+    }
+
+    #[test]
+    fn a_new_query_does_not_inherit_the_last_ones_strikes() {
+        // Otherwise a line comes back already struck out, showing a mark
+        // nobody clicked, and is quietly left alone by the replace.
+        let dir = project(&[("a.rs", "alpha beta\n")]);
+        let mut t = Tester::new(&dir);
+        t.search("alpha");
+        t.replace_with("omega");
+
+        let area = t.area();
+        let view = t.app.search.view_rows(0..SearchView::visible_rows(area));
+        let cell = SearchView::marker_area(area, &view, 1, 0).expect("the hit has a mark");
+        t.click(cell.x, cell.y);
+        assert!(!t.app.search.excluded.is_empty(), "struck out under this query");
+
+        // A different query over the same line.
+        t.app.search.field = Field::Query;
+        for _ in 0.."alpha".len() {
+            t.app.handle(Event::Key(KeyEvent::from(KeyCode::Backspace)));
+        }
+        t.type_text("beta");
+        t.settle_search();
+        assert!(t.app.search.excluded.is_empty(), "the strikes went with the old list");
+    }
+
+    #[test]
+    fn taking_a_replace_back_brings_the_open_buffer_with_it() {
+        // Restoring the file and leaving the buffer showing the replacement
+        // is a screen that disagrees with the disk, and the next save would
+        // undo the undo.
+        let dir = project(&[("a.rs", "one\ntwo\nalpha\nfour\n")]);
+        let mut t = Tester::new(&dir);
+        t.app.open_file(&dir.path().join("a.rs"));
+        t.settle_jobs();
+
+        t.search("alpha");
+        t.replace_with("omega");
+        t.apply();
+        assert!(t.app.doc().buffer.text().to_string().contains("omega"));
+
+        t.app.undo_file_op();
+        t.settle_jobs();
+
+        let on_disk = fs::read_to_string(dir.path().join("a.rs")).unwrap();
+        assert_eq!(t.app.doc().buffer.text().to_string(), on_disk, "the buffer followed it back");
+        assert!(!t.app.doc().buffer.is_modified(), "and is not holding an edit nobody made");
+    }
+
+    #[test]
+    fn a_reload_leaves_the_caret_where_it_was() {
+        // The scroll lives beside the buffer and the caret inside it, so a
+        // straight swap leaves the view put and the caret at the top of the
+        // file, somewhere off it.
+        let dir = project(&[("a.rs", "one\ntwo\nalpha\nfour\nfive\n")]);
+        let mut t = Tester::new(&dir);
+        t.app.open_file(&dir.path().join("a.rs"));
+        t.settle_jobs();
+        let at = 9;
+        t.app
+            .doc_mut()
+            .buffer
+            .set_selections(nun_core::Selections::single(nun_core::Range::caret(at)));
+
+        t.search("alpha");
+        t.replace_with("omega");
+        t.apply();
+
+        assert_eq!(
+            t.app.doc().buffer.selections().primary().head,
+            at,
+            "the caret stayed where it was"
+        );
+    }
+
+    #[test]
+    fn a_replace_waits_for_the_search_to_finish() {
+        // Applying mid-walk rewrites whatever part of the project has arrived
+        // and reports it as the whole job, then fills the panel with the rest.
+        let dir = project(&[("a.rs", "alpha\n"), ("b.rs", "alpha\n")]);
+        let mut t = Tester::new(&dir);
+        t.app.run(crate::commands::Command::SearchProject);
+        t.type_text("alpha");
+        t.app.handle(Event::Key(KeyEvent::from(KeyCode::Tab)));
+        t.type_text("omega");
+
+        // Started, nothing answered yet.
+        t.app.tick(Instant::now() + DEBOUNCE * 4);
+        assert!(t.app.search.running, "the walk is in flight");
+
+        t.app.apply_replace();
+        t.settle_jobs();
+        assert_eq!(
+            fs::read_to_string(dir.path().join("a.rs")).unwrap(),
+            "alpha\n",
+            "nothing was written"
+        );
+        let said = t.app.message().unwrap();
+        assert!(said.contains("still running"), "and it says why: {said}");
+
+        // Once it has finished, the same press does the whole job.
+        t.settle_search();
+        t.apply();
+        assert_eq!(fs::read_to_string(dir.path().join("a.rs")).unwrap(), "omega\n");
+        assert_eq!(fs::read_to_string(dir.path().join("b.rs")).unwrap(), "omega\n");
+    }
+
+    #[test]
+    fn a_line_that_still_matches_but_is_not_the_line_previewed_is_left_alone() {
+        // The case the timestamp exists to catch, and the one the query
+        // re-check cannot see: a rewrite that leaves the chosen line number
+        // matching while making it a different line. Through the panel, so
+        // the text the preview was taken from is what travels to the write.
+        let dir = project(&[("a.rs", "let cat = 1;\nlet dog = 2;\nlet cat = 3;\n")]);
+        let mut t = Tester::new(&dir);
+        t.search("cat");
+        t.replace_with("COW");
+
+        // Keep only the first hit; the third is deliberately left out.
+        let area = t.area();
+        let view = t.app.search.view_rows(0..SearchView::visible_rows(area));
+        let third = t
+            .app
+            .search
+            .rows
+            .iter()
+            .enumerate()
+            .filter(|(_, line)| matches!(line, Line::Hit(..)))
+            .nth(1)
+            .map(|(row, _)| row)
+            .expect("two hits");
+        let cell = SearchView::marker_area(area, &view, third, 0).expect("it has a mark");
+        t.click(cell.x, cell.y);
+
+        // Somebody reorders the file: line 1 still matches `cat`, but it is
+        // the line that was struck out. Its modified time is put back to what
+        // it was, so the timestamp check cannot see the change and only the
+        // content check stands between the preview and the write — which is
+        // the whole point of the test.
+        let path = dir.path().join("a.rs");
+        let was = fs::metadata(&path).unwrap().modified().unwrap();
+        fs::write(&path, "let cat = 3;\nlet dog = 2;\nlet cat = 1;\n").unwrap();
+        let file = fs::File::options().write(true).open(&path).unwrap();
+        file.set_times(fs::FileTimes::new().set_modified(was)).unwrap();
+        drop(file);
+        assert_eq!(
+            fs::metadata(&path).unwrap().modified().unwrap(),
+            was,
+            "the timestamp check has nothing to go on"
+        );
+        t.apply();
+
+        assert_eq!(
+            fs::read_to_string(dir.path().join("a.rs")).unwrap(),
+            "let cat = 3;\nlet dog = 2;\nlet cat = 1;\n",
+            "nothing was written over a line nobody previewed"
+        );
+        let said = t.app.message().unwrap();
+        assert!(said.contains("changed since the search"), "{said}");
     }
 
     #[test]

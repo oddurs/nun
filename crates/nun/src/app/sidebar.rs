@@ -639,6 +639,20 @@ impl App {
         sidebar.request_listings();
         sidebar.sync_watches();
 
+        // A replace, or taking one back, rewrote files in place. Any of them
+        // that are open are showing the other version, and the next save
+        // would put it back.
+        if let nun_workspace::Operation::Replace { files, .. } = &change.operation {
+            let files = files.clone();
+            let untaken = self.reload_written(&files);
+            if !untaken.is_empty() {
+                self.notices.push_back(format!(
+                    "{} has unsaved changes and still shows the other version.",
+                    untaken.join(", ")
+                ));
+            }
+        }
+
         // The open file moved: follow it, so the next save goes to the new
         // place instead of recreating the old one.
         if let nun_workspace::Operation::Rename { from, to }

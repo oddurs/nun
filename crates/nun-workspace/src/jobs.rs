@@ -14,7 +14,7 @@ use std::sync::mpsc::{self, Sender};
 use std::thread;
 
 use crate::ops::{Change, FsHistory};
-use crate::replace::{Replacer, Report};
+use crate::replace::{Recorded, Replacer, Report};
 use crate::search::{self, Match};
 use crate::tree::{Entry, list_dir};
 
@@ -61,10 +61,22 @@ pub enum Job {
         options: crate::grep::Options,
         /// What to put in place of each match.
         replacement: String,
-        /// Which lines to change, per file, relative to the root. Only these.
-        chosen: Vec<(PathBuf, Vec<u32>)>,
-        /// When the search that found them *started*. A file written to since
-        /// is left alone, because what was previewed is not what is there.
+        /// Which lines to change, per file, relative to the root. Only
+        /// these, and only if each is still the line it was recorded from —
+        /// build them with [`Recorded::of`] from the hits the panel is
+        /// showing.
+        chosen: Vec<(PathBuf, Vec<Recorded>)>,
+        /// When the search that found them *started*. A file written to
+        /// since is left alone, because what was previewed is not what is
+        /// there.
+        ///
+        /// This is compared against the *filesystem's* idea of when the file
+        /// changed, not ours, and the two are not the same ruler: a
+        /// modification time has one-second resolution on HFS+ and many
+        /// network mounts, two on FAT. So it catches a write comfortably
+        /// after the search and misses one in the same clock second, which is
+        /// why it is an early-out in front of the line check rather than the
+        /// thing being relied on.
         searched_at: std::time::SystemTime,
     },
     /// Undo the last operation.
@@ -439,11 +451,12 @@ mod replace_tests {
         all
     }
 
-    /// Every hit, grouped into the shape [`Job::Replace`] wants.
-    fn chosen(hits: &[Hit]) -> Vec<(PathBuf, Vec<u32>)> {
-        let mut by_file: BTreeMap<PathBuf, Vec<u32>> = BTreeMap::new();
+    /// Every hit, grouped into the shape [`Job::Replace`] wants — which is
+    /// all the panel has to do: group by path and call [`Recorded::of`].
+    fn chosen(hits: &[Hit]) -> Vec<(PathBuf, Vec<Recorded>)> {
+        let mut by_file: BTreeMap<PathBuf, Vec<Recorded>> = BTreeMap::new();
         for hit in hits {
-            by_file.entry(hit.path.clone()).or_default().push(hit.line);
+            by_file.entry(hit.path.clone()).or_default().push(Recorded::of(hit));
         }
         by_file.into_iter().collect()
     }
@@ -494,6 +507,91 @@ mod replace_tests {
     }
 
     #[test]
+    fn a_line_the_search_could_only_window_is_replaced_whole() {
+        // The hit for a line this long carries a window of it, and the panel
+        // sends that window back without knowing it is one. Both halves agree
+        // on MOST_CHARS by using the same constant, so this is the test that
+        // would fail if either side ever changed its mind about the cap.
+        let dir = tempfile::tempdir().unwrap();
+        let filler = "abcdefghij".repeat(5_000);
+        let line = format!("{filler}cat{filler}cat");
+        std::fs::write(dir.path().join("bundle.js"), format!("{line}\n")).unwrap();
+        let searched_at = SystemTime::now();
+
+        let found = hits(dir.path(), options("cat"));
+        assert_eq!(found.len(), 1, "one line is one hit");
+        assert_eq!(found[0].text.chars().count(), crate::MOST_CHARS, "a window, not the line");
+        assert_eq!(found[0].matched.len(), 1, "the second match is outside it");
+
+        let (jobs, receiver) = worker(&dir.path().join(".trash"));
+        jobs.send(Job::Replace {
+            root: dir.path().to_path_buf(),
+            options: options("cat"),
+            replacement: "kitten".into(),
+            chosen: chosen(&found),
+            searched_at,
+        });
+
+        match next(&receiver) {
+            Done::Replaced { report, .. } => assert_eq!(report.lines, 1),
+            other => panic!("{other:?}"),
+        }
+        let written = std::fs::read_to_string(dir.path().join("bundle.js")).unwrap();
+        assert_eq!(
+            written,
+            format!("{filler}kitten{filler}kitten\n"),
+            "both matches, including the one the window never showed"
+        );
+    }
+
+    #[test]
+    fn a_file_rewritten_so_the_line_still_matches_is_not_replaced() {
+        // The acceptance criterion in the shape that actually threatens it,
+        // end to end from real hits. The person keeps only the first of the
+        // two, a formatter then reorders the file, and the file keeps its
+        // modification time — which is what a one-second-granularity
+        // filesystem gives for free on any write inside the same second as
+        // the search. Line 1 still matches; it is simply not the line that
+        // was previewed, and the line it now is was deliberately left out.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.rs");
+        let before = "let cat = 1;\nlet dog = 2;\nlet cat = 3;\n";
+        std::fs::write(&path, before).unwrap();
+        let searched_at = SystemTime::now();
+        let found = hits(dir.path(), options("cat"));
+        assert_eq!(found.len(), 2);
+        assert_eq!(found[0].text, "let cat = 1;");
+
+        let was = std::fs::metadata(&path).unwrap().modified().unwrap();
+        let reordered = "let cat = 3;\nlet dog = 2;\nlet cat = 1;\n";
+        std::fs::write(&path, reordered).unwrap();
+        std::fs::File::options().write(true).open(&path).unwrap().set_modified(was).unwrap();
+
+        let (jobs, receiver) = worker(&dir.path().join(".trash"));
+        jobs.send(Job::Replace {
+            root: dir.path().to_path_buf(),
+            options: options("cat"),
+            replacement: "kitten".into(),
+            chosen: chosen(&found[..1]),
+            searched_at,
+        });
+
+        match next(&receiver) {
+            Done::Replaced { report, change } => {
+                assert_eq!(report.lines, 0);
+                assert_eq!(report.skipped(), 1);
+                assert!(change.is_none(), "nothing written, nothing to undo");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            reordered,
+            "line 1 matches the query and is not what was previewed"
+        );
+    }
+
+    #[test]
     fn a_query_that_does_not_compile_comes_back_as_a_sentence() {
         let dir = tempfile::tempdir().unwrap();
         let (jobs, receiver) = worker(&dir.path().join(".trash"));
@@ -501,7 +599,10 @@ mod replace_tests {
             root: dir.path().to_path_buf(),
             options: Options { regex: true, ..options("fn (") },
             replacement: "x".into(),
-            chosen: vec![(PathBuf::from("a.rs"), vec![1])],
+            chosen: vec![(
+                PathBuf::from("a.rs"),
+                vec![Recorded::Whole { line: 1, text: "fn (".into() }],
+            )],
             searched_at: SystemTime::now(),
         });
         match next(&receiver) {

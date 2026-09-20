@@ -40,7 +40,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::replace::{self, Outcome, Plan, Replacer, Report, plural};
+use crate::replace::{self, Outcome, Plan, Recorded, Replacer, Report, plural};
 
 /// What an operation did, in terms of the paths a person would recognise.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -336,12 +336,15 @@ impl FsHistory {
     /// Rewrite the chosen lines of each file in `chosen`, as one step that
     /// undoes and redoes together.
     ///
-    /// `chosen` names files relative to `root`, each with the line numbers —
-    /// counting from one, as [`Hit::line`](crate::Hit::line) does — that the
-    /// person kept. Only those lines change; a line that matches but was not
-    /// chosen is copied out as it was. `searched_at` is when the search that
-    /// found the hits *started*, and a file written to since then is left
-    /// alone rather than rewritten from a stale preview.
+    /// `chosen` names files relative to `root`, each with the lines the person
+    /// kept, each as a [`Recorded`] built from the hit the panel was showing.
+    /// Only those lines change; a line that matches but was not chosen is
+    /// copied out as it was.
+    ///
+    /// A line is rewritten only if it is still the line that text came from,
+    /// and a file is written only if every line chosen in it passes that.
+    /// `searched_at` — when the search that found the hits *started* — is a
+    /// cheap early-out in front of the same question.
     ///
     /// Nothing here returns an error: a file that cannot be read or written is
     /// its own entry in the [`Report`], because one unreachable file is not a
@@ -351,7 +354,7 @@ impl FsHistory {
         &mut self,
         root: &Path,
         replacer: &Replacer,
-        chosen: &[(PathBuf, Vec<u32>)],
+        chosen: &[(PathBuf, Vec<Recorded>)],
         searched_at: SystemTime,
     ) -> (Report, Option<Change>) {
         let mut report = Report::default();
@@ -556,18 +559,25 @@ fn drop_slot(target: &Path) {
 /// the `from` side.
 ///
 /// Every file is attempted, so one that cannot be written does not strand the
-/// rest, and each one's flag moves only when its own exchange succeeded — so
-/// pressing undo again after a failure retries exactly what is left.
+/// rest, and each one's flag moves when that file itself moved — so pressing
+/// undo again after a failure retries exactly the files that did not.
 fn swap(blobs: &mut [Blob], from: bool) -> Result<(), OpError> {
     let mut failure = None;
     for blob in blobs.iter_mut().filter(|blob| blob.replaced == from) {
-        match exchange(&blob.file, &blob.kept) {
-            Ok(()) => blob.replaced = !from,
-            Err((path, source)) => {
-                if failure.is_none() {
-                    failure = Some((path, source));
-                }
-            }
+        let outcome = exchange(&blob.file, &blob.kept);
+        // The flag says which side the *file* is on, and the write to the
+        // file is what settles that. A copy that failed to catch up is worth
+        // reporting, but it must not leave the flag saying the file never
+        // moved: a retry would then swap it again, and since the copy still
+        // holds what the file now holds, both sides would end up the same and
+        // the other version would be gone for good.
+        if outcome.moved {
+            blob.replaced = !from;
+        }
+        if let Some((path, source)) = outcome.failed
+            && failure.is_none()
+        {
+            failure = Some((path, source));
         }
     }
     let Some((path, source)) = failure else { return Ok(()) };
@@ -575,16 +585,55 @@ fn swap(blobs: &mut [Blob], from: bool) -> Result<(), OpError> {
     Err(OpError::Partial { done, files: blobs.len(), path, source })
 }
 
+/// What one exchange did: whether the file itself moved to the other side,
+/// and what went wrong if anything did.
+struct Exchanged {
+    moved: bool,
+    failed: Option<(PathBuf, io::Error)>,
+}
+
 /// Put what is kept for `file` into it, and what was in it into the copy.
 ///
-/// The project file is written first because it is the one that can refuse —
-/// a read-only checkout, a lost permission — and a refusal there leaves both
-/// sides exactly as they were.
-fn exchange(file: &Path, kept: &Path) -> Result<(), (PathBuf, io::Error)> {
-    let now = fs::read(file).map_err(|error| (file.to_path_buf(), error))?;
-    let before = fs::read(kept).map_err(|error| (kept.to_path_buf(), error))?;
-    fs::write(file, &before).map_err(|error| (file.to_path_buf(), error))?;
-    fs::write(kept, &now).map_err(|error| (kept.to_path_buf(), error))
+/// The version the file currently holds is written somewhere safe *before*
+/// the file is overwritten, and only moved into place afterwards. Writing the
+/// file first and the copy second would look tidier — the file is the side
+/// that refuses, so a refusal there costs nothing — but it puts the only copy
+/// of the current version in the one place about to be overwritten. If the
+/// copy then could not be written, that version would be gone: not merely
+/// unreachable by redo, gone, and the undo would report partial success over
+/// the top of it.
+///
+/// So the order is: save, overwrite, commit. A failure at the first step
+/// leaves everything untouched, a failure at the second leaves everything
+/// untouched, and the third is a rename within one directory.
+fn exchange(file: &Path, kept: &Path) -> Exchanged {
+    let failed = |path: &Path, error: io::Error| Exchanged {
+        moved: false,
+        failed: Some((path.to_path_buf(), error)),
+    };
+    let now = match fs::read(file) {
+        Ok(now) => now,
+        Err(error) => return failed(file, error),
+    };
+    let before = match fs::read(kept) {
+        Ok(before) => before,
+        Err(error) => return failed(kept, error),
+    };
+
+    // Beside the copy, so the move at the end is within one directory.
+    let holding = kept.with_extension("swapping");
+    if let Err(error) = fs::write(&holding, &now) {
+        return failed(&holding, error);
+    }
+    if let Err(error) = fs::write(file, &before) {
+        let _ = fs::remove_file(&holding);
+        return failed(file, error);
+    }
+    // Past here the file has moved, whatever becomes of the copy.
+    Exchanged {
+        moved: true,
+        failed: fs::rename(&holding, kept).err().map(|error| (kept.to_path_buf(), error)),
+    }
 }
 
 /// Bring an entry back out of its trash slot to `path`, then drop the slot.
@@ -1057,22 +1106,50 @@ mod tests {
         }
     }
 
-    /// A replace against the fixture's project, with a query that is literal
-    /// unless `regex` says otherwise.
+    /// The chosen lines of a file as they read on disk right now — what a
+    /// search that had just run would have recorded for them.
+    ///
+    /// Taken at call time, so a test that then edits the file is recording
+    /// what the person previewed rather than what replaced it.
+    fn recorded(fx: &Fixture, path: &str, lines: &[u32]) -> (PathBuf, Vec<Recorded>) {
+        let text = fs::read_to_string(fx.path(path)).unwrap_or_default();
+        let split: Vec<&str> = text.lines().collect();
+        let lines = lines
+            .iter()
+            .map(|&line| {
+                let content = split.get(line as usize - 1).copied().unwrap_or_default();
+                Recorded::Whole { line, text: content.to_owned() }
+            })
+            .collect();
+        (PathBuf::from(path), lines)
+    }
+
+    /// A replace against the fixture's project, recording each chosen line as
+    /// it stands now.
     fn replacing(
         fx: &mut Fixture,
         options: &crate::Options,
         replacement: &str,
         chosen: &[(&str, &[u32])],
     ) -> (Report, Option<Change>) {
+        let chosen: Vec<_> = chosen.iter().map(|(path, lines)| recorded(fx, path, lines)).collect();
+        applying(fx, options, replacement, &chosen)
+    }
+
+    /// The same, for a test that has built the recorded text itself.
+    fn applying(
+        fx: &mut Fixture,
+        options: &crate::Options,
+        replacement: &str,
+        chosen: &[(PathBuf, Vec<Recorded>)],
+    ) -> (Report, Option<Change>) {
         let replacer = Replacer::new(options, replacement).unwrap();
-        let chosen: Vec<(PathBuf, Vec<u32>)> =
-            chosen.iter().map(|(path, lines)| (PathBuf::from(path), lines.to_vec())).collect();
         let root = fx.project.path().to_path_buf();
         // Far enough ahead that nothing written by the fixture itself looks
-        // newer than the search that is being pretended to have run.
+        // newer than the search that is being pretended to have run, so these
+        // tests exercise the line check rather than the timestamp.
         let searched_at = SystemTime::now() + std::time::Duration::from_secs(60);
-        fx.history.replace(&root, &replacer, &chosen, searched_at)
+        fx.history.replace(&root, &replacer, chosen, searched_at)
     }
 
     fn query(text: &str) -> crate::Options {
@@ -1148,8 +1225,7 @@ mod tests {
         let searched_at = SystemTime::now() - std::time::Duration::from_secs(60);
         set_modified(&fx.path("fresh.rs"), searched_at - std::time::Duration::from_secs(60));
 
-        let chosen =
-            vec![(PathBuf::from("stale.rs"), vec![1]), (PathBuf::from("fresh.rs"), vec![1])];
+        let chosen = vec![recorded(&fx, "stale.rs", &[1]), recorded(&fx, "fresh.rs", &[1])];
         let (report, change) = fx.history.replace(&root, &replacer, &chosen, searched_at);
 
         assert_eq!(fx.read("stale.rs"), "cat\n", "what was previewed is not what is there");
@@ -1180,6 +1256,84 @@ mod tests {
         assert_eq!(report.files, [(PathBuf::from("a.rs"), Outcome::Skipped(Skipped::Moved))]);
         assert!(change.is_none(), "nothing was written, so there is nothing to take back");
         assert!(!fx.history.can_undo());
+    }
+
+    #[test]
+    fn a_line_that_still_matches_but_is_a_different_line_is_not_written() {
+        // The case the timestamp is meant to catch, arranged so it cannot:
+        // the file is rewritten and then given back its old modification
+        // time, which is what a coarse-grained filesystem does for free on
+        // any write inside the same clock second as the search.
+        //
+        // Only line 1 was chosen. A formatter then reorders the file, so line
+        // 1 still matches `cat` — it is just a different line, the one that
+        // was line 3 and was never chosen. Asking "does it still match" says
+        // yes and rewrites it.
+        let mut fx = Fixture::new(&[("a.rs", "let cat = 1;\nlet dog = 2;\nlet cat = 3;\n")]);
+        let chosen = vec![recorded(&fx, "a.rs", &[1])];
+        let was = fs::metadata(fx.path("a.rs")).unwrap().modified().unwrap();
+        let reordered = "let cat = 3;\nlet dog = 2;\nlet cat = 1;\n";
+        fs::write(fx.path("a.rs"), reordered).unwrap();
+        set_modified(&fx.path("a.rs"), was);
+
+        let (report, change) = applying(&mut fx, &query("cat"), "dog", &chosen);
+
+        assert_eq!(
+            fx.read("a.rs"),
+            reordered,
+            "not one byte, though line 1 still matches the query"
+        );
+        assert_eq!(report.files, [(PathBuf::from("a.rs"), Outcome::Skipped(Skipped::Moved))]);
+        assert!(change.is_none());
+    }
+
+    #[test]
+    fn a_line_the_preview_is_only_part_of_is_not_accepted_as_that_line() {
+        // `cat` is the whole of the recorded line, so it has to be the whole
+        // of the current one. Accepting it as a substring would let a line
+        // grow around the match and still be rewritten.
+        let mut fx = Fixture::new(&[("a.rs", "cat\n")]);
+        let chosen = vec![recorded(&fx, "a.rs", &[1])];
+        let was = fs::metadata(fx.path("a.rs")).unwrap().modified().unwrap();
+        fs::write(fx.path("a.rs"), "if (cat) { return cat; }\n").unwrap();
+        set_modified(&fx.path("a.rs"), was);
+
+        let (report, _) = applying(&mut fx, &query("cat"), "dog", &chosen);
+        assert_eq!(fx.read("a.rs"), "if (cat) { return cat; }\n");
+        assert_eq!(report.files, [(PathBuf::from("a.rs"), Outcome::Skipped(Skipped::Moved))]);
+    }
+
+    #[test]
+    fn a_line_too_long_to_have_been_recorded_whole_is_still_checked() {
+        // Over the cap the search only ever saw a window, so being identical
+        // is not on offer and the window has to still be in the line. A line
+        // changed around it is still the line that was previewed; one changed
+        // through it is not.
+        let body = format!("{}cat{}", replace::filler(2_000), replace::filler(2_000));
+        let window: String = body.chars().skip(1_500).take(crate::MOST_CHARS).collect();
+        let chosen =
+            vec![(PathBuf::from("a.rs"), vec![Recorded::Window { line: 1, text: window }])];
+
+        let mut fx = Fixture::new(&[("a.rs", &format!("{body}\n"))]);
+        let was = fs::metadata(fx.path("a.rs")).unwrap().modified().unwrap();
+        fs::write(fx.path("a.rs"), format!("{body} // appended\n")).unwrap();
+        set_modified(&fx.path("a.rs"), was);
+        let (report, _) = applying(&mut fx, &query("cat"), "dog", &chosen);
+        assert_eq!(report.changed(), 1, "changed after the window: still that line");
+        assert!(fx.read("a.rs").contains("dog"));
+        assert!(fx.read("a.rs").ends_with(" // appended\n"), "and the change is kept");
+
+        let changed = replace::tweak(&body, 1_800);
+        let mut fx = Fixture::new(&[("a.rs", &format!("{body}\n"))]);
+        let was = fs::metadata(fx.path("a.rs")).unwrap().modified().unwrap();
+        fs::write(fx.path("a.rs"), format!("{changed}\n")).unwrap();
+        set_modified(&fx.path("a.rs"), was);
+        let (report, _) = applying(&mut fx, &query("cat"), "dog", &chosen);
+        assert_eq!(
+            report.files,
+            [(PathBuf::from("a.rs"), Outcome::Skipped(Skipped::Moved))],
+            "changed through the window: not that line any more"
+        );
     }
 
     #[test]
@@ -1342,6 +1496,67 @@ mod tests {
         fs::set_permissions(&locked, fs::Permissions::from_mode(0o644)).unwrap();
         fx.history.undo().unwrap().unwrap();
         assert_eq!(fx.snapshot(), before, "a retry finishes what is left, and only that");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn an_undo_that_cannot_save_the_current_version_does_not_overwrite_it() {
+        // The file write is what settles which side a file is on. If the copy
+        // fails to catch up and the file is still recorded as unrestored, a
+        // retry swaps it a second time — and since the copy still holds what
+        // the file now holds, both sides end up the same and the replaced
+        // version is gone, with redo left reporting success over nothing.
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let mut fx = Fixture::new(&[("a.rs", "cat\n")]);
+        replacing(&mut fx, &query("cat"), "dog", &[("a.rs", &[1])]);
+        assert_eq!(fx.read("a.rs"), "dog\n");
+
+        // The trash stops accepting writes after the copy was taken, so the
+        // file comes back but the copy cannot be brought up to date.
+        // The slot stops accepting new entries, so the version the file holds
+        // cannot be put anywhere safe.
+        let trash = fx.history.trash().to_path_buf();
+        let slots: Vec<PathBuf> =
+            copies(&trash).iter().filter_map(|file| file.parent().map(Path::to_path_buf)).collect();
+        assert_eq!(slots.len(), 1, "one copy was taken");
+        for slot in &slots {
+            fs::set_permissions(slot, fs::Permissions::from_mode(0o555)).unwrap();
+        }
+
+        let failed = fx.history.undo();
+        assert!(matches!(failed, Err(OpError::Partial { done: 0, files: 1, .. })), "{failed:?}");
+        assert_eq!(
+            fx.read("a.rs"),
+            "dog\n",
+            "an undo that cannot save what is there does not overwrite it"
+        );
+
+        for slot in &slots {
+            fs::set_permissions(slot, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        fx.history.undo().unwrap().unwrap();
+        assert_eq!(fx.read("a.rs"), "cat\n", "and a retry finishes it");
+        fx.history.redo().unwrap().unwrap();
+        assert_eq!(fx.read("a.rs"), "dog\n", "with the replaced version still there to redo to");
+    }
+
+    /// Every file kept under `trash`, however deeply it is nested in slots.
+    #[cfg(unix)]
+    fn copies(trash: &Path) -> Vec<PathBuf> {
+        let mut found = Vec::new();
+        let mut look = vec![trash.to_path_buf()];
+        while let Some(dir) = look.pop() {
+            for entry in fs::read_dir(&dir).into_iter().flatten().filter_map(Result::ok) {
+                let path = entry.path();
+                if path.is_dir() {
+                    look.push(path);
+                } else {
+                    found.push(path);
+                }
+            }
+        }
+        found
     }
 
     #[derive(Debug, Clone)]

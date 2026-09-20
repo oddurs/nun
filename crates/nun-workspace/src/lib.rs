@@ -47,7 +47,7 @@ pub use jobs::{Done, Job, Jobs, trash_or_temp};
 pub use labels::{UNNAMED, tab_labels};
 pub use ops::{Change, FsHistory, OpError, Operation, default_trash_dir};
 pub use order::compare_names;
-pub use replace::{Outcome, Replacer, Report, Skipped, preview};
+pub use replace::{Outcome, Recorded, Replacer, Report, Skipped, preview};
 pub use search::{MOST_FILES, Match, list_files, search};
 pub use tree::{Entry, FileTree, Kind, Row, list_dir};
 pub use watch::{FsChange, WatchError, Watcher};

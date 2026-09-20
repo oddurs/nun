@@ -26,7 +26,7 @@ so single hits can still be reverted by clicking them.
 
 ## Acceptance criteria
 
-- [ ] Capture groups in the replacement work and are previewed accurately
-- [ ] Individual hits can be excluded before applying
-- [ ] Undo restores every file the replace touched
-- [ ] Files changed on disk since the search are re-checked before writing
+- [x] Capture groups in the replacement work and are previewed accurately
+- [x] Individual hits can be excluded before applying
+- [x] Undo restores every file the replace touched
+- [x] Files changed on disk since the search are re-checked before writing
