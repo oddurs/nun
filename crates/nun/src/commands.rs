@@ -58,6 +58,8 @@ pub enum Command {
     Palette,
     /// Open the palette on the commands.
     Commands,
+    /// Search the project, in the sidebar.
+    SearchProject,
 }
 
 impl Command {
@@ -83,6 +85,7 @@ impl Command {
         Self::NextPane,
         Self::Palette,
         Self::Commands,
+        Self::SearchProject,
     ];
 
     /// The name used in `[keys]` in `nun.toml`.
@@ -109,6 +112,7 @@ impl Command {
             Self::NextPane => "pane.next",
             Self::Palette => "palette.files",
             Self::Commands => "palette.commands",
+            Self::SearchProject => "search.project",
         }
     }
 
@@ -136,6 +140,7 @@ impl Command {
             Self::NextPane => "Next pane",
             Self::Palette => "Go to file",
             Self::Commands => "Run a command",
+            Self::SearchProject => "Search the project",
         }
     }
 
@@ -179,6 +184,7 @@ const BASIC: &[(&str, Command)] = &[
     ("ctrl+k o", Command::NextPane),
     ("ctrl+p", Command::Palette),
     ("f1", Command::Commands),
+    ("ctrl+k f", Command::SearchProject),
 ];
 
 /// Bindings that need the Kitty keyboard protocol, added over [`BASIC`].
@@ -196,6 +202,8 @@ const FULL: &[(&str, Command)] = &[
     ("cmd+p", Command::Palette),
     ("cmd+shift+p", Command::Commands),
     ("ctrl+shift+p", Command::Commands),
+    ("cmd+shift+f", Command::SearchProject),
+    ("ctrl+shift+f", Command::SearchProject),
 ];
 
 /// The default bindings for `set`.

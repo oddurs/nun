@@ -107,6 +107,14 @@ fn edit(path: &Path) -> io::Result<()> {
         let _ = sender.send(nun_ui::Event::Syntax(reply));
     })));
 
+    // Searching the project has a thread of its own rather than sharing the
+    // tree's: a search of a large repository would otherwise sit in front of
+    // the directory listings the tree is waiting on.
+    let sender = events.sender();
+    app.attach_search(nun_workspace::Grep::new(Box::new(move |found| {
+        let _ = sender.send(nun_ui::Event::Found(found));
+    })));
+
     let sender = events.sender();
     match nun_workspace::Watcher::new(Box::new(move |change| {
         let _ = sender.send(nun_ui::Event::Files { dir: change.dir, error: change.watch_error });

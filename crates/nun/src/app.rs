@@ -27,6 +27,7 @@ mod palette;
 mod panes;
 mod pointer;
 mod prompt;
+mod search;
 mod sidebar;
 mod syntax;
 mod tabs;
@@ -108,6 +109,18 @@ pub enum Target {
     TreeEmpty,
     /// The sidebar's right edge, dragged to resize it.
     SidebarEdge,
+    /// The search panel's header row.
+    SearchHeader,
+    /// The button in it that goes back to the file tree.
+    SearchBack,
+    /// The row the query is typed into.
+    SearchQuery,
+    /// One of the search toggles.
+    SearchButton(nun_ui::SearchButton),
+    /// A row of the results: a file, or one of its matching lines.
+    SearchRow(usize),
+    /// The panel below its last row.
+    SearchEmpty,
     /// An item of the open menu.
     MenuItem(usize),
     /// Everywhere outside the open menu, which a click there closes.
@@ -129,6 +142,30 @@ impl Target {
                 | Self::SidebarEdge
         )
     }
+
+    /// Whether this is part of the search panel.
+    const fn in_search(self) -> bool {
+        matches!(
+            self,
+            Self::SearchHeader
+                | Self::SearchBack
+                | Self::SearchQuery
+                | Self::SearchButton(_)
+                | Self::SearchRow(_)
+                | Self::SearchEmpty
+        )
+    }
+}
+
+/// Which view the sidebar is showing. The two share its columns, so only one
+/// of them is laid out, drawn or clicked at a time.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SidebarView {
+    /// The file tree.
+    #[default]
+    Files,
+    /// The project search panel.
+    Search,
 }
 
 /// What has the keyboard.
@@ -139,6 +176,8 @@ pub enum Focus {
     Editor,
     /// The file tree.
     Sidebar,
+    /// The project search panel, where typing goes to the query.
+    Search,
 }
 
 /// One open file: its text, and where the view on it is.
@@ -214,6 +253,12 @@ pub struct App {
     syntax: Option<nun_syntax::Worker>,
     /// When the parser is next due to be told what changed.
     syntax_deadline: Option<Instant>,
+    /// Searching the project, and what it has found.
+    search: search::Search,
+    /// Which of its two views the sidebar is showing.
+    sidebar_view: SidebarView,
+    /// When the typing has settled enough to start a walk.
+    search_deadline: Option<Instant>,
 }
 
 impl App {
@@ -276,6 +321,9 @@ impl App {
             searches: 0,
             syntax: None,
             syntax_deadline: None,
+            search: search::Search::default(),
+            sidebar_view: SidebarView::Files,
+            search_deadline: None,
         };
         app.relayout();
         app
@@ -380,6 +428,7 @@ impl App {
         );
         hits.push(cells(status), Target::Status, false);
         self.layout_sidebar(&mut hits);
+        self.layout_search(&mut hits);
         self.layout_panes(&mut hits);
         self.layout_palette(&mut hits);
 
@@ -462,10 +511,16 @@ impl App {
     /// When the editor next needs waking with no input, if ever.
     pub fn deadline(&self) -> Option<Instant> {
         let autoscroll = self.autoscroll.map(|scroll| scroll.next);
-        [self.hover.deadline(), self.chords.deadline(), autoscroll, self.syntax_deadline()]
-            .into_iter()
-            .flatten()
-            .min()
+        [
+            self.hover.deadline(),
+            self.chords.deadline(),
+            autoscroll,
+            self.syntax_deadline(),
+            self.search_deadline(),
+        ]
+        .into_iter()
+        .flatten()
+        .min()
     }
 
     /// A deadline passed with no input.
@@ -495,7 +550,11 @@ impl App {
             None => Outcome::Continue,
         };
 
-        let outcome = chord.and(dwell).and(self.autoscroll_tick(now)).and(self.syntax_tick(now));
+        let outcome = chord
+            .and(dwell)
+            .and(self.autoscroll_tick(now))
+            .and(self.syntax_tick(now))
+            .and(self.search_tick(now));
         if outcome == Outcome::Redraw {
             self.relayout();
         }
@@ -568,6 +627,7 @@ impl App {
             Event::Files { dir, error } => self.files_changed(&dir, error),
             Event::Workspace(done) => self.job_done(done),
             Event::Syntax(reply) => self.syntax_reply(reply),
+            Event::Found(found) => self.search_found(found),
             Event::Focus(true) => Outcome::Continue,
             // The pointer may be anywhere by the time focus comes back.
             Event::Focus(false) => {
@@ -614,6 +674,13 @@ impl App {
             // The status line shows the chord so far.
             Resolved::Pending => Outcome::Redraw,
             Resolved::Unbound(keys) if keys.len() == 1 => match event {
+                // The query is a text field: everything unbound belongs to it,
+                // including the characters that would otherwise be typed into
+                // the document behind it.
+                Some(event) if self.focus == Focus::Search => {
+                    self.acknowledge();
+                    self.search_key(event, Instant::now())
+                }
                 Some(event) if self.focus == Focus::Sidebar => {
                     self.acknowledge();
                     match self.sidebar_key(event) {
@@ -689,6 +756,7 @@ impl App {
             Command::NextPane => return self.focus_next_pane(),
             Command::Palette => return self.open_palette(""),
             Command::Commands => return self.open_palette(">"),
+            Command::SearchProject => return self.open_search(),
             Command::NextTab => return self.step_tab(1),
             Command::PreviousTab => return self.step_tab(-1),
         }
@@ -759,6 +827,11 @@ impl App {
         match mouse.kind {
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown if self.finder.is_some() => {
                 self.palette_scroll(mouse.kind == MouseEventKind::ScrollDown)
+            }
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+                if target.is_some_and(Target::in_search) =>
+            {
+                self.search_scroll(mouse.kind == MouseEventKind::ScrollDown)
             }
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
                 if target.is_some_and(Target::in_sidebar) =>
@@ -878,6 +951,10 @@ impl App {
             Target::StatusFiles => {
                 self.acknowledge();
                 self.toggle_sidebar()
+            }
+            target if target.in_search() => {
+                self.acknowledge();
+                self.search_press(target, mouse.column, now)
             }
             target if target.in_sidebar() => {
                 self.acknowledge();
@@ -1028,6 +1105,7 @@ impl App {
             Rect { y: area.bottom().saturating_sub(1), height: area.height.min(1), ..area };
         self.render_panes(area, cells);
         self.render_sidebar(cells);
+        self.render_search(cells);
 
         if status.height > 0 {
             self.render_status(status, cells);
@@ -1049,6 +1127,12 @@ impl App {
         else {
             return;
         };
+        // The divider belongs to the sidebar rather than to either view, so it
+        // is drawn whichever one is in it.
+        self.render_sidebar_edge(area, cells);
+        if self.searching() {
+            return;
+        }
         let title = sidebar.tree.root().file_name().map_or_else(
             || sidebar.tree.root().display().to_string(),
             |name| name.to_string_lossy().into_owned(),
@@ -1067,10 +1151,13 @@ impl App {
             .showing_ignored(sidebar.tree.show_ignored())
             .focused(self.focus == Focus::Sidebar)
             .render(tree, cells);
+    }
 
-        // The divider, which is also the handle for resizing.
+    /// The divider, which is also the handle for resizing.
+    fn render_sidebar_edge(&self, area: Rect, cells: &mut Cells) {
+        let resizing = self.sidebar.as_ref().is_some_and(|sidebar| sidebar.resizing);
         let edge = area.right().saturating_sub(1);
-        let style = if sidebar.resizing || self.hover.current() == Some(Target::SidebarEdge) {
+        let style = if resizing || self.hover.current() == Some(Target::SidebarEdge) {
             self.palette.fg(Role::LineStrong)
         } else {
             self.palette.fg(Role::Line)

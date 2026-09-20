@@ -31,6 +31,8 @@ pub enum Event {
     Workspace(nun_workspace::Done),
     /// The parser has something to say about a document.
     Syntax(nun_syntax::Reply),
+    /// News from a project search: more hits, the end of one, or a failure.
+    Found(nun_workspace::Found),
     /// Something changed inside a watched directory, or watching one failed.
     Files {
         /// The directory whose contents changed.

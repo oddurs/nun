@@ -28,11 +28,13 @@ pub enum TreeButton {
     NewDir,
     /// Show or hide ignored files.
     ToggleIgnored,
+    /// Swap the sidebar over to searching the project.
+    Search,
 }
 
 impl TreeButton {
     /// Every button, right to left as they sit in the header.
-    pub const ALL: [Self; 3] = [Self::ToggleIgnored, Self::NewDir, Self::NewFile];
+    pub const ALL: [Self; 4] = [Self::Search, Self::ToggleIgnored, Self::NewDir, Self::NewFile];
 
     /// What the button shows. One cell wide each, so the header's geometry
     /// never depends on a font.
@@ -43,6 +45,9 @@ impl TreeButton {
             Self::NewDir => "▪",
             Self::ToggleIgnored if showing_ignored => "●",
             Self::ToggleIgnored => "○",
+            // The same magnifier the status line's search button uses, so the
+            // two ways into a search look like the same thing.
+            Self::Search => "⌕",
         }
     }
 
@@ -54,6 +59,7 @@ impl TreeButton {
             Self::NewDir => "New folder",
             Self::ToggleIgnored if showing_ignored => "Hide ignored files",
             Self::ToggleIgnored => "Show ignored files",
+            Self::Search => "Search the project",
         }
     }
 }
@@ -215,7 +221,11 @@ impl TreeView<'_> {
         let role = if self.focused { Role::Accent } else { Role::Dim };
         let style = self.palette.on(Role::Raised, role).add_modifier(Modifier::BOLD);
         let title = self.title.to_uppercase();
-        let limit = area.width.saturating_sub(8);
+        // Room for the buttons on the right, which sit two columns apart
+        // starting one in from the edge, plus a column between them and the
+        // title so a long project name never runs into them.
+        let buttons = u16::try_from(TreeButton::ALL.len()).unwrap_or(u16::MAX);
+        let limit = area.width.saturating_sub(buttons.saturating_mul(2).saturating_add(2));
         put(cells, area.x + 1, area.y, limit, &title, style);
 
         for button in TreeButton::ALL {
