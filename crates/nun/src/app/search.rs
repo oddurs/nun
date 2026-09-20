@@ -1115,6 +1115,45 @@ mod tests {
     }
 
     #[test]
+    fn a_file_first_seen_in_a_later_batch_still_gets_its_heading() {
+        // The fast path decides whether a hit opens a group from the index it
+        // was looked up in, and batches are only how the walk happens to
+        // deliver things. A file arriving in its own batch must be headed the
+        // same as one arriving beside others.
+        let dir = project(&[("a.rs", "alpha\n")]);
+        let mut t = Tester::new(&dir);
+        t.search("alpha");
+        let generation = t.app.search.generation;
+
+        let hit = |path: &str, line: u32| Hit {
+            path: path.into(),
+            line,
+            column: 1,
+            text: "alpha".into(),
+            matched: std::iter::once(0..5).collect(),
+        };
+        for (path, line) in [("b.rs", 1), ("c.rs", 1), ("b.rs", 7), ("d.rs", 1)] {
+            t.app.handle(Event::Found(Found::Hits { generation, hits: vec![hit(path, line)] }));
+        }
+
+        let streamed = t.app.search.rows.clone();
+        t.app.search.relist();
+        assert_eq!(streamed, t.app.search.rows, "a batch boundary changed the list");
+
+        let headings: Vec<&String> = t
+            .app
+            .search
+            .rows
+            .iter()
+            .filter_map(|line| match line {
+                Line::File(group) => Some(&t.app.search.groups[*group].label),
+                Line::Hit(..) => None,
+            })
+            .collect();
+        assert_eq!(headings, ["a.rs", "b.rs", "c.rs", "d.rs"], "every file is headed once");
+    }
+
+    #[test]
     fn a_hit_for_a_file_already_left_behind_lands_in_it_rather_than_at_the_end() {
         // The walk reports a file at a time, so a hit almost always opens a
         // new group or extends the newest. One that arrives late for an older
