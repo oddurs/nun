@@ -692,6 +692,22 @@ mod tests {
     }
 
     #[test]
+    fn a_whole_line_that_has_since_grown_past_the_cap_is_still_rejected() {
+        // The case that settles why the search has to say whether a hit is
+        // whole rather than let the length of the line decide. Inferring
+        // "longer than the cap, so it must have been windowed, so a substring
+        // will do" is true of the line as it is now and false of the line as
+        // it was recorded: this one was three characters when it was
+        // previewed, and a substring test would wave it through.
+        let grown = format!("{}cat{}", filler(2_000), filler(2_000));
+        assert!(grown.chars().count() > MOST_CHARS);
+        assert!(grown.contains("cat"));
+
+        assert!(!whole("cat").still_there(&grown), "it was a whole line and it is not this");
+        assert!(whole("cat").still_there("cat"));
+    }
+
+    #[test]
     fn a_window_only_has_to_still_be_in_the_line() {
         // Being identical was never on offer for these: the search read a
         // thousand characters of a line that may be far longer.

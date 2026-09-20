@@ -37,7 +37,7 @@
 
 ## m3 — Understanding the code
 
-`#####·····` 44% · 4 of 9 done · due 2026-10-29
+`######····` 56% · 5 of 9 done · due 2026-10-29
 
 ### backlog
 
@@ -46,16 +46,13 @@
 - [ ] [`0030`](https://github.com/oddurs/nun/blob/main/cairn/items/0030-multi-cursor-and-column-selection.md) Multi-cursor and column selection <sup>feature · p1</sup>
 - [ ] [`0055`](https://github.com/oddurs/nun/blob/main/cairn/items/0055-search-toggles-are-unreachable-on-a-very-narrow-sidebar.md) Search toggles are unreachable on a very narrow sidebar <sup>bug · p2</sup>
 
-### in progress
-
-- [ ] [`0029`](https://github.com/oddurs/nun/blob/main/cairn/items/0029-find-and-replace-with-preview.md) Find and replace with preview <sup>feature · p1</sup>
-
 ### done
 
 - [x] [`0023`](https://github.com/oddurs/nun/blob/main/cairn/items/0023-tree-sitter-integration-and-incremental-reparse.md) Tree-sitter integration and incremental reparse <sup>feature · p0</sup>
 - [x] [`0024`](https://github.com/oddurs/nun/blob/main/cairn/items/0024-map-highlight-captures-to-theme-roles.md) Map highlight captures to theme roles <sup>feature · p0</sup>
 - [x] [`0027`](https://github.com/oddurs/nun/blob/main/cairn/items/0027-symbol-palette.md) Symbol palette <sup>feature · p1</sup>
 - [x] [`0028`](https://github.com/oddurs/nun/blob/main/cairn/items/0028-project-search.md) Project search <sup>feature · p0</sup>
+- [x] [`0029`](https://github.com/oddurs/nun/blob/main/cairn/items/0029-find-and-replace-with-preview.md) Find and replace with preview <sup>feature · p1</sup>
 
 ## m4 — Language servers
 
