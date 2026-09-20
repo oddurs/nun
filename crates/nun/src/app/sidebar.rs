@@ -184,6 +184,13 @@ impl App {
             return;
         };
 
+        // The edge is the sidebar's, whichever view is in it.
+        let edge = Rect { x: area.right().saturating_sub(1), width: 1, ..area };
+        hits.push(super::cells(edge), Target::SidebarEdge, false);
+        if self.searching() {
+            return;
+        }
+
         hits.push(super::cells(tree), Target::TreeEmpty, false);
         hits.push(super::cells(TreeView::header_area(tree)), Target::TreeHeader, false);
         for button in TreeButton::ALL {
@@ -198,17 +205,21 @@ impl App {
             let line = Rect { y: rows.y + offset, height: 1, ..rows };
             hits.push(super::cells(line), Target::TreeRow(index), true);
         }
-        let edge = Rect { x: area.right().saturating_sub(1), width: 1, ..area };
-        hits.push(super::cells(edge), Target::SidebarEdge, false);
     }
 
     /// Show the sidebar and give it the keyboard; if it has the keyboard
     /// already, hide it.
     pub(super) fn toggle_sidebar(&mut self) -> Outcome {
-        let Some(sidebar) = self.sidebar.as_mut() else {
+        if self.sidebar.is_none() {
             self.message = Some("No folder is open. Start nun on a folder: `nun .`".into());
             return Outcome::Redraw;
-        };
+        }
+        // Showing the search panel, this key means the tree rather than no
+        // sidebar at all: the file tree is what it is named after.
+        if self.searching() && self.sidebar.as_ref().is_some_and(|sidebar| sidebar.visible) {
+            return self.show_file_tree();
+        }
+        let Some(sidebar) = self.sidebar.as_mut() else { return Outcome::Continue };
         if sidebar.visible && self.focus == Focus::Sidebar {
             sidebar.visible = false;
             self.focus = Focus::Editor;
@@ -363,6 +374,7 @@ impl App {
             TreeButton::NewFile => self.run(Command::NewFile),
             TreeButton::NewDir => self.run(Command::NewFolder),
             TreeButton::ToggleIgnored => self.run(Command::ToggleIgnored),
+            TreeButton::Search => self.run(Command::SearchProject),
         }
     }
 

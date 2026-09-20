@@ -42,7 +42,7 @@ fn the_tree_draws_a_header_and_indented_rows() {
 
     assert_eq!(
         harness.to_text(),
-        " NUN              + ▪ ○\n\
+        " NUN            + ▪ ○ ⌕\n\
          \u{20}▾ src\n\
          \u{20}  ▸ main.rs\n\
          \u{20}    日本語.rs\n\
@@ -84,8 +84,10 @@ fn geometry_matches_what_is_drawn() {
 
     let new_file = TreeView::button_area(area, TreeButton::NewFile).unwrap();
     let toggle = TreeView::button_area(area, TreeButton::ToggleIgnored).unwrap();
+    let search = TreeView::button_area(area, TreeButton::Search).unwrap();
     assert_eq!(new_file.y, 0);
-    assert!(toggle.x > new_file.x, "the toggle is rightmost");
+    assert!(toggle.x > new_file.x);
+    assert!(search.x > toggle.x, "the magnifier is rightmost");
     assert_eq!(
         TreeView::button_area(Rect::new(0, 0, 4, 6), TreeButton::NewFile),
         None,

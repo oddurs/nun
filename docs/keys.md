@@ -41,3 +41,4 @@ This file is generated from the source by `nun keys`. Do not edit it by hand.
 | Next pane | `pane.next` | `Ctrl+K O` | `Ctrl+K O` |
 | Go to file | `palette.files` | `Ctrl+P`, `Cmd+P` | `Ctrl+P` |
 | Run a command | `palette.commands` | `Ctrl+Shift+P`, `Cmd+Shift+P`, `F1` | `F1` |
+| Search the project | `search.project` | `Ctrl+Shift+F`, `Cmd+Shift+F`, `Ctrl+K F` | `Ctrl+K F` |
