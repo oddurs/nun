@@ -2,10 +2,9 @@
 id: 28
 title: Project search
 type: feature
-status: doing
+status: done
 milestone: m3
 assignee: Oddur Sigurdsson
-claimed: 2026-09-19
 created: 2026-09-10
 updated: 2026-09-19
 priority: p0
@@ -57,3 +56,17 @@ The generation protocol cost an afternoon's worth of confusion in ten minutes. T
 The four toggles are one cell each and carry lit-versus-unlit in colour alone, because four marks that each changed shape would make a row of four read as eight things. That leaves them needing an explanation, and the summary line was already there to give transient status: while the pointer is over a toggle it says what that toggle does instead of how the search went.
 
 Ctrl+Shift+F only reaches a terminal with the Kitty keyboard protocol to tell it from Ctrl+F, so the binding everywhere else is Ctrl+K F.
+
+## 2026-09-19
+
+architecture-guard on the finished diff found four bugs, all fixed with a test that fails without its own fix.
+
+Closing the panel left a walk queued behind it: the debounce is armed before the search starts, so cancelling without disarming still began a full walk a few milliseconds later, and every batch it found asked for a redraw of a panel that had gone.
+
+A hit whose file had gone moved the caret in the file you were editing. Opening reports failure in the status line rather than throwing and leaves the current document focused, so placing the caret afterwards placed it in someone else's file. A missing file is harmless, since nun treats it as a new one, but a missing parent directory is an error — which is what a checkout, a build clean, or deleting the folder from the tree while results are up will hand you.
+
+Reopening after closing mid-search showed an empty list under a query with no summary at all, which reads exactly like nothing matched; and if the walk had partly finished it showed part of an answer as though it were all of one. Half a search is now discarded when the panel closes and reopening asks again. The guard offered a 'Stopped' summary as an alternative, but that keeps the worse half of the problem: partial results sitting under a summary that does not admit they are partial.
+
+The fourth was the valuable one, and it was measured rather than described. A frame cost what the repository costs rather than what the screen costs: drawing built a row for every result, 2.39 ms a frame at 205,000 of them, and the row list was rebuilt once per batch, making a search quadratic in what it finds. Drawing now builds only the window; the widget grew a widest_line builder so its gutter stays put as that window moves, since a window-derived gutter would jitter when a four-digit line number scrolled into view; and hits extend the list rather than rebuilding it, falling back to a rebuild only when one lands in a group that is not the newest, which the walk makes rare because it reports a file at a time. A frame is 19.7 microseconds and taking in 200,000 hits is 63 ms, from 2.39 ms and 281 ms.
+
+Verified in a terminal: the broad query 'e' finds 22,865 results in 152 files across nun's own repo, streaming, without stalling.
