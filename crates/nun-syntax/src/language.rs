@@ -169,14 +169,22 @@ const RUST_INJECTIONS: &str = r#"
 /// block gives the methods something to nest under, and gives a type's
 /// inherent and trait implementations the separate headings they have in the
 /// file.
-/// One pattern, not several: two patterns matching the same `impl` would tag
-/// it twice under different names, and a definition that encloses itself is
-/// read as nesting inside itself. Any self type at all, so an implementation
-/// for a reference, a slice, a tuple, a path or a `dyn` still heads its own
-/// methods — `impl Trait for &str` is exactly as much an implementation as
-/// `impl Point` is.
+/// Two patterns that cannot both match, which is the only safe way to have
+/// two: `!trait` and `trait:` are exclusive, so no `impl` is ever tagged
+/// twice. Tagging one twice would give a definition two headings sharing a
+/// range, and the second would read as nesting inside the first — with
+/// everything really inside the block pushed a level deeper again.
+///
+/// Any self type at all, so an implementation for a reference, a slice, a
+/// tuple, a path or a `dyn` heads its own methods: `impl Trait for &str` is
+/// exactly as much an implementation as `impl Point`.
+///
+/// The trait comes into the heading because otherwise a type's inherent
+/// implementation and its three trait implementations are four rows all
+/// reading the same name, and picking between them is guesswork.
 const RUST_SYMBOLS: &str = r"
-(impl_item type: (_) @name) @definition.impl
+((impl_item !trait type: (_) @name) @definition.impl)
+((impl_item trait: (_) @context type: (_) @name) @definition.impl)
 ";
 
 /// Build one language, or leave it out.

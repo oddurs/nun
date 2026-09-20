@@ -306,6 +306,11 @@ impl App {
         }]
     }
 
+    /// Whether the palette is open and showing this file's outline.
+    pub(super) fn palette_wants_symbols(&self) -> bool {
+        self.finder.as_ref().is_some_and(|palette| Mode::of(&palette.query).0 == Mode::Symbols)
+    }
+
     /// The outline of the file being edited, filtered by `query`.
     ///
     /// Filtering keeps the ancestors of a match, because a method's name means
@@ -316,6 +321,11 @@ impl App {
         if symbols.is_empty() {
             return vec![note(if self.symbols.waiting {
                 "Reading the file…"
+            } else if App::syntax_off(self.doc()) {
+                // Knowing the language and having given up on it are opposite
+                // things, and saying the first for the second sends someone
+                // looking for a missing grammar they already have.
+                "This file's grammar gave up, so there is no outline of it"
             } else if App::language_of(self.doc()).is_some() {
                 "Nothing in this file declares anything nun can see"
             } else {

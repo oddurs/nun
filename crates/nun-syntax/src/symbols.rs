@@ -55,6 +55,7 @@ pub(crate) fn of_tree(
         // Without both there is nothing to list or nothing to call it.
         let mut whole: Option<(usize, usize)> = None;
         let mut name: Option<(usize, usize)> = None;
+        let mut context: Option<(usize, usize)> = None;
         let mut kind: Option<&'static str> = None;
         for capture in matched.captures() {
             let capture_name = names[capture.index as usize];
@@ -64,6 +65,10 @@ pub(crate) fn of_tree(
                 kind = Some(rest);
             } else if capture_name == "name" {
                 name = Some((range.start, range.end));
+            } else if capture_name == "context" {
+                // What the definition is of, where its name alone would not
+                // tell two of them apart — the trait of an implementation.
+                context = Some((range.start, range.end));
             }
         }
         let (Some(whole), Some(name), Some(kind)) = (whole, name, kind) else { continue };
@@ -72,7 +77,11 @@ pub(crate) fn of_tree(
             let start = start.min(end);
             text.byte_slice(start..end).to_string()
         };
-        found.push(Found { whole, at: name.0, kind, name: text_of(name) });
+        let label = match context {
+            Some(context) => format!("{} for {}", text_of(context), text_of(name)),
+            None => text_of(name),
+        };
+        found.push(Found { whole, at: name.0, kind, name: label });
     }
 
     // In the order they appear, so nesting can be read off a stack.
@@ -202,6 +211,41 @@ mod tests {
                 outline("rust", &format!("impl Trait for {self_type} {{\n    fn m() {{}}\n}}\n"));
             let method = found.iter().find(|row| row.ends_with(" m")).expect("the method");
             assert!(method.starts_with('1'), "for `{self_type}`: {found:?}");
+        }
+    }
+
+    #[test]
+    fn a_trait_implementation_is_told_apart_from_the_inherent_one() {
+        // A type with an inherent impl and three trait impls would otherwise
+        // be four rows all reading the same name, and picking between them is
+        // guesswork.
+        let found = outline(
+            "rust",
+            "impl Point {\n    fn a() {}\n}\n\nimpl Display for Point {\n    fn b() {}\n}\n",
+        );
+        let headings: Vec<&String> = found.iter().filter(|row| row.contains(":impl ")).collect();
+        assert_eq!(headings.len(), 2, "one heading each, not one or four: {found:?}");
+        assert!(headings.iter().any(|row| row.ends_with(" Point")), "{found:?}");
+        assert!(
+            headings.iter().any(|row| row.ends_with("Display for Point")),
+            "the trait is in the heading: {found:?}"
+        );
+    }
+
+    #[test]
+    fn an_implementation_is_never_tagged_twice() {
+        // Two headings sharing a range read as one nesting inside the other,
+        // and everything really inside the block is pushed a level deeper
+        // again. The two patterns are exclusive so that cannot happen.
+        for header in ["impl Point", "impl<T> Holder<T>", "impl Display for Point"] {
+            let found = outline("rust", &format!("{header} {{\n    fn m() {{}}\n}}\n"));
+            assert_eq!(
+                found.iter().filter(|row| row.contains(":impl ")).count(),
+                1,
+                "for `{header}`: {found:?}"
+            );
+            let method = found.iter().find(|row| row.ends_with(" m")).expect("the method");
+            assert!(method.starts_with('1'), "one level in, not two: {found:?}");
         }
     }
 

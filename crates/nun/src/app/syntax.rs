@@ -39,6 +39,9 @@ pub(super) struct Highlighting {
     dirty: bool,
     /// Whether the worker is following this document at all.
     open: bool,
+    /// Whether its grammar gave up, as opposed to there never having been
+    /// one. The two look the same from outside and mean opposite things.
+    off: bool,
     /// What language it was recognised as, remembered from when it was opened.
     ///
     /// Kept here rather than worked out from the path on demand: the status
@@ -267,7 +270,13 @@ impl App {
             }
             Reply::Disabled { id, language, why } => {
                 if let Some(document) = self.docs.iter_mut().find(|document| document.id == id) {
-                    document.syntax = Highlighting::default();
+                    // The language is kept: the file is still Rust, and the
+                    // status line saying so is not a claim about colours.
+                    document.syntax = Highlighting {
+                        language: Some(language),
+                        off: true,
+                        ..Highlighting::default()
+                    };
                 }
                 // Nothing will ask about this document again, and the worker is
                 // still holding it and a clone of its text.
@@ -286,8 +295,12 @@ impl App {
                 self.symbols.labels = symbols.iter().map(|symbol| symbol.name.clone()).collect();
                 self.symbols.found = symbols;
                 self.symbols.waiting = false;
-                // The rows on screen were built without it.
-                self.refresh_palette();
+                // Only if the palette is still showing an outline. Refreshing
+                // it in Files mode would start a project search for an answer
+                // that has nothing to do with one.
+                if self.palette_wants_symbols() {
+                    self.refresh_palette();
+                }
                 Outcome::Redraw
             }
             Reply::Echo(_) => Outcome::Continue,
@@ -297,6 +310,11 @@ impl App {
     /// The runs to draw for a document.
     pub(super) fn spans_of(document: &Document) -> &[Span] {
         &document.syntax.spans
+    }
+
+    /// Whether a document's grammar gave up on it.
+    pub(super) const fn syntax_off(document: &Document) -> bool {
+        document.syntax.off
     }
 
     /// Which language a document is in, for the status line.
@@ -609,6 +627,48 @@ impl Square {
             labels.iter().all(|label| !label.contains("Reading")),
             "and does not claim to be reading: {labels:?}"
         );
+    }
+
+    #[test]
+    fn a_grammar_that_gave_up_is_not_a_language_nun_has_never_heard_of() {
+        // The two look the same from outside and mean opposite things: one
+        // sends you looking for a grammar you already have.
+        let dir = tempfile::tempdir().unwrap();
+        let mut t = Tester::new(&dir, "main.rs", "fn main() {}\n");
+        let id = t.app.doc().id;
+        t.app.handle(Event::Syntax(Reply::Disabled {
+            id,
+            language: "rust",
+            why: "took too long".into(),
+        }));
+
+        assert_eq!(App::language_of(t.app.doc()), Some("rust"), "the file is still Rust");
+        assert!(App::syntax_off(t.app.doc()), "with its grammar given up on");
+
+        t.app.open_palette("@");
+        let labels: Vec<String> =
+            t.app.finder.as_ref().unwrap().rows.iter().map(|row| row.entry.label.clone()).collect();
+        assert!(
+            labels.iter().any(|label| label.contains("gave up")),
+            "it says what happened: {labels:?}"
+        );
+    }
+
+    #[test]
+    fn an_outline_arriving_late_does_not_start_a_file_search() {
+        // The palette may have moved on. Refreshing it in Files mode would
+        // send a project search for an answer that has nothing to do with one.
+        let dir = tempfile::tempdir().unwrap();
+        let mut t = Tester::new(&dir, "main.rs", "fn main() {}\n");
+        t.app.open_palette("@");
+        t.settle();
+
+        t.app.open_palette("");
+        let before = t.app.searches;
+        let (id, version) = (t.app.doc().id, t.app.symbols.version);
+        t.app.symbols.waiting = true;
+        t.app.handle(Event::Syntax(Reply::Symbols { id, version, symbols: Vec::new() }));
+        assert_eq!(t.app.searches, before, "no search was asked for");
     }
 
     #[test]
