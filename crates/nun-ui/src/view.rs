@@ -20,19 +20,28 @@ pub struct EditorView<'a> {
     palette: &'a Palette,
     scroll: usize,
     marker: Option<usize>,
+    highlights: &'a [nun_syntax::Span],
 }
 
 impl<'a> EditorView<'a> {
     /// A view of `buffer`, scrolled so `scroll` is the top visible line.
     #[must_use]
     pub const fn new(buffer: &'a Buffer, palette: &'a Palette) -> Self {
-        Self { buffer, palette, scroll: 0, marker: None }
+        Self { buffer, palette, scroll: 0, marker: None, highlights: &[] }
     }
 
     /// Set the first visible line.
     #[must_use]
     pub const fn scrolled_to(mut self, line: usize) -> Self {
         self.scroll = line;
+        self
+    }
+
+    /// Colour the text with these highlight runs, which must be in order and
+    /// must not overlap — which is what [`nun_syntax`] hands back.
+    #[must_use]
+    pub const fn highlighted(mut self, spans: &'a [nun_syntax::Span]) -> Self {
+        self.highlights = spans;
         self
     }
 
@@ -205,6 +214,12 @@ impl EditorView<'_> {
         let selections = self.buffer.selections();
         let text = self.buffer.line_text(line);
 
+        // The runs are in order, so drawing walks them rather than searching:
+        // find the first one that reaches this line and step along with the
+        // clusters.
+        let line_start = u32::try_from(self.buffer.line_start(line)).unwrap_or(u32::MAX);
+        let mut run = self.highlights.partition_point(|span| span.end <= line_start);
+
         let mut x = area.left() + gutter;
         let mut char_index = self.buffer.line_start(line);
 
@@ -220,6 +235,19 @@ impl EditorView<'_> {
                 .any(|range| char_index >= range.from() && char_index < range.to());
 
             let mut style = self.palette.text();
+
+            // Syntax first, so the caret line, the selection and the caret
+            // itself all wash over it rather than under it.
+            let at = u32::try_from(char_index).unwrap_or(u32::MAX);
+            while self.highlights.get(run).is_some_and(|span| span.end <= at) {
+                run += 1;
+            }
+            if let Some(span) = self.highlights.get(run)
+                && span.start <= at
+            {
+                style = style.patch(self.palette.ink(crate::syntax::role_of(span.capture)));
+            }
+
             if line == caret_line {
                 style = style.patch(self.palette.cursor_line());
             }

@@ -14,7 +14,7 @@ mod history;
 mod selection;
 mod text;
 
-pub use buffer::{Buffer, SaveError};
+pub use buffer::{Buffer, Change, Changed, SaveError};
 pub use edit::{Assoc, Edit};
 pub use history::History;
 pub use selection::{Range, Selections};

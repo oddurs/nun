@@ -182,11 +182,21 @@ impl App {
                     let doc = self.doc_mut();
                     doc.buffer = buffer;
                     doc.scroll = 0;
+                    let id = doc.id;
+                    // The scratch buffer nun starts with has no name, and so no
+                    // language; the file that has just replaced it does.
+                    self.syntax_open(id);
                 } else {
                     let id = self.next_doc;
                     self.next_doc += 1;
-                    self.docs.push(Document { id, buffer, scroll: 0 });
+                    self.docs.push(Document {
+                        id,
+                        buffer,
+                        scroll: 0,
+                        syntax: super::syntax::Highlighting::default(),
+                    });
                     self.panes.open(id);
+                    self.syntax_open(id);
                 }
                 self.end_drag();
                 if report.lossy {
@@ -223,8 +233,11 @@ impl App {
 
     /// Drop documents no pane holds any more.
     fn forget_closed_docs(&mut self) {
+        let before: Vec<super::panes::DocId> =
+            self.docs.iter().map(|document| document.id).collect();
         let open = self.panes.open_docs();
         self.docs.retain(|doc| open.contains(&doc.id));
+        self.forget_from_parser(&before);
     }
 
     /// Show tab `index` of `pane`.
@@ -288,7 +301,12 @@ impl App {
             let id = self.next_doc;
             self.next_doc += 1;
             let buffer = self.empty_buffer();
-            self.docs.push(Document { id, buffer, scroll: 0 });
+            self.docs.push(Document {
+                id,
+                buffer,
+                scroll: 0,
+                syntax: super::syntax::Highlighting::default(),
+            });
             let state = self.panes.get_mut(pane).expect("it is still there");
             state.tabs.push(id);
             state.active = 0;
@@ -297,6 +315,15 @@ impl App {
         self.end_drag();
         self.follow_tab();
         Outcome::Redraw
+    }
+
+    /// Tell the parser about documents that have gone.
+    fn forget_from_parser(&mut self, before: &[super::panes::DocId]) {
+        for id in before {
+            if !self.docs.iter().any(|document| document.id == *id) {
+                self.syntax_close(*id);
+            }
+        }
     }
 
     /// The path of every open file, pane by pane.
@@ -321,7 +348,12 @@ impl App {
     pub(super) fn split_pane(&mut self, dir: Dir) -> Outcome {
         let new = self.next_doc;
         self.next_doc += 1;
-        self.docs.push(Document { id: new, buffer: self.empty_buffer(), scroll: 0 });
+        self.docs.push(Document {
+            id: new,
+            buffer: self.empty_buffer(),
+            scroll: 0,
+            syntax: super::syntax::Highlighting::default(),
+        });
         self.panes.split(self.panes.focus(), dir, false, vec![new]);
         self.focus = Focus::Editor;
         self.follow_tab();
@@ -475,7 +507,12 @@ impl App {
                     let id = self.next_doc;
                     self.next_doc += 1;
                     let buffer = self.empty_buffer();
-                    self.docs.push(Document { id, buffer, scroll: 0 });
+                    self.docs.push(Document {
+                        id,
+                        buffer,
+                        scroll: 0,
+                        syntax: super::syntax::Highlighting::default(),
+                    });
                     let state = self.panes.get_mut(drag.pane).expect("it is there");
                     state.tabs.push(id);
                     state.active = 0;
@@ -525,6 +562,7 @@ impl App {
                 let focused = pane == self.panes.focus();
                 nun_ui::EditorView::new(&doc.buffer, &self.palette)
                     .scrolled_to(doc.scroll)
+                    .highlighted(App::spans_of(doc))
                     .with_drop_marker(focused.then(|| self.drop_marker()).flatten())
                     .render(text, cells);
             }

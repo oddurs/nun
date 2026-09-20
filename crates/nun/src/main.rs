@@ -100,6 +100,13 @@ fn edit(path: &Path) -> io::Result<()> {
         }),
     );
 
+    // Parsing runs on its own thread and reports back through the same
+    // channel as everything else.
+    let sender = events.sender();
+    app.attach_syntax(nun_syntax::Worker::new(Box::new(move |reply| {
+        let _ = sender.send(nun_ui::Event::Syntax(reply));
+    })));
+
     let sender = events.sender();
     match nun_workspace::Watcher::new(Box::new(move |change| {
         let _ = sender.send(nun_ui::Event::Files { dir: change.dir, error: change.watch_error });

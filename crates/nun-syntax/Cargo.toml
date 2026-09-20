@@ -1,0 +1,24 @@
+[package]
+name = "nun-syntax"
+description = "Tree-sitter parsing and highlight spans for nun"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+ropey = { version = "1.6.1", default-features = false, features = ["simd"] }
+tree-sitter = "0.27.0"
+tree-sitter-css = "0.25.0"
+tree-sitter-html = "0.23.2"
+tree-sitter-javascript = "0.25.0"
+tree-sitter-json = "0.24.8"
+tree-sitter-python = "0.25.0"
+tree-sitter-rust = "0.24.2"
+tree-sitter-sequel = "0.3.11"
+tree-sitter-toml-ng = "0.7.0"

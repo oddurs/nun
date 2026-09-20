@@ -63,6 +63,35 @@ impl DiskStamp {
 /// Text is held with `\n` line endings regardless of what the file uses, so
 /// every index calculation has one shape. The original ending and any
 /// byte-order mark are reapplied on save.
+/// What has happened to the text since somebody last asked.
+///
+/// The three cases are genuinely different to whoever is following along: one
+/// edit can be replayed, several cannot be described as one, and nothing at
+/// all means there is no work to do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Changed {
+    /// The text has not changed.
+    #[default]
+    Nothing,
+    /// Exactly one edit, which can be followed.
+    One(Change),
+    /// Several edits, an undo, or a redo: start again.
+    Several,
+}
+
+/// One change to the text, as offsets a parser can follow.
+///
+/// Char indices, like everything else here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Change {
+    /// Where the change starts.
+    pub start: usize,
+    /// Where it ended before.
+    pub old_end: usize,
+    /// Where it ends now.
+    pub new_end: usize,
+}
+
 #[derive(Debug)]
 pub struct Buffer {
     rope: Rope,
@@ -75,6 +104,8 @@ pub struct Buffer {
     saved_at: usize,
     stamp: Option<DiskStamp>,
     tab_width: usize,
+    /// What has happened since it was last taken.
+    change: Changed,
 }
 
 impl Default for Buffer {
@@ -98,6 +129,7 @@ impl Buffer {
             saved_at: 0,
             stamp: None,
             tab_width: DEFAULT_TAB_WIDTH,
+            change: Changed::Nothing,
         }
     }
 
@@ -210,6 +242,23 @@ impl Buffer {
     /// Set the columns a tab advances to.
     pub const fn set_tab_width(&mut self, width: usize) {
         self.tab_width = width;
+    }
+
+    /// The text itself, for anything that needs to read all of it.
+    ///
+    /// Cloning a rope is cheap — the two share their structure — which is how
+    /// a snapshot reaches the parser without copying the document.
+    #[must_use]
+    pub const fn rope(&self) -> &Rope {
+        &self.rope
+    }
+
+    /// What has happened to the text since this was last asked.
+    ///
+    /// A caller that needs to follow along — the parser does — replays one
+    /// edit and starts again for anything else.
+    pub fn take_change(&mut self) -> Changed {
+        std::mem::take(&mut self.change)
     }
 
     /// The current selections.
@@ -325,6 +374,20 @@ impl Buffer {
             edits.windows(2).all(|w| w[1].end <= w[0].start),
             "edits in one revision must be disjoint"
         );
+
+        // One edit can be followed through a reparse; anything else means the
+        // follower has to start again, and saying so is cheaper than being
+        // subtly wrong about where the text moved.
+        let single = if edits.len() == 1 {
+            let edit = &edits[0];
+            Changed::One(Change { start: edit.start, old_end: edit.end, new_end: edit.end_after() })
+        } else {
+            Changed::Several
+        };
+        self.change = match (self.change, single) {
+            (Changed::Nothing, change) => change,
+            _ => Changed::Several,
+        };
 
         let before = self.selections.clone();
 
@@ -478,6 +541,7 @@ impl Buffer {
     /// Reverse the most recent revision. Returns false when there is nothing to undo.
     pub fn undo(&mut self) -> bool {
         let Some(revision) = self.history.step_back() else { return false };
+        self.change = Changed::Several;
         for edit in &revision.inverse {
             self.apply_to_rope(edit);
         }
@@ -488,6 +552,7 @@ impl Buffer {
     /// Replay the next revision. Returns false when there is nothing to redo.
     pub fn redo(&mut self) -> bool {
         let Some(revision) = self.history.step_forward() else { return false };
+        self.change = Changed::Several;
         for edit in &revision.forward {
             self.apply_to_rope(edit);
         }

@@ -37,18 +37,21 @@
 
 ## m3 — Understanding the code
 
-`··········` 0% · 0 of 8 done · due 2026-10-29
+`###·······` 25% · 2 of 8 done · due 2026-10-29
 
 ### backlog
 
-- [ ] [`0023`](https://github.com/oddurs/nun/blob/main/cairn/items/0023-tree-sitter-integration-and-incremental-reparse.md) Tree-sitter integration and incremental reparse <sup>feature · p0</sup>
-- [ ] [`0024`](https://github.com/oddurs/nun/blob/main/cairn/items/0024-map-highlight-captures-to-theme-roles.md) Map highlight captures to theme roles <sup>feature · p0</sup>
 - [ ] [`0025`](https://github.com/oddurs/nun/blob/main/cairn/items/0025-folding.md) Folding <sup>feature · p1</sup>
 - [ ] [`0026`](https://github.com/oddurs/nun/blob/main/cairn/items/0026-structural-selection.md) Structural selection <sup>feature · p2</sup>
 - [ ] [`0027`](https://github.com/oddurs/nun/blob/main/cairn/items/0027-symbol-palette.md) Symbol palette <sup>feature · p1</sup>
 - [ ] [`0028`](https://github.com/oddurs/nun/blob/main/cairn/items/0028-project-search.md) Project search <sup>feature · p0</sup>
 - [ ] [`0029`](https://github.com/oddurs/nun/blob/main/cairn/items/0029-find-and-replace-with-preview.md) Find and replace with preview <sup>feature · p1</sup>
 - [ ] [`0030`](https://github.com/oddurs/nun/blob/main/cairn/items/0030-multi-cursor-and-column-selection.md) Multi-cursor and column selection <sup>feature · p1</sup>
+
+### done
+
+- [x] [`0023`](https://github.com/oddurs/nun/blob/main/cairn/items/0023-tree-sitter-integration-and-incremental-reparse.md) Tree-sitter integration and incremental reparse <sup>feature · p0</sup>
+- [x] [`0024`](https://github.com/oddurs/nun/blob/main/cairn/items/0024-map-highlight-captures-to-theme-roles.md) Map highlight captures to theme roles <sup>feature · p0</sup>
 
 ## m4 — Language servers
 

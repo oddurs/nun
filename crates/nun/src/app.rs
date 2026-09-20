@@ -28,6 +28,7 @@ mod panes;
 mod pointer;
 mod prompt;
 mod sidebar;
+mod syntax;
 mod tabs;
 
 /// What the editor wants the caller to do next.
@@ -150,6 +151,8 @@ pub struct Document {
     id: panes::DocId,
     buffer: Buffer,
     scroll: usize,
+    /// Its highlight runs, and what the parser has been told.
+    syntax: syntax::Highlighting,
 }
 
 /// The running editor.
@@ -207,6 +210,10 @@ pub struct App {
     /// How many palette searches have been asked for, ever. Monotonic, so an
     /// answer can always be matched to the keystroke that asked.
     searches: u64,
+    /// The parser, once it has somewhere to post its answers.
+    syntax: Option<nun_syntax::Worker>,
+    /// When the parser is next due to be told what changed.
+    syntax_deadline: Option<Instant>,
 }
 
 impl App {
@@ -234,7 +241,12 @@ impl App {
     pub fn new(buffer: Buffer, palette: Palette, keymap: Keymap<Command>) -> Self {
         let viewport = Rect::new(0, 0, 80, 24);
         let mut app = Self {
-            docs: vec![Document { id: 0, buffer, scroll: 0 }],
+            docs: vec![Document {
+                id: 0,
+                buffer,
+                scroll: 0,
+                syntax: syntax::Highlighting::default(),
+            }],
             panes: panes::Panes::single(vec![0]),
             next_doc: 1,
             palette,
@@ -262,6 +274,8 @@ impl App {
             frecency: palette::Frecency::new(),
             file_count: None,
             searches: 0,
+            syntax: None,
+            syntax_deadline: None,
         };
         app.relayout();
         app
@@ -448,11 +462,15 @@ impl App {
     /// When the editor next needs waking with no input, if ever.
     pub fn deadline(&self) -> Option<Instant> {
         let autoscroll = self.autoscroll.map(|scroll| scroll.next);
-        [self.hover.deadline(), self.chords.deadline(), autoscroll].into_iter().flatten().min()
+        [self.hover.deadline(), self.chords.deadline(), autoscroll, self.syntax_deadline()]
+            .into_iter()
+            .flatten()
+            .min()
     }
 
     /// A deadline passed with no input.
     pub fn tick(&mut self, now: Instant) -> Outcome {
+        let before = (self.doc().scroll, self.doc().id);
         let chord = match self.chords.expire(&self.keymap, now) {
             Some(Resolved::Unbound(keys)) => {
                 self.message = Some(format!("{} is not bound to anything", Sequence(&keys)));
@@ -461,6 +479,14 @@ impl App {
             Some(resolved) => self.resolved(resolved, None),
             None => Outcome::Continue,
         };
+        // A chord that ran a command got here without going through `handle`,
+        // so the parser has not been told about anything it did.
+        if chord == Outcome::Redraw {
+            self.syntax_changed(now);
+            if before != (self.doc().scroll, self.doc().id) {
+                self.syntax_scrolled(now);
+            }
+        }
 
         // Nothing reacts to a dwell yet; the first hover card is milestone 4.
         // Taking it keeps the deadline from firing again.
@@ -469,7 +495,7 @@ impl App {
             None => Outcome::Continue,
         };
 
-        let outcome = chord.and(dwell).and(self.autoscroll_tick(now));
+        let outcome = chord.and(dwell).and(self.autoscroll_tick(now)).and(self.syntax_tick(now));
         if outcome == Outcome::Redraw {
             self.relayout();
         }
@@ -489,7 +515,17 @@ impl App {
 
     /// Handle one event that arrived at `now`.
     pub fn handle_at(&mut self, event: Event, now: Instant) -> Outcome {
+        let before = (self.doc().buffer.len_chars(), self.doc().scroll, self.doc().id);
         let outcome = self.dispatch(event, now);
+        // Anything that changed the text or moved the view changes what the
+        // parser should be looking at.
+        let after = (self.doc().buffer.len_chars(), self.doc().scroll, self.doc().id);
+        if outcome == Outcome::Redraw {
+            self.syntax_changed(now);
+            if before.1 != after.1 || before.2 != after.2 {
+                self.syntax_scrolled(now);
+            }
+        }
         if outcome == Outcome::Redraw {
             // The gutter widens as lines are added, and later milestones lay out
             // far more than this; anything that redraws may have moved things.
@@ -531,6 +567,7 @@ impl App {
             }
             Event::Files { dir, error } => self.files_changed(&dir, error),
             Event::Workspace(done) => self.job_done(done),
+            Event::Syntax(reply) => self.syntax_reply(reply),
             Event::Focus(true) => Outcome::Continue,
             // The pointer may be anywhere by the time focus comes back.
             Event::Focus(false) => {
@@ -967,8 +1004,10 @@ impl App {
         let selections = self.doc().buffer.selections().len();
         let carets = if selections > 1 { format!("{selections} carets  ") } else { String::new() };
 
+        let language =
+            Self::language_of(self.doc()).map_or_else(String::new, |name| format!("{name}  "));
         let right = format!(
-            "{carets}Ln {}, Col {}  {}",
+            "{carets}{language}Ln {}, Col {}  {}",
             line + 1,
             self.doc().buffer.column_of(caret) + 1,
             match self.doc().buffer.line_ending() {
