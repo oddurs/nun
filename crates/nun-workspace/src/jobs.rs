@@ -14,6 +14,7 @@ use std::sync::mpsc::{self, Sender};
 use std::thread;
 
 use crate::ops::{Change, FsHistory};
+use crate::replace::{Replacer, Report};
 use crate::search::{self, Match};
 use crate::tree::{Entry, list_dir};
 
@@ -47,6 +48,25 @@ pub enum Job {
     },
     /// Move an entry to the trash.
     Delete(PathBuf),
+    /// Rewrite the chosen lines of the files a search found.
+    ///
+    /// Filesystem work, so it belongs here beside create, rename and delete
+    /// rather than on the search thread — and the undo history it records is
+    /// the same one every other operation records into.
+    Replace {
+        /// The root that was searched, which `chosen` is relative to.
+        root: PathBuf,
+        /// The query the hits came from. The replace matches with exactly
+        /// what the search matched with.
+        options: crate::grep::Options,
+        /// What to put in place of each match.
+        replacement: String,
+        /// Which lines to change, per file, relative to the root. Only these.
+        chosen: Vec<(PathBuf, Vec<u32>)>,
+        /// When the search that found them *started*. A file written to since
+        /// is left alone, because what was previewed is not what is there.
+        searched_at: std::time::SystemTime,
+    },
     /// Undo the last operation.
     Undo,
     /// Redo the last undone operation.
@@ -95,6 +115,16 @@ pub enum Done {
         generation: u64,
         /// The matches, best first, with the path each one is.
         results: Vec<(PathBuf, Match)>,
+    },
+    /// A replace ran.
+    Replaced {
+        /// What happened to each file, with the paths relative to the root,
+        /// as the panel showed them.
+        report: Report,
+        /// The undoable step it became, to treat exactly like a
+        /// [`Done::Changed`]. `None` when no file was written and so there is
+        /// nothing to take back.
+        change: Option<Change>,
     },
     /// The marker from [`Job::Echo`], and with it the news that everything
     /// asked for before it has been done.
@@ -198,6 +228,14 @@ impl Worker {
                 return Done::Found { query, generation, results };
             }
             Job::Echo(marker) => return Done::Echo(marker),
+            Job::Replace { root, options, replacement, chosen, searched_at } => {
+                let replacer = match Replacer::new(&options, &replacement) {
+                    Ok(replacer) => replacer,
+                    Err(error) => return Done::Failed(error),
+                };
+                let (report, change) = self.history.replace(&root, &replacer, &chosen, searched_at);
+                return Done::Replaced { report, change };
+            }
             Job::CreateFile(path) => self.history.create_file(path),
             Job::CreateDir(path) => self.history.create_dir(path),
             Job::Rename { from, name } => self.history.rename(from, &name),
@@ -364,6 +402,111 @@ mod tests {
                 }
                 other => panic!("{other:?}"),
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod replace_tests {
+    use super::tests_support::*;
+    use super::*;
+    use crate::grep::{Case, Found, Grep, Hit, Options};
+    use std::collections::BTreeMap;
+    use std::time::{Duration, SystemTime};
+
+    fn options(query: &str) -> Options {
+        Options { query: query.into(), case: Case::Sensitive, ..Options::default() }
+    }
+
+    /// Search `root` and hand back every hit, the way the panel would hold
+    /// them — so a replace in these tests is driven by the same line numbers
+    /// the person clicked, not by numbers a test made up.
+    fn hits(root: &Path, options: Options) -> Vec<Hit> {
+        let (sender, receiver) = mpsc::channel();
+        let grep = Grep::new(Box::new(move |found| {
+            let _ = sender.send(found);
+        }));
+        grep.search(root, options, 1);
+        let mut all = Vec::new();
+        loop {
+            match receiver.recv_timeout(Duration::from_secs(30)).expect("the worker answered") {
+                Found::Hits { hits, .. } => all.extend(hits),
+                Found::Done { .. } => break,
+                other @ Found::Failed { .. } => panic!("{other:?}"),
+            }
+        }
+        all.sort_by(|a, b| (&a.path, a.line).cmp(&(&b.path, b.line)));
+        all
+    }
+
+    /// Every hit, grouped into the shape [`Job::Replace`] wants.
+    fn chosen(hits: &[Hit]) -> Vec<(PathBuf, Vec<u32>)> {
+        let mut by_file: BTreeMap<PathBuf, Vec<u32>> = BTreeMap::new();
+        for hit in hits {
+            by_file.entry(hit.path.clone()).or_default().push(hit.line);
+        }
+        by_file.into_iter().collect()
+    }
+
+    #[test]
+    fn what_the_search_found_is_what_the_replace_writes() {
+        let dir = tempfile::tempdir().unwrap();
+        // One file per line-ending habit, because a replace that quietly
+        // normalised a repository would be worse than the bug it fixed.
+        std::fs::write(dir.path().join("unix.rs"), "let cat = 1;\nlet dog = 2;\n").unwrap();
+        std::fs::write(dir.path().join("dos.rs"), "let cat = 3;\r\nlet cat = 4;\r\n").unwrap();
+        std::fs::write(dir.path().join("bare.rs"), "let cat = 5;").unwrap();
+        let searched_at = SystemTime::now();
+        let found = hits(dir.path(), options("cat"));
+        assert_eq!(found.len(), 4);
+
+        let (jobs, receiver) = worker(&dir.path().join(".trash"));
+        jobs.send(Job::Replace {
+            root: dir.path().to_path_buf(),
+            options: options("cat"),
+            replacement: "kitten".into(),
+            chosen: chosen(&found),
+            searched_at,
+        });
+
+        match next(&receiver) {
+            Done::Replaced { report, change } => {
+                assert_eq!(report.lines, 4);
+                assert_eq!(report.changed(), 3);
+                assert_eq!(report.skipped(), 0);
+                assert_eq!(report.failed(), 0);
+                assert_eq!(report.to_string(), "Changed 4 lines in 3 files");
+                assert_eq!(change.unwrap().to_string(), "Replaced 4 lines in 3 files");
+            }
+            other => panic!("{other:?}"),
+        }
+
+        let read = |name: &str| std::fs::read_to_string(dir.path().join(name)).unwrap();
+        assert_eq!(read("unix.rs"), "let kitten = 1;\nlet dog = 2;\n");
+        assert_eq!(read("dos.rs"), "let kitten = 3;\r\nlet kitten = 4;\r\n");
+        assert_eq!(read("bare.rs"), "let kitten = 5;");
+
+        jobs.send(Job::Undo);
+        assert!(matches!(next(&receiver), Done::Changed(change) if change.undone));
+        assert_eq!(read("unix.rs"), "let cat = 1;\nlet dog = 2;\n");
+        assert_eq!(read("dos.rs"), "let cat = 3;\r\nlet cat = 4;\r\n");
+        assert_eq!(read("bare.rs"), "let cat = 5;");
+    }
+
+    #[test]
+    fn a_query_that_does_not_compile_comes_back_as_a_sentence() {
+        let dir = tempfile::tempdir().unwrap();
+        let (jobs, receiver) = worker(&dir.path().join(".trash"));
+        jobs.send(Job::Replace {
+            root: dir.path().to_path_buf(),
+            options: Options { regex: true, ..options("fn (") },
+            replacement: "x".into(),
+            chosen: vec![(PathBuf::from("a.rs"), vec![1])],
+            searched_at: SystemTime::now(),
+        });
+        match next(&receiver) {
+            Done::Failed(message) => assert!(!message.is_empty()),
+            other => panic!("{other:?}"),
         }
     }
 }

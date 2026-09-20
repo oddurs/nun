@@ -2,10 +2,12 @@
 id: 29
 title: Find and replace with preview
 type: feature
-status: backlog
+status: doing
 milestone: m3
+assignee: Oddur Sigurdsson
+claimed: 2026-09-19
 created: 2026-09-10
-updated: 2026-09-10
+updated: 2026-09-19
 priority: p1
 effort: m
 area: workspace

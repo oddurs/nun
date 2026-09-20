@@ -315,7 +315,10 @@ fn walk(root: &Path, include_ignored: bool) -> ignore::Walk {
 /// Literal queries go through the same regex engine with `fixed_strings`
 /// rather than being escaped by hand, so `.`, `(` and `\` in a query mean
 /// themselves without a second escaping rule to keep true.
-fn build_matcher(options: &Options) -> Result<RegexMatcher, String> {
+///
+/// Shared with [`crate::replace`], so that a replace matches exactly what the
+/// search that found the hits matched. Two builders would drift.
+pub(crate) fn build_matcher(options: &Options) -> Result<RegexMatcher, String> {
     let insensitive = match options.case {
         Case::Sensitive => false,
         Case::Insensitive => true,

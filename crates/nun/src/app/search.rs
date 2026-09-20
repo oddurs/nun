@@ -11,12 +11,13 @@
 //! neither ever changes its mind.
 
 use std::collections::{BTreeSet, HashMap};
+use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use nun_ui::{SearchButton, SearchRow, SearchView, Toggles};
-use nun_workspace::{Case, Found, Grep, Hit, Options};
+use nun_ui::{Field, HitState, SearchButton, SearchRow, SearchView, Toggles};
+use nun_workspace::{Case, Found, Grep, Hit, Options, Replacer};
 use ratatui::layout::Rect;
 use ratatui::widgets::Widget;
 
@@ -47,6 +48,8 @@ pub(super) enum Line {
     File(usize),
     /// A matching line: which group, and which of its hits.
     Hit(usize, usize),
+    /// What the hit above it becomes, when a replacement is being made.
+    After(usize, usize),
 }
 
 /// The panel, and the search behind it.
@@ -59,6 +62,27 @@ pub(super) struct Search {
     pub(super) query: String,
     /// Where the caret sits in it, as a char offset.
     pub(super) caret: usize,
+    /// What the matches are to be replaced with.
+    pub(super) replacement: String,
+    /// Where the caret sits in that, as a char offset.
+    pub(super) replace_caret: usize,
+    /// Which of the two fields the keyboard is in.
+    pub(super) field: Field,
+    /// Hits struck out of the replace, by the file and line they are on.
+    ///
+    /// Excluded rather than included, so that hits still arriving from a walk
+    /// are in by default and the set stays empty in the ordinary case.
+    excluded: BTreeSet<(PathBuf, u32)>,
+    /// What the rows on screen would become, by row index.
+    ///
+    /// Only what is drawn: replacing across a repository can find tens of
+    /// thousands of lines, and running a regex over all of them on every
+    /// keystroke to draw twenty would cost the repository rather than the
+    /// screen.
+    previews: HashMap<usize, String>,
+    /// When the search that found the current hits started, so a file written
+    /// to since can be left alone rather than rewritten from a stale preview.
+    searched_at: Option<std::time::SystemTime>,
     /// Which of the toggles are lit.
     pub(super) toggles: Toggles,
     /// The files that have hits, in the order they were found.
@@ -97,22 +121,48 @@ impl Search {
     /// would make a frame cost what the repository costs rather than what the
     /// screen costs.
     fn view_rows(&self, window: std::ops::Range<usize>) -> Vec<SearchRow<'_>> {
-        self.rows
-            .get(window)
-            .unwrap_or_default()
+        // Clamped, not fetched: a window is what the screen can show, so it
+        // runs past the end of the list far more often than not, and a range
+        // lookup answers nothing at all for one that does.
+        let end = window.end.min(self.rows.len());
+        let first = window.start.min(end);
+        self.rows[first..end]
             .iter()
-            .map(|line| match *line {
-                Line::File(group) => {
-                    let group = &self.groups[group];
-                    SearchRow::File {
-                        path: &group.label,
-                        hits: group.hits.len(),
-                        collapsed: self.collapsed.contains(&group.path),
+            .enumerate()
+            .map(|(offset, line)| {
+                let index = first + offset;
+                match *line {
+                    Line::File(group) => {
+                        let group = &self.groups[group];
+                        SearchRow::File {
+                            path: &group.label,
+                            hits: group.hits.len(),
+                            collapsed: self.collapsed.contains(&group.path),
+                        }
                     }
-                }
-                Line::Hit(group, hit) => {
-                    let hit = &self.groups[group].hits[hit];
-                    SearchRow::Hit { line: hit.line, text: &hit.text, matched: &hit.matched }
+                    Line::Hit(group, hit) => {
+                        let group = &self.groups[group];
+                        let hit = &group.hits[hit];
+                        SearchRow::Hit {
+                            line: hit.line,
+                            text: &hit.text,
+                            matched: &hit.matched,
+                            state: self.state_of(&group.path, hit.line),
+                        }
+                    }
+                    Line::After(group, hit) => {
+                        let hit = &self.groups[group].hits[hit];
+                        SearchRow::After {
+                            line: hit.line,
+                            // A row whose preview has not been worked out yet
+                            // shows the line unchanged rather than nothing; it is
+                            // one frame, and a blank row reads as a deletion.
+                            text: self
+                                .previews
+                                .get(&index)
+                                .map_or(hit.text.as_str(), String::as_str),
+                        }
+                    }
                 }
             })
             .collect()
@@ -120,14 +170,21 @@ impl Search {
 
     /// Rebuild the row list from the groups and what is folded away.
     fn relist(&mut self) {
-        self.rows.clear();
+        let replacing = !self.replacement.is_empty();
+        let mut rows = Vec::with_capacity(self.rows.len());
         for (at, group) in self.groups.iter().enumerate() {
-            self.rows.push(Line::File(at));
+            rows.push(Line::File(at));
             if self.collapsed.contains(&group.path) {
                 continue;
             }
-            self.rows.extend((0..group.hits.len()).map(|hit| Line::Hit(at, hit)));
+            for (index, hit) in group.hits.iter().enumerate() {
+                rows.push(Line::Hit(at, index));
+                if replacing && self.included(&group.path, hit.line) {
+                    rows.push(Line::After(at, index));
+                }
+            }
         }
+        self.rows = rows;
     }
 
     /// Say where the search has got to, in the words a panel uses.
@@ -161,6 +218,70 @@ impl Search {
         self.selected = None;
         self.tally = None;
         self.error = None;
+    }
+
+    /// The text of the field the keyboard is in.
+    const fn text(&self) -> &String {
+        match self.field {
+            Field::Query => &self.query,
+            Field::Replace => &self.replacement,
+        }
+    }
+
+    /// The same, to edit.
+    const fn text_mut(&mut self) -> &mut String {
+        match self.field {
+            Field::Query => &mut self.query,
+            Field::Replace => &mut self.replacement,
+        }
+    }
+
+    /// Where the caret is in whichever field has the keyboard.
+    const fn caret_mut(&mut self) -> &mut usize {
+        match self.field {
+            Field::Query => &mut self.caret,
+            Field::Replace => &mut self.replace_caret,
+        }
+    }
+
+    /// The caret a field is drawn with: its own when it has the keyboard, and
+    /// the start otherwise.
+    ///
+    /// The widget anchors a field's window to the caret it was drawn with, so
+    /// a click is worked out against the same number the row was laid out
+    /// from. Handing it a stored caret for a field nobody is typing in would
+    /// land clicks in the wrong character.
+    pub(super) const fn drawn_caret(&self, field: Field) -> usize {
+        match (self.field, field) {
+            (Field::Query, Field::Query) => self.caret,
+            (Field::Replace, Field::Replace) => self.replace_caret,
+            _ => 0,
+        }
+    }
+
+    /// Take the char at `at` out of whichever field has the keyboard.
+    fn remove_char(&mut self, at: usize) {
+        let from = byte_of(self.text(), at);
+        let to = byte_of(self.text(), at + 1);
+        self.text_mut().replace_range(from..to, "");
+    }
+
+    /// Whether a hit is in the replace.
+    fn included(&self, path: &std::path::Path, line: u32) -> bool {
+        !self.excluded.contains(&(path.to_path_buf(), line))
+    }
+
+    /// What is going to happen to a hit.
+    fn state_of(&self, path: &std::path::Path, line: u32) -> HitState {
+        if self.replacement.is_empty() {
+            // Nothing is being replaced, so there is nothing to take out of
+            // it, and a row of markers nobody can act on is noise.
+            HitState::Plain
+        } else if self.included(path, line) {
+            HitState::Included
+        } else {
+            HitState::Excluded
+        }
     }
 
     /// What to ask the engine for, as the toggles currently stand.
@@ -254,6 +375,10 @@ impl App {
             hits.push(super::cells(cell), Target::SearchBack, true);
         }
         hits.push(super::cells(SearchView::query_area(area)), Target::SearchQuery, true);
+        hits.push(super::cells(SearchView::replace_area(area)), Target::SearchReplace, true);
+        if let Some(cell) = SearchView::apply_area(area) {
+            hits.push(super::cells(cell), Target::SearchApply, true);
+        }
         for button in SearchButton::ALL {
             if let Some(cell) = SearchView::button_area(area, button) {
                 hits.push(super::cells(cell), Target::SearchButton(button), true);
@@ -263,6 +388,9 @@ impl App {
         let rows = SearchView::rows_area(area);
         hits.push(super::cells(rows), Target::SearchEmpty, false);
         let shown = SearchView::visible_rows(area);
+        // The same window the frame draws, so the mark a click lands on is
+        // the mark that is there.
+        let view = self.search.view_rows(self.search.scroll..self.search.scroll + shown);
         for offset in 0..shown {
             let index = self.search.scroll + offset;
             if index >= self.search.rows.len() {
@@ -271,6 +399,11 @@ impl App {
             let Ok(offset) = u16::try_from(offset) else { break };
             let line = Rect { y: rows.y + offset, height: 1, ..rows };
             hits.push(super::cells(line), Target::SearchRow(index), true);
+            // On top of its row, so clicking the mark strikes the hit out
+            // while clicking the line still opens the file.
+            if let Some(cell) = SearchView::marker_area(area, &view, index, self.search.scroll) {
+                hits.push(super::cells(cell), Target::SearchMarker(index), true);
+            }
         }
     }
 
@@ -301,7 +434,11 @@ impl App {
             .hovered_back(self.hover.current() == Some(Target::SearchBack))
             .toggles(self.search.toggles)
             .focused(self.focus == Focus::Search)
-            .editing(self.focus == Focus::Search, self.search.caret)
+            .replacement(&self.search.replacement)
+            .editing(
+                (self.focus == Focus::Search).then_some(self.search.field),
+                self.search.drawn_caret(self.search.field),
+            )
             // Four one-cell marks are not self-explanatory, and the summary
             // line is already the panel's transient status: while the pointer
             // is over a toggle it says what that toggle does instead of how
@@ -325,46 +462,58 @@ impl App {
             KeyCode::Down => self.move_selection(1),
             KeyCode::PageUp => self.move_selection(-self.search_page()),
             KeyCode::PageDown => self.move_selection(self.search_page()),
+            // Tab moves between the two fields rather than out of the panel:
+            // there is nowhere else for it to go, and typing a replacement
+            // after a query is the ordinary order of doing this.
+            KeyCode::Tab | KeyCode::BackTab => self.search.field = other(self.search.field),
             KeyCode::Left => {
-                self.search.caret = self.search.caret.saturating_sub(1);
+                let caret = self.search.caret_mut();
+                *caret = caret.saturating_sub(1);
             }
             KeyCode::Right => {
-                let end = self.search.query.chars().count();
-                self.search.caret = (self.search.caret + 1).min(end);
+                let end = self.search.text().chars().count();
+                let caret = self.search.caret_mut();
+                *caret = (*caret + 1).min(end);
             }
-            KeyCode::Home => self.search.caret = 0,
-            KeyCode::End => self.search.caret = self.search.query.chars().count(),
+            KeyCode::Home => *self.search.caret_mut() = 0,
+            KeyCode::End => *self.search.caret_mut() = self.search.text().chars().count(),
             KeyCode::Backspace => {
-                if self.search.caret > 0 {
-                    let at = self.search.caret - 1;
-                    self.remove_char(at);
-                    self.search.caret = at;
-                    self.restart_search(now);
+                let caret = *self.search.caret_mut();
+                if caret > 0 {
+                    self.search.remove_char(caret - 1);
+                    *self.search.caret_mut() = caret - 1;
+                    self.edited(now);
                 }
             }
             KeyCode::Delete => {
-                if self.search.caret < self.search.query.chars().count() {
-                    let at = self.search.caret;
-                    self.remove_char(at);
-                    self.restart_search(now);
+                let caret = *self.search.caret_mut();
+                if caret < self.search.text().chars().count() {
+                    self.search.remove_char(caret);
+                    self.edited(now);
                 }
             }
             KeyCode::Char(ch) if !control => {
-                let at = byte_of(&self.search.query, self.search.caret);
-                self.search.query.insert(at, ch);
-                self.search.caret += 1;
-                self.restart_search(now);
+                let caret = *self.search.caret_mut();
+                let at = byte_of(self.search.text(), caret);
+                self.search.text_mut().insert(at, ch);
+                *self.search.caret_mut() = caret + 1;
+                self.edited(now);
             }
             _ => return Outcome::Continue,
         }
         Outcome::Redraw
     }
 
-    /// Take the char at `at` out of the query.
-    fn remove_char(&mut self, at: usize) {
-        let from = byte_of(&self.search.query, at);
-        let to = byte_of(&self.search.query, at + 1);
-        self.search.query.replace_range(from..to, "");
+    /// One of the fields changed.
+    ///
+    /// Changing the query means searching again; changing the replacement
+    /// changes only what the preview says the hits would become, and asking
+    /// the filesystem for the same answer twice would be rude.
+    fn edited(&mut self, now: Instant) {
+        match self.search.field {
+            Field::Query => self.restart_search(now),
+            Field::Replace => self.search.relist(),
+        }
     }
 
     /// How far a page key moves, in rows.
@@ -423,12 +572,29 @@ impl App {
     pub(super) fn search_press(&mut self, target: Target, column: u16, now: Instant) -> Outcome {
         match target {
             Target::SearchBack => return self.show_file_tree(),
-            Target::SearchQuery => {
+            Target::SearchQuery | Target::SearchReplace => {
                 self.focus = Focus::Search;
+                let field =
+                    if target == Target::SearchQuery { Field::Query } else { Field::Replace };
+                self.search.field = field;
                 if let Some(area) = self.search_area() {
-                    self.search.caret =
-                        SearchView::caret_at(area, &self.search.query, self.search.caret, column);
+                    // The caret the row was drawn with, which is the start for
+                    // a field that did not have the keyboard — the widget
+                    // anchors its window to that, so a click has to be worked
+                    // out against the same number.
+                    let drawn = self.search.drawn_caret(field);
+                    let text = match field {
+                        Field::Query => self.search.query.clone(),
+                        Field::Replace => self.search.replacement.clone(),
+                    };
+                    let at = SearchView::caret_at(area, field, &text, drawn, column);
+                    *self.search.caret_mut() = at;
                 }
+            }
+            Target::SearchApply => return self.apply_replace(),
+            Target::SearchMarker(row) => {
+                self.focus = Focus::Search;
+                return self.toggle_hit(row);
             }
             Target::SearchButton(button) => {
                 self.focus = Focus::Search;
@@ -481,26 +647,54 @@ impl App {
                 self.follow_search_selection();
                 Outcome::Redraw
             }
-            Line::Hit(group, hit) => {
-                let Some(root) = self.workspace_root() else { return Outcome::Continue };
-                let group = &self.search.groups[group];
-                let Some(hit) = group.hits.get(hit) else { return Outcome::Continue };
-                let (line, column) = (hit.line, hit.column);
-                let path = root.join(&group.path);
-                self.open_file(&path);
-                // Opening can fail — the file deleted since it was found, or
-                // its folder gone — and it says so rather than throwing.
-                // Moving the caret then would move it in whatever was already
-                // open, which is someone else's file and someone else's place
-                // in it.
-                if self.doc().buffer.path() == Some(path.as_path()) {
-                    self.place_caret_at(line, column);
-                }
-                // The panel keeps the keyboard: finding one hit usually means
-                // looking at the next one too.
-                Outcome::Redraw
-            }
+            // A preview row stands for the hit above it, so clicking either
+            // of them means the same thing.
+            Line::Hit(group, hit) | Line::After(group, hit) => self.open_hit(group, hit),
         }
+    }
+
+    /// Open the file a hit is in, at its line and column.
+    fn open_hit(&mut self, group: usize, hit: usize) -> Outcome {
+        {
+            let Some(root) = self.workspace_root() else { return Outcome::Continue };
+            let group = &self.search.groups[group];
+            let Some(hit) = group.hits.get(hit) else { return Outcome::Continue };
+            let (line, column) = (hit.line, hit.column);
+            let path = root.join(&group.path);
+            self.open_file(&path);
+            // Opening can fail — the file deleted since it was found, or
+            // its folder gone — and it says so rather than throwing.
+            // Moving the caret then would move it in whatever was already
+            // open, which is someone else's file and someone else's place
+            // in it.
+            if self.doc().buffer.path() == Some(path.as_path()) {
+                self.place_caret_at(line, column);
+            }
+            // The panel keeps the keyboard: finding one hit usually means
+            // looking at the next one too.
+            Outcome::Redraw
+        }
+    }
+
+    /// Strike a hit out of the replace, or put it back.
+    fn toggle_hit(&mut self, row: usize) -> Outcome {
+        let Some(line) = self.search.rows.get(row).copied() else { return Outcome::Continue };
+        let (group, hit) = match line {
+            Line::Hit(group, hit) | Line::After(group, hit) => (group, hit),
+            Line::File(_) => return Outcome::Continue,
+        };
+        let Some(hit) = self.search.groups[group].hits.get(hit) else { return Outcome::Continue };
+        let key = (self.search.groups[group].path.clone(), hit.line);
+        if !self.search.excluded.remove(&key) {
+            self.search.excluded.insert(key);
+        }
+        // Striking one out takes its preview row away, and putting it back
+        // brings one along, so the list is a different length either way.
+        self.search.relist();
+        let last = self.search.rows.len().saturating_sub(1);
+        self.search.selected = self.search.selected.map(|at| at.min(last));
+        self.follow_search_selection();
+        Outcome::Redraw
     }
 
     /// Put the caret on a one-based line and column of the open document.
@@ -575,8 +769,125 @@ impl App {
             return Outcome::Redraw;
         };
         self.search.generation += 1;
+        // Taken before the walk rather than after it: a file written to while
+        // the walk was still running was not what the preview showed either.
+        self.search.searched_at = Some(std::time::SystemTime::now());
         grep.search(root, self.search.options(), self.search.generation);
         Outcome::Continue
+    }
+
+    /// Work out what the rows on screen would become.
+    ///
+    /// Only the window: replacing across a repository can find tens of
+    /// thousands of lines, and running a regex over all of them on every
+    /// keystroke to draw twenty would cost what the repository costs rather
+    /// than what the screen costs.
+    pub(super) fn refresh_search_previews(&mut self) {
+        self.search.previews.clear();
+        if !self.searching() || self.search.replacement.is_empty() {
+            return;
+        }
+        let Some(area) = self.search_area() else { return };
+        let Ok(replacer) = Replacer::new(&self.search.options(), &self.search.replacement) else {
+            // The query does not compile; the summary already says so, and a
+            // preview of nothing would be a second way of saying it.
+            return;
+        };
+        let first = self.search.scroll;
+        let last = first.saturating_add(SearchView::visible_rows(area));
+        for index in first..last.min(self.search.rows.len()) {
+            if let Some(Line::After(group, hit)) = self.search.rows.get(index).copied()
+                && let Some(hit) = self.search.groups[group].hits.get(hit)
+            {
+                let after = replacer.line(&hit.text);
+                self.search.previews.insert(index, after);
+            }
+        }
+    }
+
+    /// Rewrite every hit that has not been struck out.
+    pub(super) fn apply_replace(&mut self) -> Outcome {
+        if self.search.replacement.is_empty() {
+            self.warn("Type what the matches should become first.".to_string());
+            return Outcome::Redraw;
+        }
+        let Some(root) = self.workspace_root() else { return Outcome::Continue };
+        let Some(searched_at) = self.search.searched_at else {
+            self.warn("Search for something first.".to_string());
+            return Outcome::Redraw;
+        };
+
+        let chosen: Vec<(PathBuf, Vec<u32>)> = self
+            .search
+            .groups
+            .iter()
+            .filter_map(|group| {
+                let lines: Vec<u32> = group
+                    .hits
+                    .iter()
+                    .map(|hit| hit.line)
+                    .filter(|line| self.search.included(&group.path, *line))
+                    .collect();
+                (!lines.is_empty()).then(|| (group.path.clone(), lines))
+            })
+            .collect();
+        if chosen.is_empty() {
+            self.warn("Every hit is struck out, so there is nothing to replace.".to_string());
+            return Outcome::Redraw;
+        }
+
+        self.send_job(nun_workspace::Job::Replace {
+            root,
+            options: self.search.options(),
+            replacement: self.search.replacement.clone(),
+            chosen,
+            searched_at,
+        });
+        Outcome::Redraw
+    }
+
+    /// A replace finished.
+    pub(super) fn replace_done(
+        &mut self,
+        report: &nun_workspace::Report,
+        change: Option<&nun_workspace::Change>,
+    ) -> Outcome {
+        if let Some(change) = change {
+            self.after_op(change);
+            // Offered the way a file operation is, because it is one — and
+            // this is the one most worth being able to take back.
+            self.undo_offer = true;
+            self.last_undone = false;
+        }
+
+        // A file that is open still holds what it held before, and saving it
+        // would put that back over the replace without saying so. Whichever
+        // ones nobody has touched are reloaded; the rest are named, because
+        // only the person editing them can say which version they meant.
+        let mut untaken: Vec<String> = Vec::new();
+        if let Some(root) = self.workspace_root() {
+            for (path, outcome) in &report.files {
+                if !matches!(outcome, nun_workspace::Outcome::Changed(lines) if *lines > 0) {
+                    continue;
+                }
+                let full = root.join(path);
+                let Some(document) =
+                    self.docs.iter_mut().find(|document| document.buffer.path() == Some(&full))
+                else {
+                    continue;
+                };
+                if document.buffer.is_modified() {
+                    untaken.push(path.display().to_string());
+                } else if let Ok((buffer, _)) = nun_core::Buffer::load(&full) {
+                    let id = document.id;
+                    document.buffer = buffer;
+                    self.syntax_open(id);
+                }
+            }
+        }
+
+        self.message = Some(say_what_happened(report, &untaken));
+        Outcome::Redraw
     }
 
     /// The engine has something to say.
@@ -627,7 +938,8 @@ impl App {
     /// taking in a search quadratic in what it finds.
     fn absorb(&mut self, hit: Hit) -> bool {
         let search = &mut self.search;
-        search.widest = search.widest.max(hit.line);
+        let line = hit.line;
+        search.widest = search.widest.max(line);
         let fresh = !search.index.contains_key(&hit.path);
         let at = if let Some(at) = search.index.get(&hit.path) {
             *at
@@ -654,6 +966,9 @@ impl App {
         // Newest group: its rows are the tail of the list, so this goes there.
         if at + 1 == search.groups.len() {
             search.rows.push(Line::Hit(at, index));
+            if !search.replacement.is_empty() && search.included(&search.groups[at].path, line) {
+                search.rows.push(Line::After(at, index));
+            }
             return true;
         }
         false
@@ -666,6 +981,42 @@ impl App {
             Target::SearchButton(button) => Some(button.describe(self.search.toggles.on(button))),
             _ => None,
         }
+    }
+}
+
+/// A sentence for the status line: what a replace came to.
+fn say_what_happened(report: &nun_workspace::Report, untaken: &[String]) -> String {
+    let (lines, files) = (report.lines, report.changed());
+    let mut said = match (lines, files) {
+        (0, _) => "Nothing was replaced".to_string(),
+        (1, 1) => "Replaced 1 line in 1 file".to_string(),
+        (lines, 1) => format!("Replaced {lines} lines in 1 file"),
+        (lines, files) => format!("Replaced {lines} lines in {files} files"),
+    };
+    let skipped = report.skipped();
+    if skipped > 0 {
+        let _ = write!(said, ", left {skipped} alone as they have changed since the search");
+    }
+    let failed = report.failed();
+    if failed > 0 {
+        let _ = write!(said, ", and could not write {failed}");
+    }
+    said.push('.');
+    if !untaken.is_empty() {
+        let _ = write!(
+            said,
+            " {} has unsaved changes and still shows the old text; saving it would put that back.",
+            untaken.join(", ")
+        );
+    }
+    said
+}
+
+/// The field that is not this one.
+const fn other(field: Field) -> Field {
+    match field {
+        Field::Query => Field::Replace,
+        Field::Replace => Field::Query,
     }
 }
 
@@ -805,7 +1156,8 @@ mod tests {
                 .search
                 .rows
                 .iter()
-                .map(|line| match *line {
+                .enumerate()
+                .map(|(index, line)| match *line {
                     Line::File(group) => {
                         format!("[{}]", self.app.search.groups[group].label)
                     }
@@ -813,8 +1165,32 @@ mod tests {
                         let hit = &self.app.search.groups[group].hits[hit];
                         format!("{}: {}", hit.line, hit.text)
                     }
+                    Line::After(group, hit) => {
+                        let hit = &self.app.search.groups[group].hits[hit];
+                        let after = self
+                            .app
+                            .search
+                            .previews
+                            .get(&index)
+                            .map_or(hit.text.as_str(), String::as_str);
+                        format!("{}> {after}", hit.line)
+                    }
                 })
                 .collect()
+        }
+
+        /// Type a replacement into the second field, and let the previews
+        /// catch up the way a frame would.
+        fn replace_with(&mut self, text: &str) {
+            self.app.handle(Event::Key(KeyEvent::from(KeyCode::Tab)));
+            self.type_text(text);
+            self.app.refresh_search_previews();
+        }
+
+        /// Apply the replace and wait for the filesystem worker.
+        fn apply(&mut self) {
+            self.app.apply_replace();
+            self.settle_jobs();
         }
     }
 
@@ -1100,7 +1476,11 @@ mod tests {
 
         assert_eq!(t.app.search.view_rows(2..7).len(), 5, "only the window");
         assert!(t.app.search.view_rows(9_000..9_010).is_empty(), "past the end is empty");
-        assert!(t.app.search.view_rows(80..9_000).len() <= 2, "and a window is clipped to it");
+        // A window taller than the list is the ordinary case, not the corner:
+        // most searches find fewer lines than the panel can show. Answering
+        // nothing for one of those would draw an empty panel over real results.
+        assert_eq!(t.app.search.view_rows(80..9_000).len(), 2, "a window is clipped, not refused");
+        assert_eq!(t.app.search.view_rows(0..9_000).len(), 82, "and so is one over the whole list");
     }
 
     #[test]
@@ -1152,7 +1532,7 @@ mod tests {
             .iter()
             .filter_map(|line| match line {
                 Line::File(group) => Some(&t.app.search.groups[*group].label),
-                Line::Hit(..) => None,
+                Line::Hit(..) | Line::After(..) => None,
             })
             .collect();
         assert_eq!(headings, ["a.rs", "b.rs", "c.rs", "d.rs"], "every file is headed once");
@@ -1230,6 +1610,173 @@ mod tests {
 
         app.tick(Instant::now() + DEBOUNCE * 4);
         assert!(!app.search.running, "and with no worker it is taken back");
+    }
+
+    #[test]
+    fn a_replacement_previews_what_each_line_becomes() {
+        let dir = project(&[("a.rs", "let alpha = 1;\nlet beta = alpha + alpha;\n")]);
+        let mut t = Tester::new(&dir);
+        t.search("alpha");
+        t.replace_with("omega");
+
+        let rows = t.rows();
+        // A preview under each hit, showing every match on the line replaced,
+        // not just the first.
+        assert!(rows.iter().any(|row| row == "1> let omega = 1;"), "{rows:?}");
+        assert!(
+            rows.iter().any(|row| row == "2> let beta = omega + omega;"),
+            "both matches on the line: {rows:?}"
+        );
+        // And the file itself is untouched until it is applied.
+        assert!(fs::read_to_string(dir.path().join("a.rs")).unwrap().contains("alpha"));
+    }
+
+    #[test]
+    fn a_capture_group_in_the_replacement_is_previewed_as_it_will_be_written() {
+        let dir = project(&[("a.rs", "fn alpha_one() {}\n")]);
+        let mut t = Tester::new(&dir);
+        t.app.run(crate::commands::Command::SearchProject);
+        t.app.search.toggles.regex = true;
+        t.type_text("alpha_(\\w+)");
+        t.settle_search();
+        t.replace_with("beta_$1");
+
+        let rows = t.rows();
+        assert!(rows.iter().any(|row| row == "1> fn beta_one() {}"), "{rows:?}");
+    }
+
+    #[test]
+    fn a_dollar_in_a_literal_replacement_is_a_dollar() {
+        // Only the regex mode interpolates. Getting this the wrong way round
+        // would quietly eat someone's text.
+        let dir = project(&[("a.rs", "let price = 0;\n")]);
+        let mut t = Tester::new(&dir);
+        t.search("price");
+        t.replace_with("$1");
+
+        let rows = t.rows();
+        assert!(rows.iter().any(|row| row == "1> let $1 = 0;"), "{rows:?}");
+    }
+
+    #[test]
+    fn striking_a_hit_out_takes_its_preview_with_it_and_leaves_the_line_alone() {
+        let dir = project(&[("a.rs", "alpha\nalpha\n")]);
+        let mut t = Tester::new(&dir);
+        t.search("alpha");
+        t.replace_with("omega");
+        assert_eq!(t.rows().len(), 5, "a file, two hits and two previews");
+
+        // The marker of the first hit, which is the row after the file's.
+        let area = t.area();
+        let view = t.app.search.view_rows(0..SearchView::visible_rows(area));
+        let cell = SearchView::marker_area(area, &view, 1, 0).expect("the hit has a marker");
+        t.click(cell.x, cell.y);
+
+        let rows = t.rows();
+        assert_eq!(rows.len(), 4, "its preview went with it: {rows:?}");
+        t.apply();
+        assert_eq!(
+            fs::read_to_string(dir.path().join("a.rs")).unwrap(),
+            "alpha\nomega\n",
+            "only the hit that was left in changed"
+        );
+    }
+
+    #[test]
+    fn applying_rewrites_every_file_and_undo_brings_them_all_back() {
+        let dir = project(&[
+            ("a.rs", "alpha one\n"),
+            ("b.rs", "alpha two\nalpha three\n"),
+            ("c.rs", "nothing here\n"),
+        ]);
+        let before: Vec<String> = ["a.rs", "b.rs", "c.rs"]
+            .iter()
+            .map(|name| fs::read_to_string(dir.path().join(name)).unwrap())
+            .collect();
+
+        let mut t = Tester::new(&dir);
+        t.search("alpha");
+        t.replace_with("omega");
+        t.apply();
+
+        assert_eq!(fs::read_to_string(dir.path().join("a.rs")).unwrap(), "omega one\n");
+        assert_eq!(
+            fs::read_to_string(dir.path().join("b.rs")).unwrap(),
+            "omega two\nomega three\n"
+        );
+        assert!(t.app.message().unwrap().contains("3 lines"), "{:?}", t.app.message());
+
+        // The status line offers to take it back, the way it does for any
+        // other filesystem operation. One press, every file.
+        assert!(t.app.undo_offer, "the offer is there to take");
+        t.app.undo_file_op();
+        t.settle_jobs();
+        for (name, was) in ["a.rs", "b.rs", "c.rs"].iter().zip(&before) {
+            assert_eq!(&fs::read_to_string(dir.path().join(name)).unwrap(), was, "{name}");
+        }
+    }
+
+    #[test]
+    fn a_file_written_to_since_the_search_is_left_alone_and_said_so() {
+        let dir = project(&[("a.rs", "alpha\n"), ("b.rs", "alpha\n")]);
+        let mut t = Tester::new(&dir);
+        t.search("alpha");
+        t.replace_with("omega");
+
+        // Somebody else gets there first.
+        std::thread::sleep(Duration::from_millis(20));
+        fs::write(dir.path().join("b.rs"), "alpha, and something new\n").unwrap();
+        t.apply();
+
+        assert_eq!(fs::read_to_string(dir.path().join("a.rs")).unwrap(), "omega\n");
+        assert_eq!(
+            fs::read_to_string(dir.path().join("b.rs")).unwrap(),
+            "alpha, and something new\n",
+            "what was previewed is not what is there, so it was not written"
+        );
+        let said = t.app.message().unwrap();
+        assert!(said.contains("changed since the search"), "{said}");
+    }
+
+    #[test]
+    fn an_open_file_follows_the_replace_rather_than_undoing_it_on_the_next_save() {
+        // The buffer still holds what it held before. Saving it would put that
+        // back over the replace, and nothing would have said so.
+        let dir = project(&[("a.rs", "alpha\n")]);
+        let mut t = Tester::new(&dir);
+        t.app.open_file(&dir.path().join("a.rs"));
+        t.settle_jobs();
+
+        t.search("alpha");
+        t.replace_with("omega");
+        t.apply();
+
+        assert_eq!(
+            t.app.doc().buffer.text().to_string(),
+            "omega\n",
+            "the open buffer was reloaded"
+        );
+    }
+
+    #[test]
+    fn an_open_file_with_unsaved_changes_is_named_rather_than_overwritten() {
+        // Only the person editing it can say which version they meant.
+        let dir = project(&[("a.rs", "alpha\n")]);
+        let mut t = Tester::new(&dir);
+        t.app.open_file(&dir.path().join("a.rs"));
+        t.settle_jobs();
+        t.app.doc_mut().buffer.insert("// mine\n");
+
+        t.search("alpha");
+        t.replace_with("omega");
+        t.apply();
+
+        assert!(
+            t.app.doc().buffer.text().to_string().contains("// mine"),
+            "the unsaved work is still there"
+        );
+        let said = t.app.message().unwrap();
+        assert!(said.contains("unsaved changes"), "and it is named: {said}");
     }
 
     #[test]

@@ -115,6 +115,12 @@ pub enum Target {
     SearchBack,
     /// The row the query is typed into.
     SearchQuery,
+    /// The row the replacement is typed into.
+    SearchReplace,
+    /// The button that applies the replace.
+    SearchApply,
+    /// The cell that strikes one hit out of the replace, or puts it back.
+    SearchMarker(usize),
     /// One of the search toggles.
     SearchButton(nun_ui::SearchButton),
     /// A row of the results: a file, or one of its matching lines.
@@ -150,6 +156,9 @@ impl Target {
             Self::SearchHeader
                 | Self::SearchBack
                 | Self::SearchQuery
+                | Self::SearchReplace
+                | Self::SearchApply
+                | Self::SearchMarker(_)
                 | Self::SearchButton(_)
                 | Self::SearchRow(_)
                 | Self::SearchEmpty
@@ -430,6 +439,9 @@ impl App {
             false,
         );
         hits.push(cells(status), Target::Status, false);
+        // Before the panel is laid out or drawn: both ask what the rows say,
+        // and an After row says what its hit becomes.
+        self.refresh_search_previews();
         self.layout_sidebar(&mut hits);
         self.layout_search(&mut hits);
         self.layout_panes(&mut hits);

@@ -549,6 +549,7 @@ impl App {
                 self.after_op(&change);
                 Outcome::Redraw
             }
+            Done::Replaced { report, change } => self.replace_done(&report, change.as_ref()),
             Done::Failed(error) => {
                 self.message = Some(error);
                 self.undo_offer = false;
@@ -628,7 +629,7 @@ impl App {
 
     /// Bring the tree, the open buffer and the status line up to date after
     /// a file operation, its undo, or its redo.
-    fn after_op(&mut self, change: &Change) {
+    pub(super) fn after_op(&mut self, change: &Change) {
         let Some(sidebar) = self.sidebar.as_mut() else { return };
         for dir in &change.dirs {
             sidebar.tree.refresh_dir(dir);
