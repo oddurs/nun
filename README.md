@@ -99,8 +99,15 @@ up with typing rather than the other way round. There are no themes to pick:
 captures resolve to semantic roles, and the roles come from your terminal's
 own palette.
 
-Not there yet: folds, project search, language servers and git. Those are the
-rest of milestone 3 and milestones 4 and 5.
+The sidebar searches the project as well as listing it. Results stream in
+while the walk is still going, grouped under the file they are in and folded
+away by clicking it; clicking a line opens the file there. Literal or regex,
+case, whole word and whether to look at ignored files are four toggles in the
+panel, and the search running when you type again is cancelled rather than
+finished.
+
+Not there yet: folds, language servers and git. Those are the rest of
+milestone 3 and milestones 4 and 5.
 
 Do not install this yet.
 
