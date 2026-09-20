@@ -79,7 +79,7 @@
 
 ## m6 — Polish until it is boring
 
-`··········` 0% · 0 of 7 done · due 2026-12-17
+`##········` 13% · 1 of 8 done · due 2026-12-17
 
 ### backlog
 
@@ -90,4 +90,8 @@
 - [ ] [`0048`](https://github.com/oddurs/nun/blob/main/cairn/items/0048-one-command-install.md) One-command install <sup>chore · p1</sup>
 - [ ] [`0049`](https://github.com/oddurs/nun/blob/main/cairn/items/0049-freeze-and-ship-0-1.md) Freeze and ship 0.1 <sup>chore · p0</sup>
 - [ ] [`0053`](https://github.com/oddurs/nun/blob/main/cairn/items/0053-load-and-save-the-buffer-off-the-main-thread.md) Load and save the buffer off the main thread <sup>chore · p1</sup>
+
+### done
+
+- [x] [`0054`](https://github.com/oddurs/nun/blob/main/cairn/items/0054-install-nun-from-the-working-copy-with-one-command.md) Install nun from the working copy with one command <sup>chore · p2</sup>
 

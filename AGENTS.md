@@ -72,6 +72,7 @@ scripts/task lint       # clippy, warnings denied
 scripts/task test       # full suite
 scripts/task build      # compile
 scripts/task check      # all of the above
+scripts/task install    # release build, onto your PATH
 ```
 
 Never put a `cargo` invocation into CI, a git hook, or any script other than
