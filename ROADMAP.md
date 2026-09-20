@@ -37,7 +37,7 @@
 
 ## m3 — Understanding the code
 
-`####······` 38% · 3 of 8 done · due 2026-10-29
+`####······` 33% · 3 of 9 done · due 2026-10-29
 
 ### backlog
 
@@ -46,6 +46,7 @@
 - [ ] [`0027`](https://github.com/oddurs/nun/blob/main/cairn/items/0027-symbol-palette.md) Symbol palette <sup>feature · p1</sup>
 - [ ] [`0029`](https://github.com/oddurs/nun/blob/main/cairn/items/0029-find-and-replace-with-preview.md) Find and replace with preview <sup>feature · p1</sup>
 - [ ] [`0030`](https://github.com/oddurs/nun/blob/main/cairn/items/0030-multi-cursor-and-column-selection.md) Multi-cursor and column selection <sup>feature · p1</sup>
+- [ ] [`0055`](https://github.com/oddurs/nun/blob/main/cairn/items/0055-search-toggles-are-unreachable-on-a-very-narrow-sidebar.md) Search toggles are unreachable on a very narrow sidebar <sup>bug · p2</sup>
 
 ### done
 

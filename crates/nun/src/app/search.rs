@@ -565,10 +565,15 @@ impl App {
             return Outcome::Redraw;
         }
 
-        // Without a worker there is nothing to ask. That is the case in the
-        // tests that drive the panel without a thread behind it, and in a
-        // terminal it is attached before the first frame.
-        let Some(grep) = self.search.grep.as_ref() else { return Outcome::Continue };
+        // Without a worker there is nothing to ask, and so nothing is coming.
+        // Saying "Searching…" for the rest of the session would be worse than
+        // saying nothing. A terminal attaches one before the first frame; this
+        // is for a test, or for a caller that has not.
+        let Some(grep) = self.search.grep.as_ref() else {
+            self.search.running = false;
+            self.search.resummarise();
+            return Outcome::Redraw;
+        };
         self.search.generation += 1;
         grep.search(root, self.search.options(), self.search.generation);
         Outcome::Continue
@@ -1193,6 +1198,38 @@ mod tests {
         let mut t = Tester::new(&dir);
         t.search("alpha");
         assert_eq!(t.app.search.widest, 1_201, "tracked as the hits arrive");
+    }
+
+    #[test]
+    fn a_panel_with_no_worker_behind_it_does_not_say_it_is_searching_for_ever() {
+        // Typing marks the panel as searching before anything is asked for.
+        // With nothing to ask, that has to be taken back rather than left on
+        // screen as a search that never returns.
+        let dir = project(&[("a.rs", "alpha\n")]);
+        let mut app = App::new(
+            nun_core::Buffer::new(),
+            Palette::new(derive(&Probe::builtin_dark())),
+            defaults(KeySet::Full),
+        );
+        app.set_viewport(Rect::new(0, 0, 80, 24));
+        let (sender, _done) = std::sync::mpsc::channel();
+        app.open_folder(
+            dir.path().to_path_buf(),
+            dir.path().join(".trash"),
+            true,
+            Box::new(move |message| {
+                let _ = sender.send(message);
+            }),
+        );
+
+        app.run(crate::commands::Command::SearchProject);
+        for ch in "alpha".chars() {
+            app.handle(Event::Key(KeyEvent::from(KeyCode::Char(ch))));
+        }
+        assert!(app.search.running, "typing says a search is coming");
+
+        app.tick(Instant::now() + DEBOUNCE * 4);
+        assert!(!app.search.running, "and with no worker it is taken back");
     }
 
     #[test]
