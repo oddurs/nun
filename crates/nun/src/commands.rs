@@ -78,6 +78,10 @@ pub enum Command {
     AddAllOccurrences,
     /// Turn a selection spanning lines into one per line.
     SplitIntoLines,
+    /// Grow every selection to the syntax node around it.
+    GrowSelection,
+    /// Go back to what the selection was before it last grew.
+    ShrinkSelection,
 }
 
 impl Command {
@@ -113,6 +117,8 @@ impl Command {
         Self::AddNextOccurrence,
         Self::AddAllOccurrences,
         Self::SplitIntoLines,
+        Self::GrowSelection,
+        Self::ShrinkSelection,
     ];
 
     /// The name used in `[keys]` in `nun.toml`.
@@ -149,6 +155,8 @@ impl Command {
             Self::AddNextOccurrence => "caret.add_next",
             Self::AddAllOccurrences => "caret.add_all",
             Self::SplitIntoLines => "caret.split_lines",
+            Self::GrowSelection => "select.grow",
+            Self::ShrinkSelection => "select.shrink",
         }
     }
 
@@ -186,6 +194,8 @@ impl Command {
             Self::AddNextOccurrence => "Select the next occurrence",
             Self::AddAllOccurrences => "Select every occurrence",
             Self::SplitIntoLines => "One caret per line",
+            Self::GrowSelection => "Grow the selection",
+            Self::ShrinkSelection => "Shrink the selection",
         }
     }
 
@@ -202,6 +212,8 @@ impl Command {
                 | Self::AddNextOccurrence
                 | Self::AddAllOccurrences
                 | Self::SplitIntoLines
+                | Self::GrowSelection
+                | Self::ShrinkSelection
         )
     }
 
@@ -260,6 +272,8 @@ const BASIC: &[(&str, Command)] = &[
     ("ctrl+d", Command::AddNextOccurrence),
     ("ctrl+k d", Command::AddAllOccurrences),
     ("ctrl+k l", Command::SplitIntoLines),
+    ("ctrl+k right", Command::GrowSelection),
+    ("ctrl+k left", Command::ShrinkSelection),
 ];
 
 /// Bindings that need the Kitty keyboard protocol, added over [`BASIC`].
@@ -284,6 +298,10 @@ const FULL: &[(&str, Command)] = &[
     ("alt+down", Command::AddCaretBelow),
     ("ctrl+shift+l", Command::AddAllOccurrences),
     ("cmd+shift+l", Command::AddAllOccurrences),
+    // Where VS Code has them. Held down, the grow climbs the tree as fast as
+    // the key repeats.
+    ("alt+shift+right", Command::GrowSelection),
+    ("alt+shift+left", Command::ShrinkSelection),
 ];
 
 /// The default bindings for `set`.

@@ -51,3 +51,5 @@ This file is generated from the source by `nun keys`. Do not edit it by hand.
 | Select the next occurrence | `caret.add_next` | `Ctrl+D`, `Cmd+D` | `Ctrl+D` |
 | Select every occurrence | `caret.add_all` | `Ctrl+Shift+L`, `Cmd+Shift+L`, `Ctrl+K D` | `Ctrl+K D` |
 | One caret per line | `caret.split_lines` | `Ctrl+K L` | `Ctrl+K L` |
+| Grow the selection | `select.grow` | `Alt+Shift+Right`, `Ctrl+K Right` | `Ctrl+K Right` |
+| Shrink the selection | `select.shrink` | `Alt+Shift+Left`, `Ctrl+K Left` | `Ctrl+K Left` |

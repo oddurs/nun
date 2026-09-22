@@ -209,6 +209,55 @@ impl Document {
         Some(crate::symbols::of_tree(self.language, &tree, &self.text))
     }
 
+    /// Grow each char range to the smallest named node that covers strictly
+    /// more of the text, which is what "select the enclosing thing" means.
+    ///
+    /// An empty range — a caret — grows to the smallest named node around it:
+    /// the identifier it is in before the call that identifier is in. A range
+    /// that already covers the whole file stays as it is. Nodes the grammar
+    /// leaves unnamed are stepped over, because they are punctuation and
+    /// keywords: selecting a lone `(` is never what anyone meant.
+    ///
+    /// Returns `None` when the document's language is switched off.
+    pub fn grow(&mut self, ranges: &[std::ops::Range<u32>]) -> Option<Vec<std::ops::Range<u32>>> {
+        if self.trouble.is_some() {
+            return None;
+        }
+        if let Err(trouble) = self.parse() {
+            self.trouble = Some(trouble);
+            self.tree = None;
+            return None;
+        }
+        let tree = self.tree.clone()?;
+        let root = tree.root_node();
+        let text = &self.text;
+        let chars = len_chars(text);
+        let grown = ranges
+            .iter()
+            .map(|range| {
+                let (from, to) = (range.start.min(chars), range.end.min(chars));
+                let (start, end) =
+                    (text.char_to_byte(from as usize), text.char_to_byte(to as usize));
+                let mut node = root.named_descendant_for_byte_range(start, end).unwrap_or(root);
+                // Up until the node covers more than the range does. An empty
+                // range is covered strictly by anything that is not empty.
+                while !(node.is_named()
+                    && node.start_byte() <= start
+                    && node.end_byte() >= end
+                    && node.end_byte() - node.start_byte() > end - start)
+                {
+                    let Some(parent) = node.parent() else { return from..to };
+                    node = parent;
+                }
+                let char_of = |byte: usize| {
+                    u32::try_from(text.byte_to_char(byte.min(text.len_bytes()))).unwrap_or(chars)
+                };
+                char_of(node.start_byte())..char_of(node.end_byte())
+            })
+            .collect();
+        Some(grown)
+    }
+
     /// Parse the current text, reusing the previous tree where there is one.
     fn parse(&mut self) -> Result<(), Trouble> {
         if !self.stale && self.tree.is_some() {

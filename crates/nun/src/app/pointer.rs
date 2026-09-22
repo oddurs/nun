@@ -10,6 +10,8 @@
 //!   whatever was selected.
 //! * Dragging an existing selection moves the text; Ctrl held at the drop
 //!   copies it instead.
+//! * Ctrl-double-click selects the syntax node under the pointer, and each
+//!   further click with Ctrl held grows it to the node around that.
 //! * A drag that reaches the edge of the text scrolls, faster the further past
 //!   the edge the pointer is, and stops at the ends of the buffer.
 
@@ -68,6 +70,7 @@ impl App {
         let (column, row) = (mouse.column, mouse.row);
         let shift = mouse.modifiers.contains(KeyModifiers::SHIFT);
         let alt = mouse.modifiers.contains(KeyModifiers::ALT);
+        let ctrl = mouse.modifiers.contains(KeyModifiers::CONTROL);
         let count = self.clicks.press(column, row, now);
         let at = self.pointer_position(column, row);
         let primary = self.doc().buffer.selections().primary();
@@ -91,6 +94,21 @@ impl App {
                 keep: self.doc().buffer.selections().ranges().to_vec(),
             },
             Target::Text if shift => Mode::Char { anchor: primary.anchor },
+            // Ctrl-double-click grows from the node under the pointer, and each
+            // further click with Ctrl held grows once more. The click counter
+            // goes round to one again after three, so a press inside what the
+            // last grow reached counts as a further click whatever it says —
+            // and has to be caught before it is taken for the start of a drag.
+            Target::Text
+                if ctrl
+                    && (count == 2
+                        || (self.can_shrink() && at >= primary.from() && at <= primary.to())) =>
+            {
+                if count == 2 {
+                    self.doc_mut().buffer.set_selections(Selections::single(Range::caret(at)));
+                }
+                return self.run(Command::GrowSelection).and(Outcome::Redraw);
+            }
             Target::Text
                 if count == 1
                     && !primary.is_empty()
@@ -165,6 +183,10 @@ impl App {
             .any(|range| buffer.line_of(range.from()) != buffer.line_of(range.to()))
         {
             commands.push(Command::SplitIntoLines);
+        }
+        commands.push(Command::GrowSelection);
+        if self.can_shrink() {
+            commands.push(Command::ShrinkSelection);
         }
         commands.push(Command::SelectAll);
 

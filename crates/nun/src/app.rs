@@ -692,6 +692,14 @@ impl App {
             Resolved::Command(command) if command.acts_on_text() && self.focus != Focus::Editor => {
                 let Some(event) = event else { return Outcome::Continue };
                 self.acknowledge();
+                // Only a key bound on its own is the panel's to have. The last
+                // key of a chord — the Right of Ctrl+K Right — is not a Right
+                // the person pressed at the tree.
+                let alone =
+                    to_key(event).is_some_and(|key| self.keymap.get(&[key]) == Some(&command));
+                if !alone {
+                    return Outcome::Continue;
+                }
                 match self.focus {
                     Focus::Search => self.search_key(event, Instant::now()),
                     Focus::Sidebar => self.sidebar_key(event),
@@ -807,6 +815,10 @@ impl App {
                     ));
                 }
             },
+            // The view stays where it is: the selection grows around what is
+            // being looked at, and following its far end would scroll away.
+            Command::GrowSelection => return self.grow_selection(),
+            Command::ShrinkSelection => return self.shrink_selection(),
             Command::SplitIntoLines => {
                 if !self.doc_mut().buffer.split_into_lines() {
                     self.message = Some("The selection is already on one line.".into());

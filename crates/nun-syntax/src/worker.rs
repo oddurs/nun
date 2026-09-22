@@ -59,6 +59,18 @@ pub enum Request {
         /// Which version of it is being asked about.
         version: u64,
     },
+    /// Grow each of these char ranges to the node enclosing it.
+    Grow {
+        /// Which document.
+        id: DocId,
+        /// Which version of it the ranges are in.
+        version: u64,
+        /// Which grow this is, echoed back so an answer is matched to the
+        /// question it answers rather than to whichever one is outstanding.
+        serial: u64,
+        /// The ranges, one per selection.
+        ranges: Vec<std::ops::Range<u32>>,
+    },
     /// Stop following a document.
     Close(DocId),
     /// A marker that comes back once everything before it is done.
@@ -96,6 +108,17 @@ pub enum Reply {
         version: u64,
         /// The outline.
         symbols: Vec<crate::Symbol>,
+    },
+    /// The ranges from [`Request::Grow`], grown, in the same order.
+    Grown {
+        /// Which document.
+        id: DocId,
+        /// Which version they were grown in.
+        version: u64,
+        /// The serial of the [`Request::Grow`] this answers.
+        serial: u64,
+        /// The grown ranges, or `None` when the language is switched off.
+        ranges: Option<Vec<std::ops::Range<u32>>>,
     },
     /// The marker from [`Request::Echo`].
     Echo(u64),
@@ -176,17 +199,27 @@ fn coalesce(batch: Vec<Request>) -> Vec<Request> {
                     out.push(request);
                 }
             }
-            Request::Open { id, .. } | Request::Close(id) => {
+            // None of these is folded, and none may be folded past: each marks
+            // a point the document's text must stand still at. The requests
+            // either side of an open or a close are about different text,
+            // whatever the id says.
+            //
+            // An outline or a grow folded backwards would move in front of an
+            // `Update` in the same batch and read the text that update was
+            // about to replace — the same hazard the `Window` rule above exists
+            // to avoid. And a later `Update` folded into one before it would
+            // jump the queue the other way, so the question is answered from
+            // text newer than the version it names.
+            Request::Open { id, .. }
+            | Request::Close(id)
+            | Request::Symbols { id, .. }
+            | Request::Grow { id, .. } => {
                 absorbing.remove(&id);
                 out.push(request);
             }
-            // Neither is folded. An outline folded backwards would move in
-            // front of an `Update` in the same batch and read the text that
-            // update was about to replace — the same hazard the `Window` rule
-            // above exists to avoid, and reading a cached parse twice is
-            // cheaper than answering from the wrong text once. An echo keeps
-            // its place because its place is the whole point of it.
-            Request::Symbols { .. } | Request::Echo(_) => out.push(request),
+            // An echo keeps its place because its place is the whole point of
+            // it; it reads no text, so folding across it is harmless.
+            Request::Echo(_) => out.push(request),
         }
     }
     out
@@ -250,6 +283,12 @@ fn handle(documents: &mut HashMap<DocId, Document>, request: Request) -> Vec<Rep
                 return replies;
             };
             vec![Reply::Symbols { id, version, symbols }]
+        }
+        Request::Grow { id, version, serial, ranges } => {
+            // Always answered, even for a document that is not being followed:
+            // the editor is waiting to know what to select.
+            let ranges = documents.get_mut(&id).and_then(|document| document.grow(&ranges));
+            vec![Reply::Grown { id, version, serial, ranges }]
         }
         Request::Close(id) => {
             documents.remove(&id);
@@ -354,6 +393,38 @@ mod tests {
             matches!(last, Request::Symbols { version: 5, .. }),
             "the outline stays behind the update: {folded:?}"
         );
+    }
+
+    #[test]
+    fn a_grow_is_not_folded_in_front_of_the_text_it_reads() {
+        let folded = coalesce(vec![
+            update(1, 5, "fn a() {}", None),
+            Request::Grow { id: 1, version: 5, serial: 1, ranges: vec![0..0, 3..3] },
+            update(1, 6, "fn ab() {}", None),
+        ]);
+        assert_eq!(folded.len(), 3, "the grow splits the updates: {folded:?}");
+        assert!(matches!(folded[1], Request::Grow { version: 5, .. }));
+    }
+
+    #[test]
+    fn an_update_after_an_outline_is_not_folded_in_front_of_it() {
+        let folded = coalesce(vec![
+            update(1, 5, "fn a() {}", None),
+            Request::Symbols { id: 1, version: 5 },
+            update(1, 6, "fn ab() {}", None),
+        ]);
+        assert_eq!(folded.len(), 3, "the outline reads version 5's text: {folded:?}");
+        assert_eq!(as_update(&folded[0]).1, "fn a() {}");
+    }
+
+    #[test]
+    fn a_grow_for_a_document_nobody_follows_is_still_answered() {
+        // The editor waits for the answer before it will grow again.
+        let replies = handle(
+            &mut HashMap::new(),
+            Request::Grow { id: 9, version: 1, serial: 2, ranges: vec![0..0, 3..3] },
+        );
+        assert_eq!(replies, [Reply::Grown { id: 9, version: 1, serial: 2, ranges: None }]);
     }
 
     #[test]

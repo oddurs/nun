@@ -2,10 +2,11 @@
 id: 26
 title: Structural selection
 type: feature
-status: backlog
+status: done
 milestone: m3
+assignee: Oddur Sigurdsson
 created: 2026-09-10
-updated: 2026-09-10
+updated: 2026-09-22
 priority: p2
 effort: s
 area: syntax
@@ -23,6 +24,10 @@ On the mouse, ctrl-double-click grows from the node under the pointer.
 
 ## Acceptance criteria
 
-- [ ] Grow and shrink are exact inverses along one path
-- [ ] Works with multiple selections independently
-- [ ] Sensible on an empty selection: starts from the node under the caret
+- [x] Grow and shrink are exact inverses along one path
+- [x] Works with multiple selections independently
+- [x] Sensible on an empty selection: starts from the node under the caret
+
+## 2026-09-22
+
+Grow is asked of the syntax worker (the tree lives there), shrink walks back a trail of the selections each grow started from, which is what makes them exact inverses. architecture-guard found: an answer to a grow abandoned by a shrink was taken for a later grow from the same caret (grows now carry a serial); the click counter wraps to 1 on the fourth Ctrl-click, which started a move-drag instead of growing; a grow asked while a stale one was out was counted and then dropped with it; the last key of a chord was handed to a focused panel as if pressed alone.
