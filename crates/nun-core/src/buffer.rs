@@ -58,6 +58,35 @@ impl DiskStamp {
     }
 }
 
+/// Most selections [`Buffer::add_all_occurrences`] will make.
+///
+/// Far more than anyone edits by hand, and few enough that every keystroke
+/// and undo step still carries them all within a frame.
+pub const MOST_OCCURRENCES: usize = 10_000;
+
+/// What asking for every occurrence came to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AllOccurrences {
+    /// This many are selected now, the one being driven among them.
+    Selected(usize),
+    /// There was nothing to look for.
+    Nothing,
+    /// More than `limit`; nothing was changed.
+    TooMany {
+        /// The most that would have been selected.
+        limit: usize,
+    },
+}
+
+/// Whether two ranges cover the same text, whichever way round each was made.
+///
+/// `Range`'s own equality is direction-sensitive, which is right for a
+/// selection the user is dragging and wrong for asking "is this the same bit
+/// of text".
+fn covers_same(one: Range, other: Range) -> bool {
+    one.from() == other.from() && one.to() == other.to()
+}
+
 /// A text document: the rope, the selections into it, and its undo history.
 ///
 /// Text is held with `\n` line endings regardless of what the file uses, so
@@ -406,9 +435,11 @@ impl Buffer {
             inverse.end = inverse.end.saturating_add_signed(shift);
             shift += edit.inserted().cast_signed() - edit.removed().cast_signed();
         }
-        for edit in &edits {
-            self.selections.map_through(edit);
-        }
+        // Lowest first for the mapping, which walks them in order once rather
+        // than once per edit: with five hundred carets, mapping every
+        // selection through every edit is a quarter of a million steps a key.
+        let ascending: Vec<Edit> = edits.iter().rev().cloned().collect();
+        self.selections.map_through_all(&ascending);
 
         let after = self.selections.clone();
         self.record(edits, inverse, before, after);
@@ -431,57 +462,99 @@ impl Buffer {
 
     /// Widen the open revision to cover this edit too, if the two are a run.
     ///
+    /// With several carets a keystroke is several edits, and it continues the
+    /// run only if every caret's edit continues its own: undo has to take back
+    /// the same amount of typing whether there was one caret or five hundred.
+    /// A change in how many there are — two carets meeting and merging —
+    /// ends the run.
+    ///
     /// Both lists are rewritten relative to the state before the whole
     /// revision, which is the only frame in which undo later replays them.
     fn try_coalesce(&mut self, forward: &[Edit], inverse: &[Edit], after: &Selections) -> bool {
-        if forward.len() != 1 || inverse.len() != 1 {
-            return false;
-        }
         let Some(tip) = self.history.open_tip() else { return false };
-        if tip.forward.len() != 1 || tip.inverse.len() != 1 {
+        let count = forward.len();
+        if count == 0
+            || inverse.len() != count
+            || tip.forward.len() != count
+            || tip.inverse.len() != count
+        {
             return false;
         }
 
-        let (previous, previous_inverse) = (tip.forward[0].clone(), tip.inverse[0].clone());
-        let (next, next_inverse) = (forward[0].clone(), inverse[0].clone());
+        // Both revisions are stored highest-first; the arithmetic below reads
+        // lowest-first, where each edit's shift is what the ones before it did.
+        let previous: Vec<&Edit> = tip.forward.iter().rev().collect();
+        let previous_removed: Vec<&str> = tip.inverse.iter().rev().map(|e| &*e.text).collect();
+        let next: Vec<&Edit> = forward.iter().rev().collect();
+        let next_removed: Vec<&str> = inverse.iter().rev().map(|e| &*e.text).collect();
 
-        // Typing forward: the new insert begins exactly where the last one
-        // ended. A newline ends the run, so undo stops at line boundaries.
-        let insert_run = previous.removed() == 0
-            && next.removed() == 0
-            && next.start == previous.end_after()
-            && !previous.text.contains('\n')
-            && !next.text.contains('\n');
-
-        if insert_run {
-            let start = previous.start;
-            tip.forward[0] = Edit::insert(start, format!("{}{}", previous.text, next.text));
-            tip.inverse[0] = Edit::delete(start, tip.forward[0].end_after());
-            tip.after = after.clone();
-            return true;
+        // Where each of the previous edits starts and ends in the text they
+        // left behind, which is the frame the next edits were made in.
+        // `shifts[i]` is how far the edits below the `i`th moved the text.
+        let mut shift: isize = 0;
+        let mut landed = Vec::with_capacity(count);
+        let mut shifts = Vec::with_capacity(count);
+        for edit in &previous {
+            let start = edit.start.saturating_add_signed(shift);
+            landed.push((start, start + edit.inserted()));
+            shifts.push(shift);
+            shift += edit.inserted().cast_signed() - edit.removed().cast_signed();
         }
 
-        // Backspacing: the new delete ends exactly where the last one began, so
-        // together they remove one contiguous span.
-        let delete_run = previous.text.is_empty()
-            && next.text.is_empty()
-            && next.end == previous.start
-            && !previous_inverse.text.contains('\n')
-            && !next_inverse.text.contains('\n');
+        // Typing forward: every new insert begins exactly where its caret's
+        // last one ended. A newline ends the run, so undo stops at line
+        // boundaries.
+        let insert_run = (0..count).all(|i| {
+            previous[i].removed() == 0
+                && next[i].removed() == 0
+                && next[i].start == landed[i].1
+                && !previous[i].text.contains('\n')
+                && !next[i].text.contains('\n')
+        });
 
-        if delete_run {
-            let start = next.start;
-            tip.forward[0] = Edit::delete(start, previous.end);
-            tip.inverse[0] = Edit::replace(
-                start,
-                start,
-                format!("{}{}", next_inverse.text, previous_inverse.text),
-            );
-            tip.after = after.clone();
-            return true;
+        // Backspacing: every new delete ends exactly where its caret's last one
+        // began, so together they remove one contiguous span per caret.
+        let delete_run = !insert_run
+            && (0..count).all(|i| {
+                previous[i].text.is_empty()
+                    && next[i].text.is_empty()
+                    && next[i].end == landed[i].0
+                    && !previous_removed[i].contains('\n')
+                    && !next_removed[i].contains('\n')
+            });
+
+        if !insert_run && !delete_run {
+            return false;
         }
 
-        false
+        // The merged edits, lowest first, in the frame before the revision,
+        // and what each of them takes out.
+        let mut merged: Vec<(Edit, String)> = Vec::with_capacity(count);
+        for i in 0..count {
+            if insert_run {
+                let text = format!("{}{}", previous[i].text, next[i].text);
+                merged.push((Edit::insert(previous[i].start, text), String::new()));
+            } else {
+                let start = next[i].start.saturating_add_signed(-shifts[i]);
+                let removed = format!("{}{}", next_removed[i], previous_removed[i]);
+                merged.push((Edit::delete(start, previous[i].end), removed));
+            }
+        }
+
+        // Each inverse sits where its edit's result landed once everything
+        // beneath it was applied, so undo can replay them highest-first.
+        let mut shift: isize = 0;
+        let mut inverses = Vec::with_capacity(count);
+        for (edit, removed) in &merged {
+            let start = edit.start.saturating_add_signed(shift);
+            inverses.push(Edit::replace(start, start + edit.inserted(), removed.clone()));
+            shift += edit.inserted().cast_signed() - edit.removed().cast_signed();
+        }
+
+        tip.forward = merged.into_iter().rev().map(|(edit, _)| edit).collect();
+        tip.inverse = inverses.into_iter().rev().collect();
+        tip.after = after.clone();
+        true
     }
 
     /// Insert `text` at every selection, replacing anything selected.
@@ -574,8 +647,7 @@ impl Buffer {
             // At the head of a line, step back over the newline itself.
             return char_idx - 1;
         }
-        let text = self.line_text(line);
-        start + grapheme::prev_boundary(&text, char_idx - start)
+        start + grapheme::prev_boundary_in(self.rope.line(line), char_idx - start)
     }
 
     /// Char index of the grapheme boundary after `char_idx`, crossing lines.
@@ -587,8 +659,7 @@ impl Buffer {
         }
         let line = self.line_of(char_idx);
         let start = self.line_start(line);
-        let text = self.line_text(line);
-        (start + grapheme::next_boundary(&text, char_idx - start)).min(len)
+        (start + grapheme::next_boundary_in(self.rope.line(line), char_idx - start)).min(len)
     }
 
     /// Move every caret one grapheme left, extending the selection if asked.
@@ -700,6 +771,240 @@ impl Buffer {
         let len = self.len_chars();
         self.selections = Selections::single(Range::new(0, len));
         self.history.commit();
+    }
+
+    // ── several carets ──────────────────────────────────────────────────────
+
+    /// Add a caret on the line above every selection, or below.
+    ///
+    /// Each new caret lands on the column its selection is aiming for, so a
+    /// column of carets walked down past short lines comes out straight again
+    /// rather than collapsing against the ragged edge.
+    ///
+    /// Nothing is added for a selection already on the first or last line;
+    /// pressing the key at the top of a file should not stack carets on each
+    /// other.
+    pub fn add_caret_vertically(&mut self, up: bool) {
+        let last_line = self.len_lines() - 1;
+        let mut ranges: Vec<Range> = self.selections.ranges().to_vec();
+        let mut added: Vec<Range> = Vec::new();
+        for range in self.selections.ranges() {
+            let line = self.line_of(range.head);
+            if (up && line == 0) || (!up && line == last_line) {
+                continue;
+            }
+            let target = if up { line - 1 } else { line + 1 };
+            let goal = range.sticky.unwrap_or_else(|| self.column_of(range.head));
+            let text = self.line_text(target);
+            let offset = grapheme::char_off_at_width(&text, goal, self.tab_width);
+            let mut caret = Range::caret(self.line_start(target) + offset);
+            caret.sticky = Some(goal);
+            added.push(caret);
+        }
+        if added.is_empty() {
+            return;
+        }
+        // The caret being driven is the one at the frontier — topmost going
+        // up, bottom-most going down — so pressing again carries on from
+        // where it got to and the view follows it. `added` is in the order
+        // the selections were in, so its last element belongs to the
+        // *bottom-most* selection whichever way this went.
+        let frontier = added
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, caret)| if up { usize::MAX - caret.from() } else { caret.from() })
+            .map_or(0, |(at, _)| at);
+        let primary = ranges.len() + frontier;
+        ranges.append(&mut added);
+        self.selections = Selections::new(ranges, primary);
+        self.history.commit();
+    }
+
+    /// Select the word the primary caret is in, or — when it already covers
+    /// something — add the next occurrence of that text and drive it.
+    ///
+    /// Returns whether anything happened, so a keystroke that found nothing
+    /// can say so rather than looking like it worked.
+    pub fn add_next_occurrence(&mut self) -> bool {
+        let primary = self.selections.primary();
+        if primary.from() == primary.to() {
+            let (from, to) = self.word_range(primary.head);
+            if from == to {
+                return false;
+            }
+            self.selections.set_primary(Range::new(from, to));
+            self.history.commit();
+            return true;
+        }
+
+        let Some(next) = self.occurrence_after(primary) else {
+            // Every occurrence is taken already; wrapping onto one of them
+            // would move the primary around for ever and add nothing.
+            return false;
+        };
+        let mut ranges: Vec<Range> = self.selections.ranges().to_vec();
+        ranges.push(next);
+        let primary = ranges.len() - 1;
+        self.selections = Selections::new(ranges, primary);
+        self.history.commit();
+        true
+    }
+
+    /// Select every occurrence of what the primary selection covers.
+    ///
+    /// From a bare caret the word it sits in is selected first, so one press
+    /// does what two would. Occurrences that overlap or touch — `aa` in
+    /// `aaaaaa` — are taken left to right with a gap between each, since
+    /// selections that meet are one selection; the one in hand is kept.
+    ///
+    /// Past [`MOST_OCCURRENCES`] nothing is selected at all: a bare caret on a
+    /// run of spaces in a large file would otherwise make millions of carets,
+    /// and every one of them is carried by every keystroke and every undo
+    /// step afterwards.
+    pub fn add_all_occurrences(&mut self) -> AllOccurrences {
+        if self.selections.primary().from() == self.selections.primary().to()
+            && !self.add_next_occurrence()
+        {
+            return AllOccurrences::Nothing;
+        }
+        let primary = self.selections.primary();
+        let needle = self.slice(primary.from(), primary.to());
+        if needle.is_empty() {
+            return AllOccurrences::Nothing;
+        }
+        let text = self.rope.to_string();
+        let mut ranges: Vec<Range> = Vec::new();
+        for (from, to) in self.occurrences(&text, &needle, 0) {
+            // Touching counts as overlapping: two selections that share an
+            // edge are one selection, so `catcat` would come out as one.
+            let meets_primary = from <= primary.to() && primary.from() <= to;
+            let is_primary = from == primary.from() && to == primary.to();
+            let clear = ranges.last().is_none_or(|last| last.to() < from);
+            if clear && (is_primary || !meets_primary) {
+                if ranges.len() == MOST_OCCURRENCES {
+                    return AllOccurrences::TooMany { limit: MOST_OCCURRENCES };
+                }
+                ranges.push(Range::new(from, to));
+            }
+        }
+        // Whichever was being driven stays the one being driven — found by
+        // what it covers, since every range built above runs forwards and the
+        // one in hand may have been made leftwards.
+        let primary = ranges.iter().position(|range| covers_same(*range, primary)).unwrap_or(0);
+        let count = ranges.len();
+        self.selections = Selections::new(ranges, primary);
+        self.history.commit();
+        AllOccurrences::Selected(count)
+    }
+
+    /// Turn every selection that spans lines into one selection per line.
+    ///
+    /// A selection within one line is left alone: there is nothing to split,
+    /// and replacing it with itself would only look like the key had failed.
+    pub fn split_into_lines(&mut self) -> bool {
+        let mut ranges: Vec<Range> = Vec::new();
+        let mut split = false;
+        for range in self.selections.ranges() {
+            let (from, to) = (range.from(), range.to());
+            let (first, mut last) = (self.line_of(from), self.line_of(to));
+            // A selection of whole lines ends at the start of the next one,
+            // which it does not cover: no caret belongs there.
+            if last > first && to == self.line_start(last) {
+                last -= 1;
+            }
+            if first == last && self.line_of(to) == first {
+                ranges.push(*range);
+                continue;
+            }
+            split = true;
+            for line in first..=last {
+                let start = self.line_start(line).max(from);
+                let end = self.line_end(line).min(to);
+                if start <= end {
+                    ranges.push(Range::new(start, end));
+                }
+            }
+        }
+        if !split {
+            return false;
+        }
+        self.selections = Selections::new(ranges, 0);
+        self.history.commit();
+        true
+    }
+
+    /// The first occurrence of what `range` covers that starts after it,
+    /// wrapping back to the start of the buffer, and that no selection
+    /// already covers any of.
+    fn occurrence_after(&self, range: Range) -> Option<Range> {
+        let needle = self.slice(range.from(), range.to());
+        if needle.is_empty() {
+            return None;
+        }
+        let text = self.rope.to_string();
+        let taken = self.selections.ranges();
+        let free = |(from, to): (usize, usize)| {
+            // Sorted and disjoint, so only the first range reaching `from` can
+            // meet it — and meeting is enough, since selections that share an
+            // edge merge into one.
+            let at = taken.partition_point(|r| r.to() < from);
+            taken.get(at).is_none_or(|r| r.from() > to)
+        };
+        let after = self.rope.char_to_byte(range.to());
+        self.occurrences(&text, &needle, after)
+            .chain(self.occurrences(&text, &needle, 0).take_while(|&(from, _)| from < range.to()))
+            .find(|&found| free(found))
+            .map(|(from, to)| Range::new(from, to))
+    }
+
+    /// Every place `needle` occurs in `text` — the buffer's own text — at or
+    /// after byte `start`, as char ranges that begin and end between grapheme
+    /// clusters. Overlapping occurrences are all reported.
+    ///
+    /// Searching finds byte runs, and a run that starts or ends inside a
+    /// cluster is not an occurrence: the `e` of `é`, or half a flag. After one
+    /// of those the search goes on from the next char rather than from its
+    /// end, so it cannot hide a real occurrence that overlaps it.
+    fn occurrences<'t>(
+        &'t self,
+        text: &'t str,
+        needle: &'t str,
+        start: usize,
+    ) -> impl Iterator<Item = (usize, usize)> + 't {
+        let chars = needle.chars().count();
+        let step = needle.chars().next().map_or(1, char::len_utf8);
+        let mut at = start;
+        std::iter::from_fn(move || {
+            loop {
+                let byte = at + text.get(at..)?.find(needle)?;
+                at = byte + step;
+                let from = self.rope.byte_to_char(byte);
+                let to = from + chars;
+                if self.on_cluster_boundary(from) && self.on_cluster_boundary(to) {
+                    return Some((from, to));
+                }
+            }
+        })
+    }
+
+    /// Whether `at` sits between two grapheme clusters rather than inside one.
+    ///
+    /// Searching finds byte runs, and UTF-8 makes those char boundaries for
+    /// free — but not cluster boundaries. Without this, looking for `e` finds
+    /// the `e` inside `é` and looking for one regional indicator finds half a
+    /// flag, and typing over the result leaves the other half glued to what
+    /// was typed.
+    fn on_cluster_boundary(&self, at: usize) -> bool {
+        if at == 0 || at >= self.len_chars() {
+            return true;
+        }
+        self.next_grapheme(self.prev_grapheme(at)) == at
+    }
+
+    /// The text between two char indices.
+    fn slice(&self, from: usize, to: usize) -> String {
+        let end = to.min(self.len_chars());
+        self.rope.slice(from.min(end)..end).to_string()
     }
 
     // ── pointer selection ───────────────────────────────────────────────────

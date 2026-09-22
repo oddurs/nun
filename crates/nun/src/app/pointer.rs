@@ -18,7 +18,10 @@ use std::time::{Duration, Instant};
 use crossterm::event::{KeyModifiers, MouseEvent};
 use nun_core::{Range, Selections};
 
+use nun_ui::MenuItem;
+
 use super::{App, Outcome, Target};
+use crate::commands::Command;
 
 /// What a drag in progress is extending.
 #[derive(Debug, Clone)]
@@ -119,6 +122,61 @@ impl App {
 
         self.drag = Some(Drag { mode, pointer: (column, row) });
         self.drag_to(column, row, now);
+        Outcome::Redraw
+    }
+
+    /// The right button went down in the text: the commands that make and
+    /// shape selections, as a menu.
+    ///
+    /// These are the mouse path for what has no gesture of its own — finding
+    /// the next occurrence, or every one — and they act on the selections as
+    /// they stand. So a click inside one of them leaves them alone, and a
+    /// click anywhere else puts a caret there first, as it would in any
+    /// editor: the menu is about what is under the pointer.
+    pub(super) fn text_menu(&mut self, mouse: MouseEvent) -> Outcome {
+        self.focus = super::Focus::Editor;
+        if let Some(pane) = self.panes.layout().pane_at(self.panes_area(), mouse.column, mouse.row)
+        {
+            self.panes.set_focus(pane);
+        }
+        let at = self.pointer_position(mouse.column, mouse.row);
+        let inside = self
+            .doc()
+            .buffer
+            .selections()
+            .ranges()
+            .iter()
+            .any(|range| range.from() <= at && at <= range.to());
+        if !inside {
+            self.doc_mut().buffer.set_selections(Selections::single(Range::caret(at)));
+        }
+
+        let mut commands = vec![
+            Command::AddNextOccurrence,
+            Command::AddAllOccurrences,
+            Command::AddCaretAbove,
+            Command::AddCaretBelow,
+        ];
+        let buffer = &self.doc().buffer;
+        if buffer
+            .selections()
+            .ranges()
+            .iter()
+            .any(|range| buffer.line_of(range.from()) != buffer.line_of(range.to()))
+        {
+            commands.push(Command::SplitIntoLines);
+        }
+        commands.push(Command::SelectAll);
+
+        let items: Vec<MenuItem> = commands
+            .iter()
+            .map(|&command| MenuItem {
+                label: command.title().to_string(),
+                hint: self.binding_for(command),
+            })
+            .collect();
+        let area = nun_ui::Menu::area(&items, mouse.column, mouse.row, self.viewport);
+        self.menu = Some(super::sidebar::OpenMenu { area, items, commands });
         Outcome::Redraw
     }
 
@@ -524,6 +582,52 @@ mod tests {
 
         app.handle(Event::Key(KeyEvent::from(KeyCode::Char('_'))));
         assert_eq!(text(&app), "abc_f\nab\nabc_f\nabc_f");
+    }
+
+    // ── the menu ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn right_click_offers_every_occurrence_and_picking_it_selects_them() {
+        let mut app = app("cat dog cat\ncat\n", 10);
+        let mut pointer = Pointer::new();
+        let right =
+            mouse(MouseEventKind::Down(MouseButton::Right), GUTTER + 1, 0, KeyModifiers::NONE);
+        app.handle_at(right, pointer.now);
+
+        let menu = app.menu.as_ref().expect("a menu opened in the text");
+        let index = menu
+            .commands
+            .iter()
+            .position(|command| *command == Command::AddAllOccurrences)
+            .expect("it offers every occurrence");
+        let item = Rect { y: menu.area.y + u16::try_from(index).unwrap(), height: 1, ..menu.area };
+
+        pointer.wait(1000);
+        pointer.press(&mut app, item.x + 1, item.y, KeyModifiers::NONE);
+        pointer.release(&mut app, item.x + 1, item.y, KeyModifiers::NONE);
+        let spans: Vec<(usize, usize)> =
+            app.buffer().selections().ranges().iter().map(|r| (r.from(), r.to())).collect();
+        assert_eq!(spans, [(0, 3), (8, 11), (12, 15)], "the word clicked, everywhere");
+    }
+
+    #[test]
+    fn right_click_inside_a_selection_keeps_it() {
+        let mut app = app("one two three", 10);
+        let mut pointer = Pointer::new();
+        pointer.press(&mut app, GUTTER, 0, KeyModifiers::NONE);
+        pointer.drag(&mut app, GUTTER + 7, 0);
+        pointer.release(&mut app, GUTTER + 7, 0, KeyModifiers::NONE);
+
+        let right =
+            mouse(MouseEventKind::Down(MouseButton::Right), GUTTER + 2, 0, KeyModifiers::NONE);
+        app.handle(right);
+        assert_eq!(selected(&app), "one two", "the menu acts on it, so it stays");
+
+        app.handle(Event::Key(KeyEvent::from(KeyCode::Esc)));
+        let right =
+            mouse(MouseEventKind::Down(MouseButton::Right), GUTTER + 10, 0, KeyModifiers::NONE);
+        app.handle(right);
+        assert_eq!(app.buffer().selections().primary(), Range::caret(10), "outside it, a caret");
     }
 
     // ── moving text ─────────────────────────────────────────────────────────

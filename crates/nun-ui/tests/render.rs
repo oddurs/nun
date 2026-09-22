@@ -395,15 +395,24 @@ fn caret_columns(harness: &Harness, palette: &Palette, row: u16) -> Vec<u16> {
 }
 
 #[test]
-fn every_caret_is_drawn_not_only_the_primary() {
+fn every_caret_is_drawn_and_the_one_being_driven_stands_out() {
+    // With several carets, the one the arrows move has to be findable, or
+    // every key press is a guess about where the text will appear. The others
+    // are still drawn, and still solid.
     let mut buffer = Buffer::from_text("abc\nabc");
     buffer.set_selections(Selections::new(vec![Range::caret(1), Range::caret(5)], 0));
     let palette = palette();
     let mut harness = Harness::new(20, 3);
     draw(&mut harness, &buffer, &palette);
 
-    assert_eq!(caret_columns(&harness, &palette, 0), vec![3 + 1]);
-    assert_eq!(caret_columns(&harness, &palette, 1), vec![3 + 1]);
+    assert_eq!(caret_columns(&harness, &palette, 0), vec![3 + 1], "the primary, in the accent");
+    assert!(caret_columns(&harness, &palette, 1).is_empty(), "the other is not in the accent");
+
+    let quiet = palette.on(Role::LineStrong, Role::Ground);
+    let cells = harness.cells();
+    let others: Vec<u16> =
+        (0..harness.area().width).filter(|&x| cells[(x, 1)].bg == quiet.bg.unwrap()).collect();
+    assert_eq!(others, vec![3 + 1], "but it is drawn");
 }
 
 #[test]

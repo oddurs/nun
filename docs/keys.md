@@ -46,3 +46,8 @@ This file is generated from the source by `nun keys`. Do not edit it by hand.
 | Search: toggle match case | `search.toggle_case` | `Ctrl+K C` | `Ctrl+K C` |
 | Search: toggle whole words | `search.toggle_word` | `Ctrl+K Shift+W` | `Ctrl+K Shift+W` |
 | Search: toggle ignored files | `search.toggle_ignored` | `Ctrl+K Shift+I` | `Ctrl+K Shift+I` |
+| Add a caret above | `caret.add_above` | `Alt+Up`, `Ctrl+K Up` | `Ctrl+K Up` |
+| Add a caret below | `caret.add_below` | `Alt+Down`, `Ctrl+K Down` | `Ctrl+K Down` |
+| Select the next occurrence | `caret.add_next` | `Ctrl+D`, `Cmd+D` | `Ctrl+D` |
+| Select every occurrence | `caret.add_all` | `Ctrl+Shift+L`, `Cmd+Shift+L`, `Ctrl+K D` | `Ctrl+K D` |
+| One caret per line | `caret.split_lines` | `Ctrl+K L` | `Ctrl+K L` |
