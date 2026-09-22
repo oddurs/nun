@@ -91,14 +91,23 @@ impl Folds {
         self.folds = self.folds.iter().filter_map(|fold| fold.mapped(edit)).collect();
     }
 
-    /// Open every fold hiding one of `heads`, which must be sorted. Whether
+    /// Open every fold hiding the head of one of `selections`, each given as
+    /// `(head, anchor)` and sorted by head, in text `len` chars long. Whether
     /// any was opened.
-    pub(crate) fn reveal(&mut self, heads: &[usize]) -> bool {
+    ///
+    /// A fold running to the very end of the text stays shut under a
+    /// selection that takes it whole, from its header to the end. Selecting
+    /// a folded line does that when the file has no newline after the fold:
+    /// there is no line in view after it for the selection to end on.
+    /// Anywhere else a head at the fold's end is out of sight, and opens it.
+    pub(crate) fn reveal(&mut self, selections: &[(usize, usize)], len: usize) -> bool {
         let before = self.folds.len();
         self.folds.retain(|fold| {
-            // The first head past the start is the only one that can be inside.
-            let at = heads.partition_point(|&head| head <= fold.start);
-            heads.get(at).is_none_or(|&head| !fold.hides(head))
+            let at = selections.partition_point(|&(head, _)| head <= fold.start);
+            selections[at..]
+                .iter()
+                .take_while(|&&(head, _)| fold.hides(head))
+                .all(|&(head, anchor)| head == len && anchor <= fold.start)
         });
         self.folds.len() != before
     }
@@ -280,8 +289,18 @@ mod tests {
     fn a_caret_inside_opens_the_fold_and_one_on_the_header_does_not() {
         let mut folds = Folds::default();
         folds.add(Fold { start: 10, end: 20 });
-        assert!(!folds.reveal(&[3, 10, 21]));
-        assert!(folds.reveal(&[3, 15]));
+        assert!(!folds.reveal(&[(3, 3), (10, 10), (21, 21)], 30));
+        assert!(folds.reveal(&[(3, 3), (15, 15)], 30));
         assert_eq!(folds.iter().count(), 0);
+    }
+
+    #[test]
+    fn a_selection_taking_a_fold_at_the_very_end_whole_leaves_it_shut() {
+        let mut folds = Folds::default();
+        folds.add(Fold { start: 10, end: 20 });
+        assert!(!folds.reveal(&[(20, 4)], 20), "from the header's line to the end");
+        assert!(folds.reveal(&[(20, 12)], 20), "from inside it");
+        folds.add(Fold { start: 10, end: 20 });
+        assert!(folds.reveal(&[(20, 4)], 30), "a head at a fold's end mid-text is hidden");
     }
 }
