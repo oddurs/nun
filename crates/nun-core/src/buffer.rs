@@ -8,6 +8,7 @@ use std::time::SystemTime;
 use ropey::Rope;
 
 use crate::edit::Edit;
+use crate::fold::{Fold, Folds, Hidden};
 use crate::grapheme;
 use crate::history::{History, Revision};
 use crate::selection::{Range, Selections};
@@ -135,6 +136,8 @@ pub struct Buffer {
     tab_width: usize,
     /// What has happened since it was last taken.
     change: Changed,
+    /// Regions folded out of sight.
+    folds: Folds,
 }
 
 impl Default for Buffer {
@@ -159,6 +162,7 @@ impl Buffer {
             stamp: None,
             tab_width: DEFAULT_TAB_WIDTH,
             change: Changed::Nothing,
+            folds: Folds::default(),
         }
     }
 
@@ -302,6 +306,7 @@ impl Buffer {
     /// commits rather than leaving the group open.
     pub fn set_selections(&mut self, selections: Selections) {
         self.selections = selections;
+        self.reveal();
         self.history.commit();
     }
 
@@ -382,6 +387,9 @@ impl Buffer {
         if !edit.text.is_empty() {
             self.rope.insert(edit.start, &edit.text);
         }
+        // Every change to the text comes through here — typing, undo, redo —
+        // so this is the one place a fold has to be told the text moved.
+        self.folds.map_through(edit);
         Edit::replace(edit.start, edit.end_after(), removed)
     }
 
@@ -440,6 +448,7 @@ impl Buffer {
         // selection through every edit is a quarter of a million steps a key.
         let ascending: Vec<Edit> = edits.iter().rev().cloned().collect();
         self.selections.map_through_all(&ascending);
+        self.reveal();
 
         let after = self.selections.clone();
         self.record(edits, inverse, before, after);
@@ -619,6 +628,7 @@ impl Buffer {
             self.apply_to_rope(edit);
         }
         self.selections = revision.before;
+        self.reveal();
         true
     }
 
@@ -630,6 +640,7 @@ impl Buffer {
             self.apply_to_rope(edit);
         }
         self.selections = revision.after;
+        self.reveal();
         true
     }
 
@@ -696,6 +707,7 @@ impl Buffer {
             index += 1;
             if extend { r.with_head(head) } else { Range::caret(head) }
         });
+        self.reveal();
         self.history.commit();
     }
 
@@ -710,7 +722,9 @@ impl Buffer {
     }
 
     fn move_vertical(&mut self, extend: bool, up: bool) {
-        let last_line = self.len_lines() - 1;
+        // Up and down move between lines in view: a folded region is stepped
+        // over whole, never walked into a line at a time.
+        let hidden = self.hidden();
         let moved: Vec<(usize, usize)> = self
             .selections
             .ranges()
@@ -720,7 +734,7 @@ impl Buffer {
                 // The column the caret is aiming for survives crossing short
                 // lines, which is why it is remembered rather than recomputed.
                 let goal = r.sticky.unwrap_or_else(|| self.column_of(r.head));
-                let target = if up { line.saturating_sub(1) } else { (line + 1).min(last_line) };
+                let target = hidden.step(line, if up { -1 } else { 1 });
                 let text = self.line_text(target);
                 let offset = grapheme::char_off_at_width(&text, goal, self.tab_width);
                 (self.line_start(target) + offset, goal)
@@ -735,6 +749,7 @@ impl Buffer {
             next.sticky = Some(goal);
             next
         });
+        self.reveal();
         self.history.commit();
     }
 
@@ -763,6 +778,7 @@ impl Buffer {
             index += 1;
             if extend { r.with_head(head) } else { Range::caret(head) }
         });
+        self.reveal();
         self.history.commit();
     }
 
@@ -770,7 +786,92 @@ impl Buffer {
     pub fn select_all(&mut self) {
         let len = self.len_chars();
         self.selections = Selections::single(Range::new(0, len));
+        self.reveal();
         self.history.commit();
+    }
+
+    // ── folding ─────────────────────────────────────────────────────────────
+
+    /// Fold away the lines after `header`, up to and including `last`.
+    ///
+    /// A caret inside the region moves to the end of the header, where the
+    /// fold is drawn, so that it is not left out of sight — and so that
+    /// folding does not immediately undo itself, as a caret inside would. A
+    /// region may be folded inside one already folded; its carets then go to
+    /// the header that is actually in view.
+    /// Returns false, and does nothing, unless `header` is above `last` and
+    /// `last` is a line of the buffer.
+    pub fn fold(&mut self, header: usize, last: usize) -> bool {
+        if header >= last || last >= self.len_lines() {
+            return false;
+        }
+        self.folds.add(Fold { start: self.line_end(header), end: self.line_end(last) });
+        // To the end of the line in view that hides them — which is not the
+        // header when the header is itself inside a fold already.
+        let hidden = self.hidden();
+        let moved: Vec<Option<usize>> = self
+            .selections
+            .ranges()
+            .iter()
+            .map(|range| {
+                let line = self.line_of(range.head);
+                hidden.is_hidden(line).then(|| self.line_end(hidden.in_view(line)))
+            })
+            .collect();
+        let mut index = 0;
+        self.selections.transform(|range| {
+            let at = moved[index];
+            index += 1;
+            at.map_or(range, Range::caret)
+        });
+        self.history.commit();
+        true
+    }
+
+    /// Unfold the region folded under `header`. Whether there was one.
+    pub fn unfold(&mut self, header: usize) -> bool {
+        header < self.len_lines() && self.folds.remove_at(self.line_end(header))
+    }
+
+    /// Unfold everything. Whether anything was folded.
+    pub fn unfold_all(&mut self) -> bool {
+        self.folds.clear()
+    }
+
+    /// Every folded region, as the header line that stays in view and the
+    /// last line hidden under it, in order of their headers.
+    #[must_use]
+    pub fn folded(&self) -> Vec<(usize, usize)> {
+        self.folds.iter().map(|fold| (self.line_of(fold.start), self.line_of(fold.end))).collect()
+    }
+
+    /// Whether the region under `header` is folded.
+    #[must_use]
+    pub fn is_folded(&self, header: usize) -> bool {
+        header < self.len_lines()
+            && self.folds.iter().any(|fold| fold.start == self.line_end(header))
+    }
+
+    /// Which lines are out of sight, for anything turning rows into lines.
+    #[must_use]
+    pub fn hidden(&self) -> Hidden {
+        let runs = self
+            .folds
+            .iter()
+            .map(|fold| (self.line_of(fold.start) + 1, self.line_of(fold.end)))
+            .collect();
+        Hidden::new(runs, self.len_lines() - 1)
+    }
+
+    /// Open every fold a caret has landed in.
+    ///
+    /// Called wherever the selections change. A caret out of sight is typing
+    /// into text nobody can see, so moving one into a fold — a click, a jump
+    /// to a symbol, undo, an occurrence found inside — shows what it is in.
+    fn reveal(&mut self) {
+        let mut heads: Vec<usize> = self.selections.ranges().iter().map(|r| r.head).collect();
+        heads.sort_unstable();
+        self.folds.reveal(&heads);
     }
 
     // ── several carets ──────────────────────────────────────────────────────
@@ -785,15 +886,16 @@ impl Buffer {
     /// pressing the key at the top of a file should not stack carets on each
     /// other.
     pub fn add_caret_vertically(&mut self, up: bool) {
-        let last_line = self.len_lines() - 1;
+        let hidden = self.hidden();
         let mut ranges: Vec<Range> = self.selections.ranges().to_vec();
         let mut added: Vec<Range> = Vec::new();
         for range in self.selections.ranges() {
             let line = self.line_of(range.head);
-            if (up && line == 0) || (!up && line == last_line) {
+            // The next line in view, so a caret is never added out of sight.
+            let target = hidden.step(line, if up { -1 } else { 1 });
+            if target == line {
                 continue;
             }
-            let target = if up { line - 1 } else { line + 1 };
             let goal = range.sticky.unwrap_or_else(|| self.column_of(range.head));
             let text = self.line_text(target);
             let offset = grapheme::char_off_at_width(&text, goal, self.tab_width);
@@ -817,6 +919,7 @@ impl Buffer {
         let primary = ranges.len() + frontier;
         ranges.append(&mut added);
         self.selections = Selections::new(ranges, primary);
+        self.reveal();
         self.history.commit();
     }
 
@@ -833,6 +936,7 @@ impl Buffer {
                 return false;
             }
             self.selections.set_primary(Range::new(from, to));
+            self.reveal();
             self.history.commit();
             return true;
         }
@@ -846,6 +950,7 @@ impl Buffer {
         ranges.push(next);
         let primary = ranges.len() - 1;
         self.selections = Selections::new(ranges, primary);
+        self.reveal();
         self.history.commit();
         true
     }
@@ -893,6 +998,7 @@ impl Buffer {
         let primary = ranges.iter().position(|range| covers_same(*range, primary)).unwrap_or(0);
         let count = ranges.len();
         self.selections = Selections::new(ranges, primary);
+        self.reveal();
         self.history.commit();
         AllOccurrences::Selected(count)
     }
@@ -929,6 +1035,7 @@ impl Buffer {
             return false;
         }
         self.selections = Selections::new(ranges, 0);
+        self.reveal();
         self.history.commit();
         true
     }
@@ -1134,6 +1241,7 @@ impl Buffer {
             edits.push(Edit::delete(from, to));
         }
         // Its own undo step, never folded into typing before or after it.
+        self.reveal();
         self.history.commit();
         self.edit(edits);
 
@@ -1143,6 +1251,7 @@ impl Buffer {
         if let Some(tip) = self.history.open_tip() {
             tip.after = self.selections.clone();
         }
+        self.reveal();
         self.history.commit();
     }
 

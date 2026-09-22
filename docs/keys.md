@@ -53,3 +53,7 @@ This file is generated from the source by `nun keys`. Do not edit it by hand.
 | One caret per line | `caret.split_lines` | `Ctrl+K L` | `Ctrl+K L` |
 | Grow the selection | `select.grow` | `Alt+Shift+Right`, `Ctrl+K Right` | `Ctrl+K Right` |
 | Shrink the selection | `select.shrink` | `Alt+Shift+Left`, `Ctrl+K Left` | `Ctrl+K Left` |
+| Fold | `fold.fold` | `Cmd+Alt+[`, `Ctrl+K [` | `Ctrl+K [` |
+| Unfold | `fold.unfold` | `Cmd+Alt+]`, `Ctrl+K ]` | `Ctrl+K ]` |
+| Fold everything | `fold.fold_all` | `Ctrl+K 0` | `Ctrl+K 0` |
+| Unfold everything | `fold.unfold_all` | `Ctrl+K J` | `Ctrl+K J` |

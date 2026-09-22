@@ -116,6 +116,16 @@ impl App {
             if let Some(text) = self.text_area_of(pane) {
                 let gutter = gutter.min(text.width);
                 hits.push(super::cells(Rect { width: gutter, ..text }), Target::Gutter, false);
+                // Over the gutter, one column wide: the arrows are part of it,
+                // and a press with no arrow there is the gutter's after all.
+                let arrow = gutter.saturating_sub(2);
+                if arrow < gutter {
+                    hits.push(
+                        super::cells(Rect { x: text.x + arrow, width: 1, ..text }),
+                        Target::FoldArrow,
+                        false,
+                    );
+                }
                 hits.push(
                     super::cells(Rect { x: text.x + gutter, width: text.width - gutter, ..text }),
                     Target::Text,
@@ -236,6 +246,11 @@ impl App {
         let before: Vec<super::panes::DocId> =
             self.docs.iter().map(|document| document.id).collect();
         let open = self.panes.open_docs();
+        for id in &before {
+            if !open.contains(id) {
+                self.remember_folds_of(*id);
+            }
+        }
         self.docs.retain(|doc| open.contains(&doc.id));
         self.forget_from_parser(&before);
     }
@@ -563,6 +578,7 @@ impl App {
                 nun_ui::EditorView::new(&doc.buffer, &self.palette)
                     .scrolled_to(doc.scroll)
                     .highlighted(App::spans_of(doc))
+                    .foldable(&doc.syntax.folding.ranges)
                     .with_drop_marker(focused.then(|| self.drop_marker()).flatten())
                     .render(text, cells);
             }

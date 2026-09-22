@@ -40,7 +40,7 @@ pub(super) struct Highlighting {
     /// Whether anything has happened that the parser has not been told about.
     dirty: bool,
     /// Whether the worker is following this document at all.
-    open: bool,
+    pub(super) open: bool,
     /// Whether its grammar gave up, as opposed to there never having been
     /// one. The two look the same from outside and mean opposite things.
     off: bool,
@@ -54,6 +54,20 @@ pub(super) struct Highlighting {
     language: Option<&'static str>,
     /// Where growing the selection along the tree has got to.
     pub(super) growth: Growth,
+    /// Where the text can fold, as the parser last said.
+    pub(super) folding: Folding,
+}
+
+/// Where a document can fold, which the parser works out and the arrows in
+/// the gutter show.
+#[derive(Debug, Default)]
+pub(super) struct Folding {
+    /// The regions, by line, in order of their headers.
+    pub(super) ranges: Vec<nun_syntax::FoldRange>,
+    /// Which version of the text they came from.
+    pub(super) version: u64,
+    /// Whether the folds remembered from last time have been put back.
+    pub(super) restored: bool,
 }
 
 /// Growing the selection along the tree, and back down it.
@@ -439,10 +453,12 @@ impl App {
         let Some(document) = self.docs.iter().find(|document| document.id == id) else {
             return 0..0;
         };
-        let lines = document.buffer.len_lines();
         let height = self.text_height().max(1);
         let first = document.scroll.saturating_sub(MARGIN_LINES);
-        let last = (document.scroll + height + MARGIN_LINES).min(lines.saturating_sub(1));
+        // In lines in view, so a fold on screen does not leave the lines
+        // drawn below it outside the window.
+        let below = isize::try_from(height + MARGIN_LINES).unwrap_or(isize::MAX);
+        let last = document.buffer.hidden().step(document.scroll, below);
         let start = u32::try_from(document.buffer.line_start(first)).unwrap_or(0);
         let end = u32::try_from(document.buffer.line_end(last)).unwrap_or(u32::MAX);
         start..end
@@ -499,6 +515,7 @@ impl App {
                 }
                 Outcome::Redraw
             }
+            Reply::Folds { id, version, folds } => self.folds_arrived(id, version, folds),
             Reply::Grown { id, version, serial, ranges } => {
                 self.grown(id, (version, serial), ranges)
             }

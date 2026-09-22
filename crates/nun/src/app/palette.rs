@@ -387,9 +387,11 @@ impl App {
         const ABOVE: usize = 3;
         let line = self.doc().buffer.line_of(at);
         let height = self.text_height();
+        let hidden = self.doc().buffer.hidden();
         let doc = self.doc_mut();
-        if line < doc.scroll + ABOVE || line >= doc.scroll + height {
-            doc.scroll = line.saturating_sub(ABOVE);
+        let rows = hidden.rows_between(doc.scroll, line);
+        if line < doc.scroll || rows < ABOVE || rows >= height {
+            doc.scroll = hidden.step(line, -3);
         }
         self.follow_caret();
     }

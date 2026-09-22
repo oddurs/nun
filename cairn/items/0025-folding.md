@@ -2,12 +2,14 @@
 id: 25
 title: Folding
 type: feature
-status: backlog
+status: doing
 milestone: m3
+assignee: Oddur Sigurdsson
+claimed: 2026-09-22
 depends_on:
 - 22
 created: 2026-09-10
-updated: 2026-09-19
+updated: 2026-09-22
 priority: p1
 effort: m
 area: syntax

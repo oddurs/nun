@@ -82,6 +82,14 @@ pub enum Command {
     GrowSelection,
     /// Go back to what the selection was before it last grew.
     ShrinkSelection,
+    /// Fold the innermost region around the caret.
+    Fold,
+    /// Unfold the region folded on the caret's line.
+    Unfold,
+    /// Fold every region in the file.
+    FoldAll,
+    /// Unfold everything.
+    UnfoldAll,
 }
 
 impl Command {
@@ -119,6 +127,10 @@ impl Command {
         Self::SplitIntoLines,
         Self::GrowSelection,
         Self::ShrinkSelection,
+        Self::Fold,
+        Self::Unfold,
+        Self::FoldAll,
+        Self::UnfoldAll,
     ];
 
     /// The name used in `[keys]` in `nun.toml`.
@@ -157,6 +169,10 @@ impl Command {
             Self::SplitIntoLines => "caret.split_lines",
             Self::GrowSelection => "select.grow",
             Self::ShrinkSelection => "select.shrink",
+            Self::Fold => "fold.fold",
+            Self::Unfold => "fold.unfold",
+            Self::FoldAll => "fold.fold_all",
+            Self::UnfoldAll => "fold.unfold_all",
         }
     }
 
@@ -196,6 +212,10 @@ impl Command {
             Self::SplitIntoLines => "One caret per line",
             Self::GrowSelection => "Grow the selection",
             Self::ShrinkSelection => "Shrink the selection",
+            Self::Fold => "Fold",
+            Self::Unfold => "Unfold",
+            Self::FoldAll => "Fold everything",
+            Self::UnfoldAll => "Unfold everything",
         }
     }
 
@@ -214,6 +234,10 @@ impl Command {
                 | Self::SplitIntoLines
                 | Self::GrowSelection
                 | Self::ShrinkSelection
+                | Self::Fold
+                | Self::Unfold
+                | Self::FoldAll
+                | Self::UnfoldAll
         )
     }
 
@@ -274,6 +298,11 @@ const BASIC: &[(&str, Command)] = &[
     ("ctrl+k l", Command::SplitIntoLines),
     ("ctrl+k right", Command::GrowSelection),
     ("ctrl+k left", Command::ShrinkSelection),
+    // VS Code's own chords for these.
+    ("ctrl+k [", Command::Fold),
+    ("ctrl+k ]", Command::Unfold),
+    ("ctrl+k 0", Command::FoldAll),
+    ("ctrl+k j", Command::UnfoldAll),
 ];
 
 /// Bindings that need the Kitty keyboard protocol, added over [`BASIC`].
@@ -302,6 +331,10 @@ const FULL: &[(&str, Command)] = &[
     // the key repeats.
     ("alt+shift+right", Command::GrowSelection),
     ("alt+shift+left", Command::ShrinkSelection),
+    // VS Code's on a Mac; its Ctrl+Shift+[ reads as Ctrl+[ once Shift is
+    // dropped from a character that is not a letter, which is Escape.
+    ("cmd+alt+[", Command::Fold),
+    ("cmd+alt+]", Command::Unfold),
 ];
 
 /// The default bindings for `set`.
