@@ -772,6 +772,10 @@ impl App {
             Command::Palette => return self.open_palette(""),
             Command::Commands => return self.open_palette(">"),
             Command::SearchProject => return self.open_search(),
+            Command::SearchRegex => return self.toggle_search(nun_ui::SearchButton::Regex),
+            Command::SearchCase => return self.toggle_search(nun_ui::SearchButton::Case),
+            Command::SearchWord => return self.toggle_search(nun_ui::SearchButton::Word),
+            Command::SearchIgnored => return self.toggle_search(nun_ui::SearchButton::Ignored),
             Command::NextTab => return self.step_tab(1),
             Command::PreviousTab => return self.step_tab(-1),
         }
