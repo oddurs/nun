@@ -202,6 +202,46 @@ impl Selections {
         self.normalize();
     }
 
+    /// Map every selection through all the edits of one revision at once.
+    ///
+    /// `edits` are in the coordinates of the text before any of them, sorted
+    /// lowest first and disjoint. The answer is the one [`Self::map_through`]
+    /// gives when called on each edit highest first — the order they are
+    /// applied in — but in one pass: each position looks up the last edit
+    /// starting at or before it and adds up what the ones below it did. That
+    /// is the difference between typing at five hundred carets costing five
+    /// hundred lookups and costing a quarter of a million.
+    pub fn map_through_all(&mut self, edits: &[Edit]) {
+        debug_assert!(
+            edits.windows(2).all(|pair| pair[0].end <= pair[1].start),
+            "edits must be sorted and disjoint"
+        );
+        // `before[k]` is the net change of every edit below the `k`th.
+        let mut before = Vec::with_capacity(edits.len());
+        let mut net: isize = 0;
+        for edit in edits {
+            before.push(net);
+            net += edit.inserted().cast_signed() - edit.removed().cast_signed();
+        }
+        let map = |pos: usize| -> usize {
+            let at = edits.partition_point(|edit| edit.start <= pos);
+            let Some(k) = at.checked_sub(1) else { return pos };
+            let edit = &edits[k];
+            if pos <= edit.end {
+                // Inside it or on either edge: after what it put there.
+                (edit.start + edit.inserted()).saturating_add_signed(before[k])
+            } else {
+                pos.saturating_add_signed(
+                    before[k] + edit.inserted().cast_signed() - edit.removed().cast_signed(),
+                )
+            }
+        };
+        for range in &mut self.ranges {
+            *range = Range { anchor: map(range.anchor), head: map(range.head), sticky: None };
+        }
+        self.normalize();
+    }
+
     /// Sort, merge touching ranges, and keep the primary pointing at something.
     ///
     /// Merging is why `map_through` cannot simply map in place: two carets a

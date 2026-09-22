@@ -189,6 +189,22 @@ impl Command {
         }
     }
 
+    /// Whether this works on the text rather than on the editor around it.
+    ///
+    /// Such a command means nothing to the sidebar or the search panel, so
+    /// while one of those has the keyboard its keys go to the panel instead.
+    #[must_use]
+    pub const fn acts_on_text(self) -> bool {
+        matches!(
+            self,
+            Self::AddCaretAbove
+                | Self::AddCaretBelow
+                | Self::AddNextOccurrence
+                | Self::AddAllOccurrences
+                | Self::SplitIntoLines
+        )
+    }
+
     /// The command named `id`, if there is one.
     #[must_use]
     pub fn from_id(id: &str) -> Option<Self> {

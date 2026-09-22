@@ -1428,6 +1428,19 @@ mod tests {
     }
 
     #[test]
+    fn a_caret_key_in_the_query_leaves_the_document_alone() {
+        // Ctrl+D selects the next occurrence in the text; typed into the query
+        // it would change a document the person is not looking at.
+        let dir = project(&[("a.rs", "one\n")]);
+        let mut t = Tester::new(&dir);
+        t.search("one");
+        let before = t.app.doc().buffer.selections().clone();
+        t.app.handle(Event::Key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL)));
+        assert_eq!(t.app.doc().buffer.selections(), &before);
+        assert_eq!(t.app.focus, Focus::Search, "and the query keeps the keyboard");
+    }
+
+    #[test]
     fn a_query_that_is_not_a_regex_says_so_rather_than_finding_nothing() {
         let dir = project(&[("a.rs", "anything\n")]);
         let mut t = Tester::new(&dir);

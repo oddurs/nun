@@ -107,6 +107,83 @@ proptest! {
         prop_assert_eq!(buffer.text().to_string(), edited);
     }
 
+    /// A run of typing and backspacing at several carets at once, folded into
+    /// undo steps as it goes, still undoes back to the original and redoes
+    /// forward to the end — whatever the text, whatever the keys.
+    ///
+    /// Folding a keystroke into the revision before it rewrites every edit in
+    /// that revision in the frame before it, and each caret's edit shifts the
+    /// ones after it; a slip in either shows up here as text that does not
+    /// come back.
+    #[test]
+    fn a_run_at_several_carets_undoes_and_redoes_exactly(
+        text in interesting_text(),
+        carets in proptest::collection::vec(0usize..40, 1..6),
+        keys in proptest::collection::vec(
+            prop_oneof![
+                Just(None),
+                Just(Some("a".to_string())),
+                Just(Some("日".to_string())),
+                Just(Some("e\u{0301}".to_string())),
+                Just(Some("\n".to_string())),
+            ],
+            1..12,
+        ),
+    ) {
+        let mut buffer = Buffer::from_text(&text);
+        let original = buffer.text().to_string();
+        let len = buffer.len_chars();
+        let ranges: Vec<Range> = carets.iter().map(|c| Range::caret((*c).min(len))).collect();
+        buffer.set_selections(Selections::new(ranges, 0));
+
+        for key in &keys {
+            match key {
+                Some(typed) => buffer.insert(typed),
+                None => buffer.delete_backward(),
+            }
+        }
+        let edited = buffer.text().to_string();
+
+        while buffer.undo() {}
+        prop_assert_eq!(buffer.text().to_string(), original);
+        while buffer.redo() {}
+        prop_assert_eq!(buffer.text().to_string(), edited);
+    }
+
+    /// Mapping selections through a whole revision in one pass lands them
+    /// exactly where mapping through each edit in turn, highest first, would —
+    /// including edits that touch, a caret on a shared edge, and inserts
+    /// beside deletes.
+    #[test]
+    fn mapping_a_revision_at_once_matches_mapping_it_edit_by_edit(
+        spans in proptest::collection::vec((0usize..4, 0usize..4, 0usize..3), 1..8),
+        carets in proptest::collection::vec((0usize..60, 0usize..5), 1..8),
+    ) {
+        // Edits laid out left to right: a gap (maybe none, so they touch),
+        // then what each removes, then what it puts in its place.
+        let mut edits = Vec::new();
+        let mut at = 0;
+        for (gap, removed, inserted) in spans {
+            let start = at + gap;
+            edits.push(Edit::replace(start, start + removed, "x".repeat(inserted)));
+            at = start + removed;
+        }
+        let ranges: Vec<Range> = carets
+            .iter()
+            .map(|(from, span)| Range::new((*from).min(at + 5), (from + span).min(at + 5)))
+            .collect();
+        let selections = Selections::new(ranges, 0);
+
+        let mut at_once = selections.clone();
+        at_once.map_through_all(&edits);
+        let mut one_by_one = selections;
+        for edit in edits.iter().rev() {
+            one_by_one.map_through(edit);
+        }
+        prop_assert_eq!(at_once.ranges(), one_by_one.ranges());
+        prop_assert_eq!(at_once.primary_index(), one_by_one.primary_index());
+    }
+
     /// Selections stay sorted, disjoint and non-empty no matter what happens.
     #[test]
     fn selections_stay_sorted_and_disjoint(

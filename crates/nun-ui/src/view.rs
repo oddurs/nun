@@ -223,7 +223,7 @@ impl EditorView<'_> {
             if at == primary || Some(at) == self.marker {
                 self.palette.on(Role::Accent, Role::OnAccent)
             } else {
-                self.palette.on(Role::LineStrong, Role::Ground)
+                self.palette.on(Role::LineStrong, Role::Text)
             }
         };
         let selections = self.buffer.selections();
@@ -235,6 +235,12 @@ impl EditorView<'_> {
         let line_start = u32::try_from(self.buffer.line_start(line)).unwrap_or(u32::MAX);
         let mut run = self.highlights.partition_point(|span| span.end <= line_start);
 
+        // Selections are sorted and disjoint, so like the runs they are
+        // walked rather than searched: with five hundred of them, asking each
+        // one about every cell is most of a frame.
+        let ranges = selections.ranges();
+        let mut range = ranges.partition_point(|r| r.to() <= self.buffer.line_start(line));
+
         let mut x = area.left() + gutter;
         let mut char_index = self.buffer.line_start(line);
 
@@ -244,10 +250,10 @@ impl EditorView<'_> {
             }
             char_index = at;
 
-            let selected = selections
-                .ranges()
-                .iter()
-                .any(|range| char_index >= range.from() && char_index < range.to());
+            while ranges.get(range).is_some_and(|r| r.to() <= char_index) {
+                range += 1;
+            }
+            let selected = ranges.get(range).is_some_and(|r| r.from() <= char_index);
 
             let mut style = self.palette.text();
 

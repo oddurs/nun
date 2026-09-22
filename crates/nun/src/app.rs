@@ -685,6 +685,19 @@ impl App {
     /// characters come through untouched.
     fn resolved(&mut self, resolved: Resolved<Command>, event: Option<&KeyEvent>) -> Outcome {
         match resolved {
+            // A panel with the keyboard has first say over a key bound to
+            // something it cannot mean: Alt+Up moves the tree's selection
+            // there, and Ctrl+D in the query adds nothing to a document the
+            // person is not looking at.
+            Resolved::Command(command) if command.acts_on_text() && self.focus != Focus::Editor => {
+                let Some(event) = event else { return Outcome::Continue };
+                self.acknowledge();
+                match self.focus {
+                    Focus::Search => self.search_key(event, Instant::now()),
+                    Focus::Sidebar => self.sidebar_key(event),
+                    Focus::Editor => Outcome::Continue,
+                }
+            }
             Resolved::Command(command) => self.run(command),
             // The status line shows the chord so far.
             Resolved::Pending => Outcome::Redraw,
@@ -783,11 +796,17 @@ impl App {
                     self.message = Some("No other occurrence of that.".into());
                 }
             }
-            Command::AddAllOccurrences => {
-                if !self.doc_mut().buffer.add_all_occurrences() {
+            Command::AddAllOccurrences => match self.doc_mut().buffer.add_all_occurrences() {
+                nun_core::AllOccurrences::Selected(_) => {}
+                nun_core::AllOccurrences::Nothing => {
                     self.message = Some("Nothing to select every occurrence of.".into());
                 }
-            }
+                nun_core::AllOccurrences::TooMany { limit } => {
+                    self.message = Some(format!(
+                        "More than {limit} occurrences; left the selection as it was."
+                    ));
+                }
+            },
             Command::SplitIntoLines => {
                 if !self.doc_mut().buffer.split_into_lines() {
                     self.message = Some("The selection is already on one line.".into());
@@ -813,15 +832,15 @@ impl App {
         match key.code {
             // Not a bound command: a binding for this would have to be Escape,
             // and Escape belongs to the sidebar and the search panel, where it
-            // means "leave". Here, with several carets, it means "back to
-            // one"; with a single caret it has nothing to do and falls through
-            // to whatever else wants it. The mouse already does this — a plain
-            // click puts the caret somewhere and takes the others away.
+            // means "leave". Here it steps down one level at a time: several
+            // carets become the primary alone, selection and all, and a second
+            // press drops that selection to a caret (the arm further down).
+            // The mouse already does both — a plain click puts one caret
+            // somewhere and takes the others away.
             KeyCode::Esc if self.doc().buffer.selections().len() > 1 => {
                 let mut selections = self.doc().buffer.selections().clone();
                 selections.collapse_to_primary();
                 self.doc_mut().buffer.set_selections(selections);
-                self.follow_caret();
             }
             KeyCode::Char(ch) if !control => {
                 let mut text = [0u8; 4];
@@ -929,6 +948,10 @@ impl App {
                 self.menu = None;
                 match target {
                     Some(target) if target.in_sidebar() => self.sidebar_menu(mouse, target),
+                    Some(Target::Text) if self.prompt.is_none() && self.finder.is_none() => {
+                        self.chords.cancel();
+                        self.text_menu(mouse)
+                    }
                     _ => hovered,
                 }
             }
