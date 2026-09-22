@@ -325,10 +325,17 @@ impl App {
             return;
         };
         worker.send(Request::Open { id, language, text: document.buffer.rope().clone() });
+        // Versions carry on from where the old text's left off rather than
+        // starting again at zero: an answer about the old text still on its
+        // way would otherwise be newer than anything about the new one.
+        let after = document.syntax.latest.max(document.syntax.version) + 1;
         document.syntax = Highlighting {
             open: true,
             dirty: true,
             language: Some(language.name),
+            latest: after,
+            version: after,
+            folding: Folding { version: after, ..Folding::default() },
             ..Highlighting::default()
         };
     }

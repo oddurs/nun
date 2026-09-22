@@ -396,3 +396,26 @@ fn a_file_with_one_long_item_is_not_folded_as_a_whole() {
     let text = "fn main() {\n}\n";
     assert_eq!(folds_of("rust", text), [(0, 1)], "the function, not the source file");
 }
+
+#[test]
+fn folding_a_python_if_leaves_its_else_in_view() {
+    let folds = folds_of("python", "if x:\n    a()\n    b()\nelse:\n    c()\n    d()\n");
+    assert_eq!(folds, [(0, 2), (3, 5)], "the if stops where the else begins");
+}
+
+#[test]
+fn a_python_body_folds_under_its_header_not_its_first_statement() {
+    let folds = folds_of("python", "def f():\n    a()\n    b()\n\nx = 1\n");
+    assert_eq!(folds, [(0, 2)], "no arrow on `a()`");
+}
+
+#[test]
+fn a_toml_table_ends_on_its_own_last_line() {
+    assert_eq!(folds_of("toml", "[a]\nx = 1\ny = 2\n[b]\n"), [(0, 2)], "[b] is empty");
+}
+
+#[test]
+fn a_decorated_python_function_folds_once() {
+    let folds = folds_of("python", "@dec\ndef f():\n    a()\n    b()\n");
+    assert_eq!(folds, [(1, 3)], "from the def, not the decorator: {folds:?}");
+}

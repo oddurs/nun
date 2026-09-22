@@ -171,15 +171,66 @@ fn folds_hold_across_wide_and_combined_text() {
     assert_eq!(buffer.folded(), [(0, 2)], "typing on the header keeps it");
 }
 
+#[test]
+fn enter_at_the_end_of_a_folded_header_opens_the_fold_rather_than_moving_it() {
+    // Otherwise the fold follows the new line break onto a blank line, and
+    // the real header is left bare above it.
+    let mut buffer = ten();
+    buffer.fold(2, 5);
+    buffer.set_selections(Selections::single(Range::caret(buffer.line_end(2))));
+    buffer.insert("\n");
+    assert!(buffer.folded().is_empty());
+}
+
+#[test]
+fn select_all_leaves_a_fold_at_the_very_end_folded() {
+    let mut buffer = Buffer::from_text("fn a() {\n  x\n}");
+    buffer.fold(0, 2);
+    buffer.select_all();
+    assert_eq!(buffer.folded(), [(0, 2)]);
+}
+
+#[test]
+fn selecting_a_folded_line_takes_the_fold_with_it_and_keeps_it_shut() {
+    let mut buffer = ten();
+    buffer.fold(2, 5);
+    let (from, to) = buffer.line_range_in_view(2);
+    assert_eq!((from, to), (buffer.line_start(2), buffer.line_start(6)));
+    buffer.set_selections(Selections::single(Range::new(from, to)));
+    assert_eq!(buffer.folded(), [(2, 5)], "the selection ends on a line in view");
+}
+
+#[test]
+fn folding_thousands_of_regions_at_once_is_quick() {
+    let mut text = String::new();
+    for _ in 0..6000 {
+        text.push_str("fn f() {\n    x();\n}\n");
+    }
+    let mut buffer = Buffer::from_text(&text);
+    let regions: Vec<(usize, usize)> = (0..6000).map(|n| (n * 3, n * 3 + 2)).collect();
+    let started = std::time::Instant::now();
+    assert_eq!(buffer.fold_many(&regions), 6000);
+    let took = started.elapsed();
+    assert_eq!(buffer.hidden().rows_between(0, buffer.len_lines()), 6001);
+    assert!(took < std::time::Duration::from_millis(500), "folding everything took {took:?}");
+}
+
 proptest! {
     #![proptest_config(config())]
 
     /// Whatever happens, no caret is ever left out of sight.
     #[test]
     fn no_caret_is_ever_hidden(
-        ops in proptest::collection::vec((0u8..9, 0usize..12, 0usize..12), 1..30),
+        ops in proptest::collection::vec((0u8..13, 0usize..12, 0usize..12), 1..40),
+        wide in proptest::bool::ANY,
     ) {
-        let mut buffer = ten();
+        // Every line multi-byte, with a combining mark, a joined emoji and a
+        // stray carriage return, when not plain ASCII.
+        let mut buffer = if wide {
+            Buffer::from_text(&"日本 e\u{301} 👨\u{200d}👩 \r\t語\n".repeat(10))
+        } else {
+            ten()
+        };
         for (op, a, b) in ops {
             let lines = buffer.len_lines();
             match op {
@@ -191,6 +242,10 @@ proptest! {
                 5 => buffer.insert(if b % 3 == 0 { "\n" } else { "x" }),
                 6 => buffer.delete_backward(),
                 7 => { buffer.undo(); }
+                8 => { buffer.redo(); }
+                9 => buffer.delete_forward(),
+                10 => buffer.add_caret_vertically(b % 2 == 0),
+                11 => buffer.move_left(false),
                 _ => {
                     let at = (a * 7 + b) % (buffer.len_chars() + 1);
                     buffer.set_selections(Selections::single(Range::caret(at)));

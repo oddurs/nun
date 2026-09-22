@@ -53,9 +53,9 @@ impl App {
             self.message = Some("Nothing in this file to fold.".into());
             return Outcome::Redraw;
         }
-        for range in ranges {
-            self.doc_mut().buffer.fold(range.header as usize, range.last as usize);
-        }
+        let regions: Vec<(usize, usize)> =
+            ranges.iter().map(|range| (range.header as usize, range.last as usize)).collect();
+        self.doc_mut().buffer.fold_many(&regions);
         self.follow_caret();
         Outcome::Redraw
     }
@@ -111,9 +111,9 @@ impl App {
                 self.doc_mut().buffer.unfold(range.header as usize);
             }
         } else {
-            for range in targets {
-                self.doc_mut().buffer.fold(range.header as usize, range.last as usize);
-            }
+            let regions: Vec<(usize, usize)> =
+                targets.iter().map(|range| (range.header as usize, range.last as usize)).collect();
+            self.doc_mut().buffer.fold_many(&regions);
         }
         Some(Outcome::Redraw)
     }
@@ -174,6 +174,11 @@ impl App {
         // A file whose parse has not come back yet has had no chance to have
         // its folds put back, and remembering it now would forget them.
         if document.syntax.open && !document.syntax.folding.restored {
+            return;
+        }
+        // Line numbers in text that is not on disk mean nothing to the file
+        // the next session opens; the last saved answer stands.
+        if document.buffer.is_modified() {
             return;
         }
         let headers = document.buffer.folded().into_iter().map(|(header, _)| header).collect();

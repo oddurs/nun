@@ -32,6 +32,12 @@ impl Fold {
     /// folded over something nobody has looked at.
     fn mapped(self, edit: &Edit) -> Option<Self> {
         let clear = edit.end <= self.start || edit.start > self.end;
+        // A line break put in at the very end of the header splits it, and
+        // the fold would follow the break onto a line of its own — a blank
+        // line wearing the fold, the real header left bare above it.
+        if edit.end == self.start && edit.text.contains('\n') {
+            return None;
+        }
         clear.then(|| Self {
             start: edit.map_pos(self.start, Assoc::After),
             end: edit.map_pos(self.end, Assoc::After),

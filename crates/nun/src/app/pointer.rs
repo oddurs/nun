@@ -86,11 +86,13 @@ impl App {
         let mode = match target {
             Target::Gutter | Target::FoldArrow => {
                 let line = self.doc().buffer.line_of(at);
-                let (from, to) = self.doc().buffer.line_range(line);
+                let (from, to) = self.doc().buffer.line_range_in_view(line);
                 if shift {
                     // Extend by whole lines from the line the anchor is on.
-                    let (anchor_from, anchor_to) =
-                        self.doc().buffer.line_range(self.doc().buffer.line_of(primary.anchor));
+                    let (anchor_from, anchor_to) = self
+                        .doc()
+                        .buffer
+                        .line_range_in_view(self.doc().buffer.line_of(primary.anchor));
                     Mode::Line { from: anchor_from, to: anchor_to }
                 } else {
                     Mode::Line { from, to }
@@ -137,7 +139,8 @@ impl App {
                     Mode::Word { from, to }
                 }
                 3 => {
-                    let (from, to) = self.doc().buffer.line_range(self.doc().buffer.line_of(at));
+                    let (from, to) =
+                        self.doc().buffer.line_range_in_view(self.doc().buffer.line_of(at));
                     Mode::Line { from, to }
                 }
                 _ => Mode::Char { anchor: at },
@@ -234,7 +237,7 @@ impl App {
             }
             Mode::Line { from, to } => {
                 let (line_from, line_to) =
-                    self.doc().buffer.line_range(self.doc().buffer.line_of(at));
+                    self.doc().buffer.line_range_in_view(self.doc().buffer.line_of(at));
                 let range = extend_by_unit(*from, *to, line_from, line_to);
                 self.doc_mut().buffer.set_selections(Selections::single(range));
             }

@@ -786,7 +786,8 @@ impl Buffer {
     pub fn select_all(&mut self) {
         let len = self.len_chars();
         self.selections = Selections::single(Range::new(0, len));
-        self.reveal();
+        // Not revealed: the selection covers every fold whole, and opening
+        // one because the file ends inside it would be a surprise.
         self.history.commit();
     }
 
@@ -802,10 +803,27 @@ impl Buffer {
     /// Returns false, and does nothing, unless `header` is above `last` and
     /// `last` is a line of the buffer.
     pub fn fold(&mut self, header: usize, last: usize) -> bool {
-        if header >= last || last >= self.len_lines() {
-            return false;
+        self.fold_many(&[(header, last)]) > 0
+    }
+
+    /// Fold several regions at once, each `(header, last)` as for
+    /// [`Buffer::fold`]. How many were folded.
+    ///
+    /// One at a time, every fold would work out afresh which lines all the
+    /// others hide — quadratic, and seconds for a file with thousands of
+    /// regions folded at once.
+    pub fn fold_many(&mut self, regions: &[(usize, usize)]) -> usize {
+        let lines = self.len_lines();
+        let mut folded = 0;
+        for &(header, last) in regions {
+            if header < last && last < lines {
+                self.folds.add(Fold { start: self.line_end(header), end: self.line_end(last) });
+                folded += 1;
+            }
         }
-        self.folds.add(Fold { start: self.line_end(header), end: self.line_end(last) });
+        if folded == 0 {
+            return 0;
+        }
         // To the end of the line in view that hides them — which is not the
         // header when the header is itself inside a fold already.
         let hidden = self.hidden();
@@ -825,7 +843,23 @@ impl Buffer {
             at.map_or(range, Range::caret)
         });
         self.history.commit();
-        true
+        folded
+    }
+
+    /// `line` as a triple-click or the gutter selects it, as `(start, end)`,
+    /// counting a folded region under it as part of it: what is out of sight
+    /// goes with the line that stands for it, and the selection ends where
+    /// the next line in view starts rather than inside the fold.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `line` is out of range.
+    #[must_use]
+    pub fn line_range_in_view(&self, line: usize) -> (usize, usize) {
+        let start = self.line_start(line);
+        let end =
+            self.hidden().next(line).map_or_else(|| self.len_chars(), |next| self.line_start(next));
+        (start, end)
     }
 
     /// Unfold the region folded under `header`. Whether there was one.

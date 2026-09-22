@@ -111,10 +111,21 @@ impl App {
 
     /// Lay out every pane's strip and text.
     pub(super) fn layout_panes(&self, hits: &mut nun_input::HitMap<Target>) {
-        let gutter = self.gutter_width();
         for (pane, _) in self.panes.rects(self.panes_area()) {
             if let Some(text) = self.text_area_of(pane) {
-                let gutter = gutter.min(text.width);
+                // Each pane's own gutter, which is as wide as its own file's
+                // line numbers: a pane on a short file beside one on a long
+                // file has its arrows a column further left.
+                let gutter = self
+                    .panes
+                    .get(pane)
+                    .and_then(super::panes::Pane::current)
+                    .and_then(|id| self.doc_by(id))
+                    .map_or_else(
+                        || self.gutter_width(),
+                        |doc| nun_ui::EditorView::new(&doc.buffer, &self.palette).gutter_width(),
+                    )
+                    .min(text.width);
                 hits.push(super::cells(Rect { width: gutter, ..text }), Target::Gutter, false);
                 // Over the gutter, one column wide: the arrows are part of it,
                 // and a press with no arrow there is the gutter's after all.
