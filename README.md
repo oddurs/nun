@@ -122,7 +122,8 @@ caret and then each next occurrence of it; `Ctrl+Shift+L` takes every
 occurrence at once; `Alt+Up` and `Alt+Down` put a caret on the line above or
 below, keeping the column they were aiming for so a run past a short line
 comes out straight again. A selection spanning lines splits into one caret per
-line. Escape goes back to one, and so does clicking anywhere. The caret the
+line; all of these are also on the menu a right-click in the text opens.
+Escape goes back to one, and so does clicking anywhere. The caret the
 arrows move is drawn in the accent and the others are quieter, because
 otherwise every key press is a guess about where the text will appear.
 
