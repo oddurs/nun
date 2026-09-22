@@ -232,6 +232,27 @@ fn stepping_right_into_a_fold_of_one_empty_line_opens_it() {
 }
 
 #[test]
+fn folding_under_two_selections_that_then_touch_leaves_neither_out_of_sight() {
+    // One selection reaching up from the line about to be hidden to the
+    // header, and a caret on that hidden line. Folding moves the caret to
+    // the end of the header, where it overlaps the selection; the two merge,
+    // and the merged selection must not end on the hidden line.
+    let mut buffer = Buffer::from_text("a\nhead\nbody\nz\n");
+    let head = buffer.line_start(1);
+    let body = buffer.line_start(2);
+    buffer.set_selections(Selections::new(
+        vec![Range::new(body + 1, head + 1), Range::caret(body + 3)],
+        0,
+    ));
+    buffer.fold(1, 2);
+    let hidden = buffer.hidden();
+    for range in buffer.selections().ranges() {
+        assert!(!hidden.is_hidden(buffer.line_of(range.head)), "{:?}", buffer.selections());
+        assert!(!hidden.is_hidden(buffer.line_of(range.anchor)), "{:?}", buffer.selections());
+    }
+}
+
+#[test]
 fn folding_thousands_of_regions_at_once_is_quick() {
     let mut text = String::new();
     for _ in 0..6000 {

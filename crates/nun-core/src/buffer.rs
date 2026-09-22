@@ -824,16 +824,25 @@ impl Buffer {
         if folded == 0 {
             return 0;
         }
-        // To the end of the line in view that hides them — which is not the
-        // header when the header is itself inside a fold already.
+        // A selection with either end out of sight becomes a caret: at its
+        // end still in view, or else at the end of the line in view that
+        // hides it — which is not the header when the header is itself
+        // inside a fold already. Both ends, not just the head: carets moved
+        // together merge, and a merged selection spans its parts' ends, so
+        // one end left hidden would come back as a hidden head.
         let hidden = self.hidden();
         let moved: Vec<Option<usize>> = self
             .selections
             .ranges()
             .iter()
             .map(|range| {
-                let line = self.line_of(range.head);
-                hidden.is_hidden(line).then(|| self.line_end(hidden.in_view(line)))
+                let head = self.line_of(range.head);
+                let anchor = self.line_of(range.anchor);
+                match (hidden.is_hidden(head), hidden.is_hidden(anchor)) {
+                    (false, false) => None,
+                    (false, true) => Some(range.head),
+                    (true, _) => Some(self.line_end(hidden.in_view(head))),
+                }
             })
             .collect();
         let mut index = 0;
