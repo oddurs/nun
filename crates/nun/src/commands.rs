@@ -60,6 +60,14 @@ pub enum Command {
     Commands,
     /// Search the project, in the sidebar.
     SearchProject,
+    /// Read the search query as a regular expression, or stop.
+    SearchRegex,
+    /// Make the search match case, or stop.
+    SearchCase,
+    /// Make the search match whole words only, or stop.
+    SearchWord,
+    /// Make the search look in ignored files too, or stop.
+    SearchIgnored,
 }
 
 impl Command {
@@ -86,6 +94,10 @@ impl Command {
         Self::Palette,
         Self::Commands,
         Self::SearchProject,
+        Self::SearchRegex,
+        Self::SearchCase,
+        Self::SearchWord,
+        Self::SearchIgnored,
     ];
 
     /// The name used in `[keys]` in `nun.toml`.
@@ -113,6 +125,10 @@ impl Command {
             Self::Palette => "palette.files",
             Self::Commands => "palette.commands",
             Self::SearchProject => "search.project",
+            Self::SearchRegex => "search.toggle_regex",
+            Self::SearchCase => "search.toggle_case",
+            Self::SearchWord => "search.toggle_word",
+            Self::SearchIgnored => "search.toggle_ignored",
         }
     }
 
@@ -141,6 +157,10 @@ impl Command {
             Self::Palette => "Go to file",
             Self::Commands => "Run a command",
             Self::SearchProject => "Search the project",
+            Self::SearchRegex => "Search: toggle regular expressions",
+            Self::SearchCase => "Search: toggle match case",
+            Self::SearchWord => "Search: toggle whole words",
+            Self::SearchIgnored => "Search: toggle ignored files",
         }
     }
 
@@ -185,6 +205,13 @@ const BASIC: &[(&str, Command)] = &[
     ("ctrl+p", Command::Palette),
     ("f1", Command::Commands),
     ("ctrl+k f", Command::SearchProject),
+    // The search panel draws these as buttons, but a sidebar narrow enough
+    // loses them, and a toggle with no other way to reach it is then gone.
+    // Chords, not Alt, for the same reason as the file operations.
+    ("ctrl+k r", Command::SearchRegex),
+    ("ctrl+k c", Command::SearchCase),
+    ("ctrl+k shift+w", Command::SearchWord),
+    ("ctrl+k shift+i", Command::SearchIgnored),
 ];
 
 /// Bindings that need the Kitty keyboard protocol, added over [`BASIC`].

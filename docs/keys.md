@@ -42,3 +42,7 @@ This file is generated from the source by `nun keys`. Do not edit it by hand.
 | Go to file | `palette.files` | `Ctrl+P`, `Cmd+P` | `Ctrl+P` |
 | Run a command | `palette.commands` | `Ctrl+Shift+P`, `Cmd+Shift+P`, `F1` | `F1` |
 | Search the project | `search.project` | `Ctrl+Shift+F`, `Cmd+Shift+F`, `Ctrl+K F` | `Ctrl+K F` |
+| Search: toggle regular expressions | `search.toggle_regex` | `Ctrl+K R` | `Ctrl+K R` |
+| Search: toggle match case | `search.toggle_case` | `Ctrl+K C` | `Ctrl+K C` |
+| Search: toggle whole words | `search.toggle_word` | `Ctrl+K Shift+W` | `Ctrl+K Shift+W` |
+| Search: toggle ignored files | `search.toggle_ignored` | `Ctrl+K Shift+I` | `Ctrl+K Shift+I` |

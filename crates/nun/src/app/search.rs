@@ -626,6 +626,27 @@ impl App {
         Outcome::Redraw
     }
 
+    /// Flip one toggle from the keyboard, and say which way it went.
+    ///
+    /// The buttons are the mouse path; this is what is left when the sidebar
+    /// is too narrow to draw them. It works with the panel closed as well,
+    /// since the toggles belong to the search rather than to its panel.
+    pub(super) fn toggle_search(&mut self, button: SearchButton) -> Outcome {
+        self.flip(button);
+        if self.searching() {
+            self.restart_search(Instant::now());
+        }
+        let name = match button {
+            SearchButton::Regex => "Regular expressions",
+            SearchButton::Case => "Match case",
+            SearchButton::Word => "Whole words",
+            SearchButton::Ignored => "Ignored files",
+        };
+        let state = if self.search.toggles.on(button) { "on" } else { "off" };
+        self.message = Some(format!("Search: {name} {state}"));
+        Outcome::Redraw
+    }
+
     /// Flip one toggle.
     fn flip(&mut self, button: SearchButton) {
         let toggles = &mut self.search.toggles;
@@ -1372,6 +1393,38 @@ mod tests {
         let rows = t.rows();
         assert_eq!(rows.len(), 2, "whole words only: {rows:?}");
         assert!(rows[1].starts_with("1: "));
+    }
+
+    #[test]
+    fn every_toggle_is_reachable_from_the_keyboard_when_its_button_is_not() {
+        // Narrow enough that the row of toggles no longer fits, so the last
+        // of them is not drawn and has no hit region.
+        let dir = project(&[("a.rs", "one\nlonely\n")]);
+        let mut t = Tester::new(&dir);
+        t.search("one");
+        t.app.set_viewport(Rect::new(0, 0, 14, 20));
+        let area = t.area();
+        assert!(
+            SearchView::button_area(area, SearchButton::Ignored).is_none(),
+            "a button is gone at this width"
+        );
+
+        let ctrl_k = KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL);
+        t.app.handle(Event::Key(ctrl_k));
+        t.app.handle(Event::Key(KeyEvent::new(KeyCode::Char('W'), KeyModifiers::SHIFT)));
+        assert!(t.app.search.toggles.word, "Ctrl+K Shift+W turned whole words on");
+        assert_eq!(t.app.message(), Some("Search: Whole words on"));
+        t.settle_search();
+        assert_eq!(t.rows().len(), 2, "and the search ran again with it: {:?}", t.rows());
+
+        for (key, button) in
+            [('r', SearchButton::Regex), ('c', SearchButton::Case), ('I', SearchButton::Ignored)]
+        {
+            t.app.handle(Event::Key(ctrl_k));
+            let shift = if key.is_uppercase() { KeyModifiers::SHIFT } else { KeyModifiers::NONE };
+            t.app.handle(Event::Key(KeyEvent::new(KeyCode::Char(key), shift)));
+            assert!(t.app.search.toggles.on(button), "Ctrl+K {key} flipped {button:?}");
+        }
     }
 
     #[test]
