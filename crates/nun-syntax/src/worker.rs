@@ -65,6 +65,9 @@ pub enum Request {
         id: DocId,
         /// Which version of it the ranges are in.
         version: u64,
+        /// Which grow this is, echoed back so an answer is matched to the
+        /// question it answers rather than to whichever one is outstanding.
+        serial: u64,
         /// The ranges, one per selection.
         ranges: Vec<std::ops::Range<u32>>,
     },
@@ -112,6 +115,8 @@ pub enum Reply {
         id: DocId,
         /// Which version they were grown in.
         version: u64,
+        /// The serial of the [`Request::Grow`] this answers.
+        serial: u64,
         /// The grown ranges, or `None` when the language is switched off.
         ranges: Option<Vec<std::ops::Range<u32>>>,
     },
@@ -279,11 +284,11 @@ fn handle(documents: &mut HashMap<DocId, Document>, request: Request) -> Vec<Rep
             };
             vec![Reply::Symbols { id, version, symbols }]
         }
-        Request::Grow { id, version, ranges } => {
+        Request::Grow { id, version, serial, ranges } => {
             // Always answered, even for a document that is not being followed:
             // the editor is waiting to know what to select.
             let ranges = documents.get_mut(&id).and_then(|document| document.grow(&ranges));
-            vec![Reply::Grown { id, version, ranges }]
+            vec![Reply::Grown { id, version, serial, ranges }]
         }
         Request::Close(id) => {
             documents.remove(&id);
@@ -394,7 +399,7 @@ mod tests {
     fn a_grow_is_not_folded_in_front_of_the_text_it_reads() {
         let folded = coalesce(vec![
             update(1, 5, "fn a() {}", None),
-            Request::Grow { id: 1, version: 5, ranges: vec![0..0, 3..3] },
+            Request::Grow { id: 1, version: 5, serial: 1, ranges: vec![0..0, 3..3] },
             update(1, 6, "fn ab() {}", None),
         ]);
         assert_eq!(folded.len(), 3, "the grow splits the updates: {folded:?}");
@@ -417,9 +422,9 @@ mod tests {
         // The editor waits for the answer before it will grow again.
         let replies = handle(
             &mut HashMap::new(),
-            Request::Grow { id: 9, version: 1, ranges: vec![0..0, 3..3] },
+            Request::Grow { id: 9, version: 1, serial: 2, ranges: vec![0..0, 3..3] },
         );
-        assert_eq!(replies, [Reply::Grown { id: 9, version: 1, ranges: None }]);
+        assert_eq!(replies, [Reply::Grown { id: 9, version: 1, serial: 2, ranges: None }]);
     }
 
     #[test]

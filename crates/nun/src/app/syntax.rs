@@ -72,11 +72,17 @@ pub(super) struct Growth {
     reached: Option<Selections>,
     /// A grow asked for and not yet answered.
     asked: Option<Asked>,
+    /// How many grows have been asked for, ever, so each has a number of its
+    /// own and an answer can be matched to the question it answers.
+    serials: u64,
 }
 
 /// A grow on its way to the parser.
 #[derive(Debug)]
 struct Asked {
+    /// Its number. An answer to any other grow — one abandoned by a shrink,
+    /// say — is not an answer to this one, even about the same selections.
+    serial: u64,
     /// The text version it was asked about.
     version: u64,
     /// The selections it was asked to grow. If they have changed by the time
@@ -167,13 +173,16 @@ impl App {
             });
             return Outcome::Redraw;
         }
-        if let Some(asked) = self.doc_mut().syntax.growth.asked.as_mut() {
-            asked.more += 1;
-            return Outcome::Continue;
-        }
         let id = self.doc().id;
         let from = self.doc().buffer.selections().clone();
-        self.ask_grow(id, from, 0);
+        match self.doc_mut().syntax.growth.asked.as_mut() {
+            // Still growing the same selections: this press follows that one.
+            Some(asked) if asked.from == from => asked.more += 1,
+            // Nothing out, or the selections moved since it went — a click, an
+            // arrow — so its answer will be dropped and this one starts afresh
+            // from where they are now.
+            _ => self.ask_grow(id, from, 0),
+        }
         Outcome::Continue
     }
 
@@ -187,6 +196,8 @@ impl App {
             return;
         };
         let version = document.syntax.latest;
+        document.syntax.growth.serials += 1;
+        let serial = document.syntax.growth.serials;
         let ranges = from
             .ranges()
             .iter()
@@ -195,9 +206,9 @@ impl App {
                 at(range.from())..at(range.to())
             })
             .collect();
-        document.syntax.growth.asked = Some(Asked { version, from, more });
+        document.syntax.growth.asked = Some(Asked { serial, version, from, more });
         if let Some(worker) = self.syntax.as_ref() {
-            worker.send(Request::Grow { id, version, ranges });
+            worker.send(Request::Grow { id, version, serial, ranges });
         }
     }
 
@@ -229,12 +240,17 @@ impl App {
     fn grown(
         &mut self,
         id: DocId,
-        version: u64,
+        (version, serial): (u64, u64),
         ranges: Option<Vec<std::ops::Range<u32>>>,
     ) -> Outcome {
         let Some(document) = self.docs.iter_mut().find(|document| document.id == id) else {
             return Outcome::Continue;
         };
+        // An answer to a grow since abandoned or replaced is not this one's,
+        // however alike the two questions were.
+        if document.syntax.growth.asked.as_ref().is_none_or(|asked| asked.serial != serial) {
+            return Outcome::Continue;
+        }
         let Some(asked) = document.syntax.growth.asked.take() else { return Outcome::Continue };
         // Typing, a click or an arrow since the question means the answer is
         // about selections that are not there any more.
@@ -483,7 +499,9 @@ impl App {
                 }
                 Outcome::Redraw
             }
-            Reply::Grown { id, version, ranges } => self.grown(id, version, ranges),
+            Reply::Grown { id, version, serial, ranges } => {
+                self.grown(id, (version, serial), ranges)
+            }
             Reply::Echo(_) => Outcome::Continue,
         }
     }
@@ -1067,6 +1085,37 @@ impl Square {
     }
 
     #[test]
+    fn an_answer_to_an_abandoned_grow_is_not_taken_for_a_later_one() {
+        // Shrink abandons the grow still out; a grow asked for next starts
+        // from the same caret. The first answer is about the first question,
+        // however alike the two look.
+        use crate::commands::Command;
+        let dir = tempfile::tempdir().unwrap();
+        let mut t = Tester::new(&dir, "main.rs", PRICES);
+        t.caret_at(&["price"]);
+        t.run(Command::GrowSelection);
+        assert_eq!(t.selected(), ["price"]);
+        t.app.run(Command::GrowSelection);
+        t.app.run(Command::ShrinkSelection);
+        t.app.run(Command::GrowSelection);
+        t.settle();
+        assert_eq!(t.selected(), ["price"], "one grow from the caret, not two");
+    }
+
+    #[test]
+    fn a_grow_after_the_selection_moved_is_not_swallowed() {
+        use crate::commands::Command;
+        let dir = tempfile::tempdir().unwrap();
+        let mut t = Tester::new(&dir, "main.rs", PRICES);
+        t.caret_at(&["price"]);
+        t.app.run(Command::GrowSelection);
+        t.caret_at(&["count"]);
+        t.app.run(Command::GrowSelection);
+        t.settle();
+        assert_eq!(t.selected(), ["count"], "the second grow, from where the caret is now");
+    }
+
+    #[test]
     fn a_selection_changed_by_hand_is_not_on_the_trail() {
         use crate::commands::Command;
         let dir = tempfile::tempdir().unwrap();
@@ -1105,6 +1154,10 @@ impl Square {
         press(&mut t, now + Duration::from_millis(100));
         t.settle();
         assert_eq!(t.selected(), ["price * count"], "a third click grows once more");
+        // The click counter goes round to one on the fourth.
+        press(&mut t, now + Duration::from_millis(150));
+        t.settle();
+        assert_eq!(t.selected(), ["let total = price * count;"], "and a fourth");
     }
 
     #[test]

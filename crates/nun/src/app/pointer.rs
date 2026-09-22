@@ -94,6 +94,21 @@ impl App {
                 keep: self.doc().buffer.selections().ranges().to_vec(),
             },
             Target::Text if shift => Mode::Char { anchor: primary.anchor },
+            // Ctrl-double-click grows from the node under the pointer, and each
+            // further click with Ctrl held grows once more. The click counter
+            // goes round to one again after three, so a press inside what the
+            // last grow reached counts as a further click whatever it says —
+            // and has to be caught before it is taken for the start of a drag.
+            Target::Text
+                if ctrl
+                    && (count == 2
+                        || (self.can_shrink() && at >= primary.from() && at <= primary.to())) =>
+            {
+                if count == 2 {
+                    self.doc_mut().buffer.set_selections(Selections::single(Range::caret(at)));
+                }
+                return self.run(Command::GrowSelection).and(Outcome::Redraw);
+            }
             Target::Text
                 if count == 1
                     && !primary.is_empty()
@@ -107,14 +122,6 @@ impl App {
                     at,
                     drop: None,
                 }
-            }
-            // Ctrl-double-click grows from the node under the pointer, and each
-            // further click with Ctrl held grows once more.
-            Target::Text if ctrl && count >= 2 => {
-                if count == 2 {
-                    self.doc_mut().buffer.set_selections(Selections::single(Range::caret(at)));
-                }
-                return self.run(Command::GrowSelection).and(Outcome::Redraw);
             }
             Target::Text => match count {
                 2 => {
