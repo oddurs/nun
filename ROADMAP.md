@@ -42,6 +42,9 @@
 ### backlog
 
 - [ ] [`0025`](https://github.com/oddurs/nun/blob/main/cairn/items/0025-folding.md) Folding <sup>feature · p1</sup>
+
+### in progress
+
 - [ ] [`0026`](https://github.com/oddurs/nun/blob/main/cairn/items/0026-structural-selection.md) Structural selection <sup>feature · p2</sup>
 
 ### done

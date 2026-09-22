@@ -807,6 +807,10 @@ impl App {
                     ));
                 }
             },
+            // The view stays where it is: the selection grows around what is
+            // being looked at, and following its far end would scroll away.
+            Command::GrowSelection => return self.grow_selection(),
+            Command::ShrinkSelection => return self.shrink_selection(),
             Command::SplitIntoLines => {
                 if !self.doc_mut().buffer.split_into_lines() {
                     self.message = Some("The selection is already on one line.".into());

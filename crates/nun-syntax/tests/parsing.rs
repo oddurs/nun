@@ -273,3 +273,77 @@ fn a_document_whose_language_is_off_still_holds_its_text() {
     );
     assert!(document.highlights(0..u32::MAX).is_none(), "still off, not retried each keystroke");
 }
+
+// ── growing a selection ─────────────────────────────────────────────────────
+
+/// Grow `needle`'s first occurrence (or a caret before it, when `caret`) once
+/// per step, and give back the text each step selected.
+fn growing(text: &str, needle: &str, caret: bool, steps: usize) -> Vec<String> {
+    let mut document = rust(text);
+    let byte = text.find(needle).expect("the needle is in the text");
+    let from = u32::try_from(text[..byte].chars().count()).unwrap();
+    let to = if caret { from } else { from + u32::try_from(needle.chars().count()).unwrap() };
+    let mut range = from..to;
+    let mut seen = Vec::new();
+    for _ in 0..steps {
+        range = document.grow(std::slice::from_ref(&range)).expect("rust is on")[0].clone();
+        seen.push(
+            text.chars()
+                .skip(range.start as usize)
+                .take((range.end - range.start) as usize)
+                .collect(),
+        );
+    }
+    seen
+}
+
+#[test]
+fn a_caret_grows_to_its_word_first_and_then_outwards() {
+    let text = "fn main() {\n    let total = price * count;\n}\n";
+    let steps = growing(text, "price", true, 4);
+    assert_eq!(steps[0], "price", "the identifier under the caret");
+    assert_eq!(steps[1], "price * count", "then the expression it is in");
+    assert_eq!(steps[2], "let total = price * count;", "then the statement");
+    assert!(steps[3].starts_with('{'), "then the block: {:?}", steps[3]);
+}
+
+#[test]
+fn growing_never_stops_on_punctuation() {
+    let text = "fn f() { call(a, b); }\n";
+    let steps = growing(text, "(a", true, 1);
+    assert_eq!(steps[0], "(a, b)", "the argument list, not a lone parenthesis");
+}
+
+#[test]
+fn a_selection_that_is_already_a_node_grows_past_itself() {
+    let text = "fn f() { call(a, b); }\n";
+    let steps = growing(text, "call(a, b)", false, 1);
+    assert_eq!(steps[0], "call(a, b);", "the statement, not the same call again");
+}
+
+#[test]
+fn the_whole_file_is_as_far_as_it_goes() {
+    let text = "fn f() {}\n";
+    let mut document = rust(text);
+    let all = 0..u32::try_from(text.chars().count()).unwrap();
+    let grown = document.grow(std::slice::from_ref(&all)).unwrap();
+    assert_eq!(grown, [all], "nothing encloses the file");
+}
+
+#[test]
+fn several_ranges_grow_independently() {
+    let text = "fn f() { one(); }\nfn g() { two(); }\n";
+    let mut document = rust(text);
+    let at = |needle: &str| u32::try_from(text.find(needle).unwrap()).unwrap();
+    let grown = document.grow(&[at("one")..at("one"), at("two")..at("two")]).unwrap();
+    assert_eq!(grown, [at("one")..at("one") + 3, at("two")..at("two") + 3]);
+}
+
+#[test]
+fn growing_counts_in_chars_not_bytes() {
+    // Everything before the caret is multi-byte, so a byte offset taken for a
+    // char offset would land in the middle of the comment.
+    let text = "// größe 日本\nfn f() { value; }\n";
+    let steps = growing(text, "value", true, 1);
+    assert_eq!(steps[0], "value");
+}

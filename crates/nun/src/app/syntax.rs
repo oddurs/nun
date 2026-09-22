@@ -11,6 +11,8 @@ use std::time::{Duration, Instant};
 
 use nun_syntax::{Reply, Request, Span, TextEdit, Worker};
 
+use nun_core::{Range, Selections};
+
 use super::panes::DocId;
 use super::{App, Document, Outcome};
 
@@ -50,6 +52,38 @@ pub(super) struct Highlighting {
     /// thread that draws, during startup, before the worker has been asked
     /// for anything at all.
     language: Option<&'static str>,
+    /// Where growing the selection along the tree has got to.
+    pub(super) growth: Growth,
+}
+
+/// Growing the selection along the tree, and back down it.
+///
+/// The tree lives with the parser, so a grow is a question and an answer
+/// rather than a lookup. Shrinking is not a question at all: it walks back
+/// along the trail the grows left, which is what makes the two exact inverses
+/// — a shrink puts back precisely the selections a grow started from, the
+/// direction of each included, rather than guessing at a child.
+#[derive(Debug, Default)]
+pub(super) struct Growth {
+    /// The selections each grow started from, the most recent last.
+    trail: Vec<Selections>,
+    /// What the last grow selected. A selection changed any other way no
+    /// longer matches it, and the trail is forgotten.
+    reached: Option<Selections>,
+    /// A grow asked for and not yet answered.
+    asked: Option<Asked>,
+}
+
+/// A grow on its way to the parser.
+#[derive(Debug)]
+struct Asked {
+    /// The text version it was asked about.
+    version: u64,
+    /// The selections it was asked to grow. If they have changed by the time
+    /// the answer comes, the answer is about something no longer there.
+    from: Selections,
+    /// How many more grows were asked for while this one was out.
+    more: usize,
 }
 
 /// The outline of the document the palette is looking at.
@@ -117,6 +151,137 @@ impl App {
             worker.send(Request::Symbols { id, version });
         }
         self.symbols.owed = false;
+    }
+
+    /// Grow every selection to the syntax node around it.
+    ///
+    /// The answer comes back as a message. Asking again before it has is not
+    /// lost: it is counted, and the next grow goes out as soon as this one
+    /// lands, so a key held down climbs the tree as fast as it repeats.
+    pub(super) fn grow_selection(&mut self) -> Outcome {
+        if !self.doc().syntax.open || self.syntax.is_none() {
+            self.message = Some(if self.doc().syntax.off {
+                "The grammar gave up on this file, so there is no tree to grow along.".into()
+            } else {
+                "Growing the selection needs a language nun can parse.".into()
+            });
+            return Outcome::Redraw;
+        }
+        if let Some(asked) = self.doc_mut().syntax.growth.asked.as_mut() {
+            asked.more += 1;
+            return Outcome::Continue;
+        }
+        let id = self.doc().id;
+        let from = self.doc().buffer.selections().clone();
+        self.ask_grow(id, from, 0);
+        Outcome::Continue
+    }
+
+    /// Send one grow, after whatever text the parser has not been told about.
+    fn ask_grow(&mut self, id: DocId, from: Selections, more: usize) {
+        // The answer is read from the parser's text, so it has to have the
+        // text these selections are in — not the version before a keystroke
+        // still sitting in the debounce.
+        self.syntax_send(id);
+        let Some(document) = self.docs.iter_mut().find(|document| document.id == id) else {
+            return;
+        };
+        let version = document.syntax.latest;
+        let ranges = from
+            .ranges()
+            .iter()
+            .map(|range| {
+                let at = |index: usize| u32::try_from(index).unwrap_or(u32::MAX);
+                at(range.from())..at(range.to())
+            })
+            .collect();
+        document.syntax.growth.asked = Some(Asked { version, from, more });
+        if let Some(worker) = self.syntax.as_ref() {
+            worker.send(Request::Grow { id, version, ranges });
+        }
+    }
+
+    /// Whether a shrink would go anywhere: the selections are the ones the
+    /// last grow reached, and there is a trail back from them.
+    pub(super) fn can_shrink(&self) -> bool {
+        let growth = &self.doc().syntax.growth;
+        !growth.trail.is_empty() && growth.reached.as_ref() == Some(self.doc().buffer.selections())
+    }
+
+    /// Go back to the selections the last grow started from.
+    pub(super) fn shrink_selection(&mut self) -> Outcome {
+        let document = self.doc_mut();
+        let growth = &mut document.syntax.growth;
+        // A grow still out would undo this shrink when it lands.
+        growth.asked = None;
+        if growth.reached.as_ref() == Some(document.buffer.selections())
+            && let Some(previous) = growth.trail.pop()
+        {
+            growth.reached = Some(previous.clone());
+            document.buffer.set_selections(previous);
+        } else {
+            self.message = Some("Nothing to shrink back to: grow the selection first.".into());
+        }
+        Outcome::Redraw
+    }
+
+    /// The parser grew a selection.
+    fn grown(
+        &mut self,
+        id: DocId,
+        version: u64,
+        ranges: Option<Vec<std::ops::Range<u32>>>,
+    ) -> Outcome {
+        let Some(document) = self.docs.iter_mut().find(|document| document.id == id) else {
+            return Outcome::Continue;
+        };
+        let Some(asked) = document.syntax.growth.asked.take() else { return Outcome::Continue };
+        // Typing, a click or an arrow since the question means the answer is
+        // about selections that are not there any more.
+        if asked.version != version
+            || document.syntax.latest != version
+            || document.buffer.selections() != &asked.from
+        {
+            return Outcome::Continue;
+        }
+        let Some(ranges) = ranges.filter(|ranges| ranges.len() == asked.from.len()) else {
+            self.message =
+                Some("The grammar gave up on this file, so there is no tree to grow along.".into());
+            return Outcome::Redraw;
+        };
+
+        // Each keeps the direction it had, so the end that was moving still is.
+        let grown: Vec<Range> = asked
+            .from
+            .ranges()
+            .iter()
+            .zip(&ranges)
+            .map(|(range, grown)| {
+                let (start, end) = (grown.start as usize, grown.end as usize);
+                if range.head < range.anchor {
+                    Range::new(end, start)
+                } else {
+                    Range::new(start, end)
+                }
+            })
+            .collect();
+        let grown = Selections::new(grown, asked.from.primary_index());
+        if grown == asked.from {
+            self.message = Some("The selection already covers the whole file.".into());
+            return Outcome::Redraw;
+        }
+
+        let growth = &mut document.syntax.growth;
+        if growth.reached.as_ref() != Some(&asked.from) {
+            growth.trail.clear();
+        }
+        growth.trail.push(asked.from);
+        growth.reached = Some(grown.clone());
+        document.buffer.set_selections(grown.clone());
+        if asked.more > 0 {
+            self.ask_grow(id, grown, asked.more - 1);
+        }
+        Outcome::Redraw
     }
 
     /// Start following a document, if nun knows its language.
@@ -203,27 +368,20 @@ impl App {
         }
         self.syntax_deadline = None;
 
-        let Some(worker) = self.syntax.as_ref() else { return Outcome::Continue };
-        for pane in self.panes.all() {
-            let Some(id) = pane.current() else { continue };
-            let window = self.syntax_window(id);
-            let Some(document) = self.docs.iter_mut().find(|document| document.id == id) else {
-                continue;
-            };
-            if !document.syntax.open {
-                continue;
-            }
-            if document.syntax.dirty {
-                document.syntax.dirty = false;
-                worker.send(Request::Update {
-                    id,
-                    version: document.syntax.latest,
-                    text: document.buffer.rope().clone(),
-                    edit: document.syntax.pending.take(),
-                    window,
-                });
-            } else {
-                worker.send(Request::Window { id, version: document.syntax.latest, window });
+        if self.syntax.is_none() {
+            return Outcome::Continue;
+        }
+        let shown: Vec<DocId> =
+            self.panes.all().iter().filter_map(super::panes::Pane::current).collect();
+        for id in shown {
+            if !self.syntax_send(id) {
+                let window = self.syntax_window(id);
+                let Some(document) = self.docs.iter().find(|document| document.id == id) else {
+                    continue;
+                };
+                if let (true, Some(worker)) = (document.syntax.open, self.syntax.as_ref()) {
+                    worker.send(Request::Window { id, version: document.syntax.latest, window });
+                }
             }
         }
         // After the updates, so it reads the text they carried rather than
@@ -235,6 +393,28 @@ impl App {
             self.send_outline(id, version);
         }
         Outcome::Continue
+    }
+
+    /// Tell the parser about a document's text now, if there is anything it
+    /// has not been told. Whether anything was sent.
+    fn syntax_send(&mut self, id: DocId) -> bool {
+        let window = self.syntax_window(id);
+        let Some(worker) = self.syntax.as_ref() else { return false };
+        let Some(document) = self.docs.iter_mut().find(|document| document.id == id) else {
+            return false;
+        };
+        if !document.syntax.open || !document.syntax.dirty {
+            return false;
+        }
+        document.syntax.dirty = false;
+        worker.send(Request::Update {
+            id,
+            version: document.syntax.latest,
+            text: document.buffer.rope().clone(),
+            edit: document.syntax.pending.take(),
+            window,
+        });
+        true
     }
 
     /// The char range worth highlighting: what is on screen, and a few screens
@@ -303,6 +483,7 @@ impl App {
                 }
                 Outcome::Redraw
             }
+            Reply::Grown { id, version, ranges } => self.grown(id, version, ranges),
             Reply::Echo(_) => Outcome::Continue,
         }
     }
@@ -350,6 +531,7 @@ mod tests {
     use crate::commands::{KeySet, defaults};
     use crossterm::event::{KeyCode, KeyEvent};
     use nun_core::Buffer;
+    use nun_core::{Range, Selections};
     use nun_theme::{Probe, derive};
     use nun_ui::{Event, Palette};
     use ratatui::layout::Rect;
@@ -765,6 +947,173 @@ impl Square {
 
         t.app.open_in_tab(&dir.path().join("main.rs"));
         assert!(!t.spans().is_empty(), "and the Rust file still has its own");
+    }
+
+    // ── growing the selection ──────────────────────────────────────────────
+
+    impl Tester {
+        /// The text each selection covers, in order.
+        fn selected(&self) -> Vec<String> {
+            let buffer = &self.app.doc().buffer;
+            let text = buffer.text().to_string();
+            buffer
+                .selections()
+                .ranges()
+                .iter()
+                .map(|range| text.chars().skip(range.from()).take(range.len()).collect())
+                .collect()
+        }
+
+        fn caret_at(&mut self, needles: &[&str]) {
+            let text = self.app.doc().buffer.text().to_string();
+            let carets: Vec<Range> = needles
+                .iter()
+                .map(|needle| Range::caret(text[..text.find(needle).unwrap()].chars().count()))
+                .collect();
+            self.app.doc_mut().buffer.set_selections(Selections::new(carets, 0));
+        }
+
+        fn run(&mut self, command: crate::commands::Command) {
+            self.app.run(command);
+            self.settle();
+        }
+    }
+
+    const PRICES: &str = "fn main() {\n    let total = price * count;\n}\n";
+
+    #[test]
+    fn a_caret_grows_along_the_tree_and_shrinks_back_exactly() {
+        use crate::commands::Command;
+        let dir = tempfile::tempdir().unwrap();
+        let mut t = Tester::new(&dir, "main.rs", PRICES);
+        t.caret_at(&["price"]);
+        let start = t.app.doc().buffer.selections().clone();
+
+        t.run(Command::GrowSelection);
+        assert_eq!(t.selected(), ["price"], "the word under the caret first");
+        t.run(Command::GrowSelection);
+        assert_eq!(t.selected(), ["price * count"]);
+        t.run(Command::GrowSelection);
+        assert_eq!(t.selected(), ["let total = price * count;"]);
+
+        t.run(Command::ShrinkSelection);
+        assert_eq!(t.selected(), ["price * count"]);
+        t.run(Command::ShrinkSelection);
+        assert_eq!(t.selected(), ["price"]);
+        t.run(Command::ShrinkSelection);
+        assert_eq!(t.app.doc().buffer.selections(), &start, "back to the very caret");
+        t.run(Command::ShrinkSelection);
+        assert!(t.app.message().unwrap().contains("Nothing to shrink"), "and no further");
+    }
+
+    #[test]
+    fn every_selection_grows_on_its_own() {
+        use crate::commands::Command;
+        let dir = tempfile::tempdir().unwrap();
+        let mut t = Tester::new(&dir, "main.rs", "fn f() { one(1); }\nfn g() { two(2, 3); }\n");
+        t.caret_at(&["one", "two"]);
+        t.run(Command::GrowSelection);
+        assert_eq!(t.selected(), ["one", "two"]);
+        t.run(Command::GrowSelection);
+        assert_eq!(t.selected(), ["one(1)", "two(2, 3)"], "each to its own call");
+        t.run(Command::ShrinkSelection);
+        assert_eq!(t.selected(), ["one", "two"]);
+    }
+
+    #[test]
+    fn a_grow_asked_for_right_after_typing_reads_what_was_typed() {
+        // The keystroke is still in the debounce when the grow goes out; the
+        // parser has to be told about it first, or it grows the old text.
+        use crate::commands::Command;
+        let dir = tempfile::tempdir().unwrap();
+        let mut t = Tester::new(&dir, "main.rs", "fn main() {\n    \n}\n");
+        let at = t.app.doc().buffer.line_start(1) + 4;
+        t.app.doc_mut().buffer.set_selections(Selections::single(Range::caret(at)));
+        t.type_text("call(x)");
+        t.app.doc_mut().buffer.set_selections(Selections::single(Range::caret(at + 5)));
+        assert!(t.app.doc().syntax.dirty, "the parser has not been told");
+        t.run(Command::GrowSelection);
+        assert_eq!(t.selected(), ["x"]);
+    }
+
+    #[test]
+    fn an_answer_about_a_selection_that_moved_is_dropped() {
+        use crate::commands::Command;
+        let dir = tempfile::tempdir().unwrap();
+        let mut t = Tester::new(&dir, "main.rs", PRICES);
+        t.caret_at(&["price"]);
+        t.app.run(Command::GrowSelection);
+        // The caret moves before the answer is taken.
+        t.caret_at(&["count"]);
+        t.settle();
+        assert_eq!(t.selected(), [""], "the caret the person put there stands");
+    }
+
+    #[test]
+    fn asking_again_before_the_answer_grows_again() {
+        // A key held down repeats faster than the parser answers; each press
+        // has to count, not be swallowed by the one still out.
+        use crate::commands::Command;
+        let dir = tempfile::tempdir().unwrap();
+        let mut t = Tester::new(&dir, "main.rs", PRICES);
+        t.caret_at(&["price"]);
+        t.app.run(Command::GrowSelection);
+        t.app.run(Command::GrowSelection);
+        t.settle();
+        t.settle();
+        assert_eq!(t.selected(), ["price * count"]);
+        t.run(Command::ShrinkSelection);
+        assert_eq!(t.selected(), ["price"], "and each step is on the trail");
+    }
+
+    #[test]
+    fn a_selection_changed_by_hand_is_not_on_the_trail() {
+        use crate::commands::Command;
+        let dir = tempfile::tempdir().unwrap();
+        let mut t = Tester::new(&dir, "main.rs", PRICES);
+        t.caret_at(&["price"]);
+        t.run(Command::GrowSelection);
+        t.app.handle(Event::Key(KeyEvent::from(KeyCode::Right)));
+        t.run(Command::ShrinkSelection);
+        assert!(t.app.message().unwrap().contains("Nothing to shrink"));
+    }
+
+    #[test]
+    fn ctrl_double_click_grows_from_the_node_under_the_pointer() {
+        use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+        let dir = tempfile::tempdir().unwrap();
+        let mut t = Tester::new(&dir, "main.rs", PRICES);
+        // On `count`, in the second line of the file.
+        let (text, _) = t.app.areas();
+        let column = text.x + t.app.gutter_width() + 24;
+        let press = |t: &mut Tester, at: Instant| {
+            let event = MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column,
+                row: text.y + 1,
+                modifiers: KeyModifiers::CONTROL,
+            };
+            t.app.handle_at(Event::Mouse(event), at);
+            let up = MouseEvent { kind: MouseEventKind::Up(MouseButton::Left), ..event };
+            t.app.handle_at(Event::Mouse(up), at);
+        };
+        let now = Instant::now();
+        press(&mut t, now);
+        press(&mut t, now + Duration::from_millis(50));
+        t.settle();
+        assert_eq!(t.selected(), ["count"]);
+        press(&mut t, now + Duration::from_millis(100));
+        t.settle();
+        assert_eq!(t.selected(), ["price * count"], "a third click grows once more");
+    }
+
+    #[test]
+    fn a_file_with_no_grammar_says_why_it_cannot_grow() {
+        use crate::commands::Command;
+        let dir = tempfile::tempdir().unwrap();
+        let mut t = Tester::new(&dir, "notes.txt", "plain words\n");
+        t.run(Command::GrowSelection);
+        assert!(t.app.message().unwrap().contains("needs a language"));
     }
 
     #[test]

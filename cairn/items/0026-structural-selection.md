@@ -2,10 +2,12 @@
 id: 26
 title: Structural selection
 type: feature
-status: backlog
+status: doing
 milestone: m3
+assignee: Oddur Sigurdsson
+claimed: 2026-09-22
 created: 2026-09-10
-updated: 2026-09-10
+updated: 2026-09-22
 priority: p2
 effort: s
 area: syntax
