@@ -980,6 +980,14 @@ impl App {
             buffer.set_selections(nun_core::Selections::single(nun_core::Range::caret(at)));
             buffer.set_tab_width(document.buffer.tab_width());
             let id = document.id;
+            // The folds are the buffer's, and this buffer is new. What was
+            // folded goes to the session first, so the first parse of the new
+            // text puts it back — rather than whatever the session held from
+            // when nun started.
+            self.remember_folds_of(id);
+            let Some(document) = self.docs.iter_mut().find(|document| document.id == id) else {
+                continue;
+            };
             document.buffer = buffer;
             self.syntax_open(id);
         }

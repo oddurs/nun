@@ -18,7 +18,7 @@ mod language;
 mod symbols;
 mod worker;
 
-pub use highlight::{Document, PARSE_BUDGET, Span, TextEdit, Trouble};
+pub use highlight::{Document, FoldRange, PARSE_BUDGET, Span, TextEdit, Trouble};
 pub use language::{Language, all, of_name, of_path};
 pub use symbols::Symbol;
 pub use worker::{DocId, Reply, Request, Worker};

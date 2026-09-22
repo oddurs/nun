@@ -75,14 +75,24 @@ impl App {
         let at = self.pointer_position(column, row);
         let primary = self.doc().buffer.selections().primary();
 
+        if target == Target::FoldArrow {
+            let (text, _) = self.areas();
+            let row = usize::from(row.saturating_sub(text.top()));
+            if let Some(outcome) = self.fold_click(row, alt) {
+                return outcome;
+            }
+        }
+
         let mode = match target {
-            Target::Gutter => {
+            Target::Gutter | Target::FoldArrow => {
                 let line = self.doc().buffer.line_of(at);
-                let (from, to) = self.doc().buffer.line_range(line);
+                let (from, to) = self.doc().buffer.line_range_in_view(line);
                 if shift {
                     // Extend by whole lines from the line the anchor is on.
-                    let (anchor_from, anchor_to) =
-                        self.doc().buffer.line_range(self.doc().buffer.line_of(primary.anchor));
+                    let (anchor_from, anchor_to) = self
+                        .doc()
+                        .buffer
+                        .line_range_in_view(self.doc().buffer.line_of(primary.anchor));
                     Mode::Line { from: anchor_from, to: anchor_to }
                 } else {
                     Mode::Line { from, to }
@@ -129,7 +139,8 @@ impl App {
                     Mode::Word { from, to }
                 }
                 3 => {
-                    let (from, to) = self.doc().buffer.line_range(self.doc().buffer.line_of(at));
+                    let (from, to) =
+                        self.doc().buffer.line_range_in_view(self.doc().buffer.line_of(at));
                     Mode::Line { from, to }
                 }
                 _ => Mode::Char { anchor: at },
@@ -184,6 +195,13 @@ impl App {
         {
             commands.push(Command::SplitIntoLines);
         }
+        let (can_fold, folded) = self.fold_offers();
+        if can_fold {
+            commands.push(Command::Fold);
+        }
+        if folded {
+            commands.push(Command::Unfold);
+        }
         commands.push(Command::GrowSelection);
         if self.can_shrink() {
             commands.push(Command::ShrinkSelection);
@@ -219,7 +237,7 @@ impl App {
             }
             Mode::Line { from, to } => {
                 let (line_from, line_to) =
-                    self.doc().buffer.line_range(self.doc().buffer.line_of(at));
+                    self.doc().buffer.line_range_in_view(self.doc().buffer.line_of(at));
                 let range = extend_by_unit(*from, *to, line_from, line_to);
                 self.doc_mut().buffer.set_selections(Selections::single(range));
             }
@@ -326,11 +344,9 @@ impl App {
             return Outcome::Continue;
         }
 
-        if scroll.up {
-            self.doc_mut().scroll -= 1;
-        } else {
-            self.doc_mut().scroll += 1;
-        }
+        let scrolled =
+            self.doc().buffer.hidden().step(self.doc().scroll, if scroll.up { -1 } else { 1 });
+        self.doc_mut().scroll = scrolled;
         self.autoscroll = Some(Autoscroll { next: now + scroll.interval, ..scroll });
         if !self.can_scroll(scroll.up) {
             // At the end of the buffer: nothing more to scroll to, so no reason
@@ -359,7 +375,9 @@ impl App {
     /// The furthest down autoscroll goes: the last line at the bottom of the
     /// view, not the top — there is nothing below it to select.
     fn max_scroll(&self) -> usize {
-        self.doc().buffer.len_lines().saturating_sub(self.text_height())
+        let hidden = self.doc().buffer.hidden();
+        let height = isize::try_from(self.text_height()).unwrap_or(isize::MAX);
+        hidden.step(hidden.last_in_view(), 1 - height)
     }
 
     /// The buffer position under the pointer, clamped into the text: above
@@ -380,8 +398,9 @@ impl App {
         let (text, _) = self.areas();
         let gutter = self.gutter_width();
         let row = row.clamp(text.top(), text.bottom().saturating_sub(1).max(text.top()));
-        let last = self.doc().buffer.len_lines().saturating_sub(1);
-        let line = (self.doc().scroll + usize::from(row - text.top())).min(last);
+        let line = self
+            .line_at_row(usize::from(row - text.top()))
+            .unwrap_or_else(|| self.doc().buffer.hidden().last_in_view());
         let column = usize::from(column.saturating_sub(text.left() + gutter));
         (line, column)
     }

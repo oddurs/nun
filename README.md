@@ -127,8 +127,17 @@ Escape goes back to one, and so does clicking anywhere. The caret the
 arrows move is drawn in the accent and the others are quieter, because
 otherwise every key press is a guess about where the text will appear.
 
-Not there yet: folds, language servers and git. Those are the rest of
-milestone 3 and milestones 4 and 5.
+`Alt+Shift+Right` grows every selection to the syntax node around it — the
+word, then the expression, the statement, the block — and `Alt+Shift+Left`
+walks back down exactly the way it came. Ctrl-double-click does the same from
+wherever the pointer is.
+
+Code folds where the parse says a region starts, with an arrow in the gutter
+beside each one; Alt-click folds every sibling at once, so a file's methods go
+away together. A fold moves with edits around it, opens when the caret goes
+into it, and is still folded the next time the file is opened.
+
+Not there yet: language servers and git. Those are milestones 4 and 5.
 
 Do not install this yet.
 

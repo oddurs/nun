@@ -423,3 +423,49 @@ fn the_drop_marker_shows_where_dragged_text_would_land() {
     harness.draw(EditorView::new(&buffer, &palette).with_drop_marker(Some(4)));
     assert_eq!(caret_columns(&harness, &palette, 0), vec![3, 3 + 4], "the caret, then the marker");
 }
+
+// ── folding ─────────────────────────────────────────────────────────────────
+
+#[test]
+fn a_folded_region_is_drawn_as_its_header_with_a_marker() {
+    let mut buffer = Buffer::from_text("fn a() {\n    one();\n    two();\n}\nfn b() {}\n");
+    let foldable = [nun_syntax::FoldRange { header: 0, last: 3 }];
+    let palette = palette();
+    let mut harness = Harness::new(24, 4);
+
+    harness.draw(EditorView::new(&buffer, &palette).foldable(&foldable));
+    assert_eq!(
+        harness.to_text(),
+        "1▾ fn a() {\n\
+         2      one();\n\
+         3      two();\n\
+         4  }",
+        "an arrow on the line that opens a region, and nowhere else"
+    );
+
+    buffer.set_selections(Selections::single(Range::caret(buffer.len_chars())));
+    buffer.fold(0, 3);
+    harness.draw(EditorView::new(&buffer, &palette).foldable(&foldable));
+    assert_eq!(
+        harness.to_text(),
+        "1▸ fn a() {  ⋯\n\
+         5  fn b() {}\n\
+         6\n",
+        "the hidden lines take no rows, and the numbers say what is missing"
+    );
+    let arrow = harness.cells()[(1, 0)].fg;
+    assert_eq!(arrow, palette.fg(Role::Accent).fg.unwrap(), "a folded arrow is in the accent");
+}
+
+#[test]
+fn a_click_below_a_fold_maps_to_the_line_drawn_there() {
+    let mut buffer = Buffer::from_text("fn a() {\n    one();\n}\nlast\n");
+    buffer.set_selections(Selections::single(Range::caret(buffer.len_chars())));
+    buffer.fold(0, 2);
+    let palette = palette();
+    let view = EditorView::new(&buffer, &palette);
+    let area = ratatui::layout::Rect::new(0, 0, 20, 4);
+    // Row 1 shows `last`, line 3.
+    assert_eq!(view.position_at(area, 3, 1), Some(buffer.line_start(3)));
+    assert_eq!(view.line_at_row(1), Some(3));
+}

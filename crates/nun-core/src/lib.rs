@@ -9,6 +9,7 @@
 
 mod buffer;
 mod edit;
+mod fold;
 mod grapheme;
 mod history;
 mod selection;
@@ -16,6 +17,7 @@ mod text;
 
 pub use buffer::{AllOccurrences, Buffer, Change, Changed, MOST_OCCURRENCES, SaveError};
 pub use edit::{Assoc, Edit};
+pub use fold::Hidden;
 pub use history::History;
 pub use selection::{Range, Selections};
 pub use text::{LineEnding, LoadReport};

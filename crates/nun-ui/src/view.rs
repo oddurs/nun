@@ -21,13 +21,23 @@ pub struct EditorView<'a> {
     scroll: usize,
     marker: Option<usize>,
     highlights: &'a [nun_syntax::Span],
+    foldable: &'a [nun_syntax::FoldRange],
 }
 
 impl<'a> EditorView<'a> {
     /// A view of `buffer`, scrolled so `scroll` is the top visible line.
     #[must_use]
     pub const fn new(buffer: &'a Buffer, palette: &'a Palette) -> Self {
-        Self { buffer, palette, scroll: 0, marker: None, highlights: &[] }
+        Self { buffer, palette, scroll: 0, marker: None, highlights: &[], foldable: &[] }
+    }
+
+    /// Put an arrow in the gutter beside every region that can be folded.
+    /// `ranges` are in order of their header lines, as [`nun_syntax`] gives
+    /// them.
+    #[must_use]
+    pub const fn foldable(mut self, ranges: &'a [nun_syntax::FoldRange]) -> Self {
+        self.foldable = ranges;
+        self
     }
 
     /// Set the first visible line.
@@ -50,6 +60,20 @@ impl<'a> EditorView<'a> {
     pub const fn with_drop_marker(mut self, at: Option<usize>) -> Self {
         self.marker = at;
         self
+    }
+
+    /// The gutter column the fold arrows are drawn in, counted from the left
+    /// edge of the view: the first column after the line numbers.
+    #[must_use]
+    pub fn arrow_column(&self) -> u16 {
+        self.gutter_width() - GUTTER_PADDING
+    }
+
+    /// The line drawn on row `row` of the view, counted from its top, or
+    /// `None` below the last line. Folded lines take no rows.
+    #[must_use]
+    pub fn line_at_row(&self, row: usize) -> Option<usize> {
+        self.buffer.hidden().from(self.scroll).nth(row)
     }
 
     /// Columns the line-number gutter needs for this buffer.
@@ -79,8 +103,8 @@ impl<'a> EditorView<'a> {
             return None;
         }
 
-        let last = self.buffer.len_lines().saturating_sub(1);
-        let line = (self.scroll + usize::from(row - area.top())).min(last);
+        let hidden = self.buffer.hidden();
+        let line = hidden.step(self.scroll, isize::try_from(row - area.top()).unwrap_or(0));
         let target = usize::from(column - area.left() - gutter);
 
         let text = self.buffer.line_text(line);
@@ -161,9 +185,13 @@ impl Widget for EditorView<'_> {
             self.buffer.selections().ranges().iter().map(|range| range.head).collect();
         carets.extend(self.marker);
         carets.sort_unstable();
-        let last_line = self.buffer.len_lines();
+        // Worked out once for the frame. Folded lines take no rows, so rows
+        // are walked through the lines in view rather than counted.
+        let hidden = self.buffer.hidden();
+        let folded: Vec<usize> =
+            self.buffer.folded().into_iter().map(|(header, _)| header).collect();
 
-        for (row, line) in (self.scroll..last_line).take(area.height as usize).enumerate() {
+        for (row, line) in hidden.from(self.scroll).take(area.height as usize).enumerate() {
             let Ok(row) = u16::try_from(row) else { continue };
             let y = area.top() + row;
             let is_caret_line = line == caret_line;
@@ -175,12 +203,53 @@ impl Widget for EditorView<'_> {
             }
 
             self.draw_gutter(cells, area, y, line, is_caret_line);
-            self.draw_line(cells, area, y, line, gutter, &carets);
+            let folded_here = folded.binary_search(&line).is_ok();
+            self.draw_arrow(cells, area, y, line, folded_here);
+            let end = self.draw_line(cells, area, y, line, gutter, &carets);
+            if folded_here {
+                self.draw_fold_marker(cells, area, y, end);
+            }
         }
     }
 }
 
 impl EditorView<'_> {
+    /// The arrow beside a region that can be folded, or has been.
+    ///
+    /// Only on lines that open a region the parser found: an arrow beside
+    /// every line would say nothing. A folded one points at its text and
+    /// takes the accent, since it is standing in for lines that are not there.
+    fn draw_arrow(&self, cells: &mut Cells, area: Rect, y: u16, line: usize, folded: bool) {
+        let x = area.left() + self.arrow_column();
+        if x >= area.right() {
+            return;
+        }
+        let foldable = self
+            .foldable
+            .binary_search_by_key(&u32::try_from(line).unwrap_or(u32::MAX), |range| range.header)
+            .is_ok();
+        let (glyph, role) = match (folded, foldable) {
+            (true, _) => ("▸", Role::Accent),
+            (false, true) => ("▾", Role::Faint),
+            (false, false) => return,
+        };
+        cells[(x, y)].set_symbol(glyph).set_style(self.palette.fg(role));
+    }
+
+    /// The marker after a folded header's text, standing in for what is
+    /// hidden: a small raised chip, one space after the line.
+    fn draw_fold_marker(&self, cells: &mut Cells, area: Rect, y: u16, after: u16) {
+        let style = self.palette.on(Role::Raised, Role::Dim);
+        for (offset, ch) in " ⋯ ".chars().enumerate() {
+            let Ok(offset) = u16::try_from(offset + 1) else { break };
+            let x = after.saturating_add(offset);
+            if x >= area.right() {
+                break;
+            }
+            cells[(x, y)].set_char(ch).set_style(style);
+        }
+    }
+
     fn draw_gutter(&self, cells: &mut Cells, area: Rect, y: u16, line: usize, current: bool) {
         let gutter = self.gutter_width();
         let label = (line + 1).to_string();
@@ -208,7 +277,7 @@ impl EditorView<'_> {
         line: usize,
         gutter: u16,
         carets: &[usize],
-    ) {
+    ) -> u16 {
         let is_caret = |at: usize| carets.binary_search(&at).is_ok();
         let primary = self.buffer.selections().primary().head;
         let caret_line = self.buffer.line_of(primary);
@@ -302,5 +371,6 @@ impl EditorView<'_> {
         if is_caret(char_index) && x < area.right() {
             cells[(x, y)].set_symbol(" ").set_style(caret_style(char_index));
         }
+        x
     }
 }

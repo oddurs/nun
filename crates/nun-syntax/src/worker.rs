@@ -109,6 +109,16 @@ pub enum Reply {
         /// The outline.
         symbols: Vec<crate::Symbol>,
     },
+    /// Where a document can be folded, as of a version. Sent after every
+    /// update, since any edit can move, make or remove a region.
+    Folds {
+        /// Which document.
+        id: DocId,
+        /// Which version they were read from.
+        version: u64,
+        /// The regions, in order of their header lines.
+        folds: Vec<crate::FoldRange>,
+    },
     /// The ranges from [`Request::Grow`], grown, in the same order.
     Grown {
         /// Which document.
@@ -260,7 +270,13 @@ fn handle(documents: &mut HashMap<DocId, Document>, request: Request) -> Vec<Rep
         Request::Update { id, version, text, edit, window } => {
             let Some(document) = documents.get_mut(&id) else { return Vec::new() };
             document.update(text, edit);
-            highlights(id, version, window, document)
+            let mut replies = highlights(id, version, window, document);
+            // Read from the parse the highlights just made, so it costs a walk
+            // of the tree and not another parse.
+            if let Some(folds) = document.folds() {
+                replies.push(Reply::Folds { id, version, folds });
+            }
+            replies
         }
         Request::Window { id, version, window } => {
             let Some(document) = documents.get_mut(&id) else { return Vec::new() };

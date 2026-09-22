@@ -258,6 +258,99 @@ impl Document {
         Some(grown)
     }
 
+    /// The regions of the file that can be folded away, as line ranges: the
+    /// header line that stays in view, and the last line hidden under it.
+    ///
+    /// A region is a named node that spans more than one line. Several can
+    /// start on one line, and the one taken is what the line *opens*: the
+    /// node starting furthest to the right, which is the `{` at the end of
+    /// `if x {` rather than the whole `if … else` statement around it, and
+    /// the argument list of `call(` rather than the statement holding the
+    /// call. A region that would hide the header of the next one (`} else {`)
+    /// stops a line short, so folding the `if` leaves the `else` in view. The
+    /// whole file is never a region.
+    ///
+    /// Returns `None` when the document's language is switched off.
+    pub fn folds(&mut self) -> Option<Vec<FoldRange>> {
+        if self.trouble.is_some() {
+            return None;
+        }
+        if let Err(trouble) = self.parse() {
+            self.trouble = Some(trouble);
+            self.tree = None;
+            return None;
+        }
+        let tree = self.tree.clone()?;
+
+        // For each line, the region it opens: the start column and last line
+        // of the node starting furthest right on it, the longest on a tie.
+        let mut starts: std::collections::BTreeMap<usize, (usize, usize)> =
+            std::collections::BTreeMap::new();
+        let mut cursor = tree.walk();
+        let mut descend = cursor.goto_first_child();
+        while descend || cursor.goto_next_sibling() || climb(&mut cursor) {
+            let node = cursor.node();
+            let (first, last) = (node.start_position().row, last_row(node));
+            let spans = last > first;
+            if spans && node.is_named() && !node.is_error() && !opens_on_a_child(node) {
+                let last = self.stop_before_a_clause(node, first, last);
+                if last > first {
+                    let opens = (node.start_position().column, last);
+                    let kept = starts.entry(first).or_insert(opens);
+                    *kept = (*kept).max(opens);
+                }
+            }
+            // A node on one line has nothing below it that spans lines.
+            descend = spans && cursor.goto_first_child();
+        }
+
+        let headers: Vec<usize> = starts.keys().copied().collect();
+        let folds = starts
+            .iter()
+            .filter_map(|(&header, &(_, last))| {
+                let last = if headers.binary_search(&last).is_ok() {
+                    last.saturating_sub(1)
+                } else {
+                    last
+                };
+                (last > header).then(|| FoldRange {
+                    header: u32::try_from(header).unwrap_or(u32::MAX),
+                    last: u32::try_from(last).unwrap_or(u32::MAX),
+                })
+            })
+            .collect();
+        Some(folds)
+    }
+
+    /// Where a region opened by `node` on line `first` should end, at the
+    /// latest `last`: before the first clause that starts back at the header
+    /// line's own indentation after an indented body.
+    ///
+    /// That is how a language without braces says a construct has moved on
+    /// — Python's `else:`, `elif:`, `except:` and `finally:` are children of
+    /// the `if` or `try` they belong to, and without this folding the `if`
+    /// would fold its `else` away with it.
+    fn stop_before_a_clause(&self, node: tree_sitter::Node, first: usize, last: usize) -> usize {
+        let header = self.text.line(first);
+        let indent = header.chars().take_while(|ch| matches!(ch, ' ' | '\t')).count();
+        // Only once an indented body has been seen: a TOML table's pairs sit
+        // at its header's own indentation and are its contents, not clauses.
+        let mut cursor = node.walk();
+        let mut body = false;
+        for child in node.named_children(&mut cursor) {
+            let start = child.start_position();
+            if start.row <= first {
+                continue;
+            }
+            if start.column > indent {
+                body = true;
+            } else if body {
+                return last.min(start.row - 1);
+            }
+        }
+        last
+    }
+
     /// Parse the current text, reusing the previous tree where there is one.
     fn parse(&mut self) -> Result<(), Trouble> {
         if !self.stale && self.tree.is_some() {
@@ -357,6 +450,44 @@ impl Document {
             collect(spans, inner, subtree.root_node(), &inner_text, &inner_window, offset);
         }
     }
+}
+
+/// A region that can be folded: its header line, which stays in view, and
+/// the last line folding it hides. Lines count from zero.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct FoldRange {
+    /// The line that stays in view.
+    pub header: u32,
+    /// The last line hidden under it.
+    pub last: u32,
+}
+
+/// The last line `node` really reaches. A node ending at the very start of a
+/// line — TOML's tables take their trailing newline with them — ends on the
+/// line before.
+fn last_row(node: tree_sitter::Node) -> usize {
+    let end = node.end_position();
+    if end.column == 0 && end.row > node.start_position().row { end.row - 1 } else { end.row }
+}
+
+/// Whether `node` starts exactly where its first named child does: a bare
+/// container with no delimiter of its own, such as Python's `block`, which
+/// begins with its first statement. Such a node does not open a region on
+/// that line — its first statement is not a header — and the construct
+/// around it, whose header is the line above, folds it instead.
+fn opens_on_a_child(node: tree_sitter::Node) -> bool {
+    node.named_child(0).is_some_and(|child| child.start_byte() == node.start_byte())
+}
+
+/// Step the cursor up to the next unvisited sibling of an ancestor, or report
+/// that the walk is over.
+fn climb(cursor: &mut tree_sitter::TreeCursor) -> bool {
+    while cursor.goto_parent() {
+        if cursor.goto_next_sibling() {
+            return true;
+        }
+    }
+    false
 }
 
 /// A span before overlaps are resolved, in bytes.

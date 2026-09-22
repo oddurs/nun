@@ -37,16 +37,13 @@
 
 ## m3 — Understanding the code
 
-`#########·` 89% · 8 of 9 done · due 2026-10-29
-
-### backlog
-
-- [ ] [`0025`](https://github.com/oddurs/nun/blob/main/cairn/items/0025-folding.md) Folding <sup>feature · p1</sup>
+`##########` 100% · 9 of 9 done · due 2026-10-29
 
 ### done
 
 - [x] [`0023`](https://github.com/oddurs/nun/blob/main/cairn/items/0023-tree-sitter-integration-and-incremental-reparse.md) Tree-sitter integration and incremental reparse <sup>feature · p0</sup>
 - [x] [`0024`](https://github.com/oddurs/nun/blob/main/cairn/items/0024-map-highlight-captures-to-theme-roles.md) Map highlight captures to theme roles <sup>feature · p0</sup>
+- [x] [`0025`](https://github.com/oddurs/nun/blob/main/cairn/items/0025-folding.md) Folding <sup>feature · p1</sup>
 - [x] [`0026`](https://github.com/oddurs/nun/blob/main/cairn/items/0026-structural-selection.md) Structural selection <sup>feature · p2</sup>
 - [x] [`0027`](https://github.com/oddurs/nun/blob/main/cairn/items/0027-symbol-palette.md) Symbol palette <sup>feature · p1</sup>
 - [x] [`0028`](https://github.com/oddurs/nun/blob/main/cairn/items/0028-project-search.md) Project search <sup>feature · p0</sup>

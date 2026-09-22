@@ -2,6 +2,7 @@
 
 mod app;
 mod commands;
+mod session;
 mod terminal;
 
 use std::io;
@@ -68,6 +69,9 @@ fn edit(path: &Path) -> io::Result<()> {
     let problems = [role_problems, key_problems].concat();
 
     let mut app = App::new(buffer, palette, keymap);
+    if let Some(path) = session::Session::default_path() {
+        app.attach_session(session::Session::load(path));
+    }
     if let Some(ms) = settings.config.double_click_ms {
         app.set_double_click(std::time::Duration::from_millis(ms));
     }
@@ -159,6 +163,11 @@ fn edit(path: &Path) -> io::Result<()> {
     }
 
     screen.close();
+    // After the terminal is back, so a failure can be said where it is seen.
+    // Losing it costs the folds, and nothing else.
+    if let Err(error) = app.save_session() {
+        eprintln!("nun: could not remember this session's folds: {error}");
+    }
     Ok(())
 }
 

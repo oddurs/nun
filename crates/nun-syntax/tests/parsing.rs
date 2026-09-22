@@ -210,6 +210,7 @@ fn typing_faster_than_the_parser_answers_only_the_latest_text() {
     loop {
         match replies.recv_timeout(Duration::from_secs(10)).unwrap() {
             Reply::Highlights { version, .. } => answers.push(version),
+            Reply::Folds { .. } => {}
             Reply::Echo(1) => break,
             other => panic!("{other:?}"),
         }
@@ -346,4 +347,75 @@ fn growing_counts_in_chars_not_bytes() {
     let text = "// größe 日本\nfn f() { value; }\n";
     let steps = growing(text, "value", true, 1);
     assert_eq!(steps[0], "value");
+}
+
+// ── folding ─────────────────────────────────────────────────────────────────
+
+/// The foldable regions of `text` in `language`, as (header, last) lines.
+fn folds_of(language: &str, text: &str) -> Vec<(u32, u32)> {
+    let language = nun_syntax::of_name(language).expect("a language nun has");
+    let mut document = Document::new(language, ropey::Rope::from_str(text));
+    document.folds().expect("the language is on").iter().map(|f| (f.header, f.last)).collect()
+}
+
+#[test]
+fn a_function_folds_from_its_signature_to_its_closing_brace() {
+    let text = "fn main() {\n    let a = 1;\n    let b = 2;\n}\n";
+    assert_eq!(folds_of("rust", text), [(0, 3)], "one region, not one per nested node");
+}
+
+#[test]
+fn nested_blocks_each_fold_on_their_own() {
+    let text = "impl Point {\n    fn new() {\n        one();\n    }\n}\n";
+    assert_eq!(folds_of("rust", text), [(0, 4), (1, 3)]);
+}
+
+#[test]
+fn a_line_that_does_not_span_lines_is_not_foldable() {
+    let text = "fn a() {}\nfn b() {}\nstruct C;\n";
+    assert!(folds_of("rust", text).is_empty(), "no arrows on one-line items");
+}
+
+#[test]
+fn folding_an_if_leaves_its_else_in_view() {
+    let text = "fn f() {\n    if x {\n        a();\n    } else {\n        b();\n    }\n}\n";
+    let folds = folds_of("rust", text);
+    assert!(folds.contains(&(1, 2)), "the if stops before `}} else {{`: {folds:?}");
+    assert!(folds.contains(&(3, 5)), "and the else has its own: {folds:?}");
+}
+
+#[test]
+fn any_grammar_folds_without_a_query_of_its_own() {
+    let text = "{\n  \"a\": [\n    1,\n    2\n  ]\n}\n";
+    assert_eq!(folds_of("json", text), [(0, 5), (1, 4)]);
+}
+
+#[test]
+fn a_file_with_one_long_item_is_not_folded_as_a_whole() {
+    // The root spans the file, and folding the file away is not a thing.
+    let text = "fn main() {\n}\n";
+    assert_eq!(folds_of("rust", text), [(0, 1)], "the function, not the source file");
+}
+
+#[test]
+fn folding_a_python_if_leaves_its_else_in_view() {
+    let folds = folds_of("python", "if x:\n    a()\n    b()\nelse:\n    c()\n    d()\n");
+    assert_eq!(folds, [(0, 2), (3, 5)], "the if stops where the else begins");
+}
+
+#[test]
+fn a_python_body_folds_under_its_header_not_its_first_statement() {
+    let folds = folds_of("python", "def f():\n    a()\n    b()\n\nx = 1\n");
+    assert_eq!(folds, [(0, 2)], "no arrow on `a()`");
+}
+
+#[test]
+fn a_toml_table_ends_on_its_own_last_line() {
+    assert_eq!(folds_of("toml", "[a]\nx = 1\ny = 2\n[b]\n"), [(0, 2)], "[b] is empty");
+}
+
+#[test]
+fn a_decorated_python_function_folds_once() {
+    let folds = folds_of("python", "@dec\ndef f():\n    a()\n    b()\n");
+    assert_eq!(folds, [(1, 3)], "from the def, not the decorator: {folds:?}");
 }

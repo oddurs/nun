@@ -23,6 +23,7 @@ use ratatui::widgets::Widget;
 
 use crate::commands::Command;
 
+mod folds;
 mod palette;
 mod panes;
 mod pointer;
@@ -73,6 +74,8 @@ pub enum Target {
     Text,
     /// The line-number gutter beside it.
     Gutter,
+    /// The column of the gutter the fold arrows are drawn in.
+    FoldArrow,
     /// The status line.
     Status,
     /// A tab: which pane, and which tab of it.
@@ -270,6 +273,8 @@ pub struct App {
     sidebar_view: SidebarView,
     /// When the typing has settled enough to start a walk.
     search_deadline: Option<Instant>,
+    /// What is remembered from one session to the next.
+    session: crate::session::Session,
 }
 
 impl App {
@@ -336,6 +341,7 @@ impl App {
             symbols: syntax::Outline::default(),
             sidebar_view: SidebarView::Files,
             search_deadline: None,
+            session: crate::session::Session::default(),
         };
         app.relayout();
         app
@@ -817,6 +823,10 @@ impl App {
             },
             // The view stays where it is: the selection grows around what is
             // being looked at, and following its far end would scroll away.
+            Command::Fold => return self.fold_here(),
+            Command::Unfold => return self.unfold_here(),
+            Command::FoldAll => return self.fold_all(),
+            Command::UnfoldAll => return self.unfold_all(),
             Command::GrowSelection => return self.grow_selection(),
             Command::ShrinkSelection => return self.shrink_selection(),
             Command::SplitIntoLines => {
@@ -939,13 +949,15 @@ impl App {
                     None => hovered,
                 }
             }
+            // By lines in view: a folded region is one line to scroll past.
             MouseEventKind::ScrollUp => {
-                self.doc_mut().scroll = self.doc_mut().scroll.saturating_sub(3);
+                let scroll = self.doc().buffer.hidden().step(self.doc().scroll, -3);
+                self.doc_mut().scroll = scroll;
                 Outcome::Redraw
             }
             MouseEventKind::ScrollDown => {
-                let last = self.doc().buffer.len_lines().saturating_sub(1);
-                self.doc_mut().scroll = (self.doc_mut().scroll + 3).min(last);
+                let scroll = self.doc().buffer.hidden().step(self.doc().scroll, 3);
+                self.doc_mut().scroll = scroll;
                 Outcome::Redraw
             }
             MouseEventKind::Down(MouseButton::Left) => {
@@ -1084,12 +1096,26 @@ impl App {
         if height == 0 {
             return;
         }
-        let line = self.doc().buffer.line_of(self.doc().buffer.selections().primary().head);
-        if line < self.doc().scroll {
-            self.doc_mut().scroll = line;
-        } else if line >= self.doc().scroll + height {
-            self.doc_mut().scroll = line - height + 1;
-        }
+        let buffer = &self.doc().buffer;
+        let line = buffer.line_of(buffer.selections().primary().head);
+        // Counted in lines in view, since that is what rows show; and a view
+        // scrolled into what has since been folded stands on its header.
+        let hidden = buffer.hidden();
+        let scroll = hidden.in_view(self.doc().scroll);
+        self.doc_mut().scroll = if line < scroll {
+            line
+        } else if hidden.rows_between(scroll, line) >= height {
+            hidden.step(line, 1 - isize::try_from(height).unwrap_or(isize::MAX))
+        } else {
+            scroll
+        };
+    }
+
+    /// The line drawn on row `row` of the focused text, counted from its top.
+    fn line_at_row(&self, row: usize) -> Option<usize> {
+        EditorView::new(&self.doc().buffer, &self.palette)
+            .scrolled_to(self.doc().scroll)
+            .line_at_row(row)
     }
 
     fn request_quit(&mut self) -> Outcome {
