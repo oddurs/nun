@@ -143,17 +143,17 @@ impl App {
             document.syntax.folding.restored = true;
             let remembered =
                 document.buffer.path().map(|path| self.session.folds_of(path)).unwrap_or_default();
-            for header in remembered {
-                if let Some(range) = document
-                    .syntax
-                    .folding
-                    .ranges
-                    .iter()
-                    .find(|range| range.header as usize == header)
-                {
-                    document.buffer.fold(header, range.last as usize);
-                }
-            }
+            // All at once, and looked up rather than searched for: a file
+            // closed with everything folded comes back with thousands.
+            let ranges = &document.syntax.folding.ranges;
+            let regions: Vec<(usize, usize)> = remembered
+                .into_iter()
+                .filter_map(|header| {
+                    let at = ranges.binary_search_by_key(&header, |range| range.header as usize);
+                    at.ok().map(|at| (header, ranges[at].last as usize))
+                })
+                .collect();
+            document.buffer.fold_many(&regions);
         }
         Outcome::Redraw
     }
@@ -452,6 +452,27 @@ fn after() {
         session.remember(&dir.path().join("point.rs"), vec![2, 5]);
         let t = Tester::new(&dir, session);
         assert_eq!(t.folded(), [(5, 7)], "only the one that still is");
+    }
+
+    #[test]
+    fn thousands_of_remembered_folds_come_back_quickly() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("many.rs");
+        fs::write(&path, "fn f() {\n    x();\n}\n".repeat(6000)).unwrap();
+        let (buffer, _) = nun_core::Buffer::load(&path).unwrap();
+        let mut app =
+            App::new(buffer, Palette::new(derive(&Probe::builtin_dark())), defaults(KeySet::Full));
+        let mut session = crate::session::Session::load(dir.path().join("session"));
+        session.remember(&path, (0..6000).map(|n| n * 3).collect());
+        app.attach_session(session);
+
+        let ranges = (0..6000).map(|n| range(n * 3, n * 3 + 2)).collect();
+        let id = app.doc().id;
+        let started = Instant::now();
+        app.folds_arrived(id, 1, ranges);
+        let took = started.elapsed();
+        assert_eq!(app.doc().buffer.folded().len(), 6000);
+        assert!(took < Duration::from_millis(500), "putting them back took {took:?}");
     }
 
     fn range(header: u32, last: u32) -> FoldRange {
