@@ -201,6 +201,37 @@ fn selecting_a_folded_line_takes_the_fold_with_it_and_keeps_it_shut() {
 }
 
 #[test]
+fn selecting_a_folded_line_that_runs_to_the_end_of_the_file_keeps_it_shut() {
+    // No newline at the end, so no line after the fold for the selection to
+    // end on: it ends where the fold does.
+    let mut buffer = Buffer::from_text("fn main() {\n    x();\n}");
+    buffer.fold(0, 2);
+    let (from, to) = buffer.line_range_in_view(0);
+    assert_eq!((from, to), (0, buffer.len_chars()));
+    buffer.set_selections(Selections::single(Range::new(from, to)));
+    assert_eq!(buffer.folded(), [(0, 2)]);
+}
+
+#[test]
+fn a_selection_ending_where_a_fold_ends_mid_file_opens_it() {
+    // What growing the selection over a folded block selects: its head is
+    // on a hidden line, with a line in view after the fold.
+    let mut buffer = Buffer::from_text("fn main() {\n    x();\n}\nfn b() {}\n");
+    buffer.fold(0, 2);
+    buffer.set_selections(Selections::single(Range::new(10, 22)));
+    assert!(buffer.folded().is_empty());
+}
+
+#[test]
+fn stepping_right_into_a_fold_of_one_empty_line_opens_it() {
+    let mut buffer = Buffer::from_text("a {\n\nb\n");
+    buffer.fold(0, 1);
+    buffer.set_selections(Selections::single(Range::caret(3)));
+    buffer.move_right(true);
+    assert!(buffer.folded().is_empty());
+}
+
+#[test]
 fn folding_thousands_of_regions_at_once_is_quick() {
     let mut text = String::new();
     for _ in 0..6000 {

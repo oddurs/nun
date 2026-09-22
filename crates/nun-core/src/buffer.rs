@@ -903,9 +903,10 @@ impl Buffer {
     /// into text nobody can see, so moving one into a fold — a click, a jump
     /// to a symbol, undo, an occurrence found inside — shows what it is in.
     fn reveal(&mut self) {
-        let mut heads: Vec<usize> = self.selections.ranges().iter().map(|r| r.head).collect();
-        heads.sort_unstable();
-        self.folds.reveal(&heads);
+        let mut ends: Vec<(usize, usize)> =
+            self.selections.ranges().iter().map(|r| (r.head, r.anchor)).collect();
+        ends.sort_unstable();
+        self.folds.reveal(&ends, self.rope.len_chars());
     }
 
     // ── several carets ──────────────────────────────────────────────────────
