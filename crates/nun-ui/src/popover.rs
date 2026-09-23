@@ -213,7 +213,7 @@ impl<'a> Popover<'a> {
         self.buttons
             .iter()
             .map(|label| {
-                let width = u16::try_from(label.width() + 2).unwrap_or(u16::MAX);
+                let width = u16::try_from(drawn_width(label) + 2).unwrap_or(u16::MAX);
                 if x.saturating_add(width) > right {
                     return Rect::new(x, y, 0, 0);
                 }
@@ -283,8 +283,12 @@ impl<'a> Popover<'a> {
             })
             .max()
             .unwrap_or(0);
-        let buttons: usize =
-            self.buttons.iter().map(|label| label.width() + 3).sum::<usize>().saturating_sub(1);
+        let buttons: usize = self
+            .buttons
+            .iter()
+            .map(|label| drawn_width(label) + 3)
+            .sum::<usize>()
+            .saturating_sub(1);
         let text = u16::try_from(body.max(buttons)).unwrap_or(u16::MAX);
         text.saturating_add(PADDING * 2)
     }
@@ -397,6 +401,14 @@ fn osc8_uri(uri: &str) -> Option<String> {
 
 /// Split `text` after as many graphemes as fit in `room` columns — at least
 /// one, so a single character wider than the card still makes progress.
+/// How many columns `text` takes as it is drawn: a grapheme at a time, which
+/// is not always what the whole string measures — a label a server wrote can
+/// hold a ligature that the string's width counts once and its graphemes
+/// twice.
+fn drawn_width(text: &str) -> usize {
+    text.graphemes(true).map(UnicodeWidthStr::width).sum()
+}
+
 fn split_at_width(text: &str, room: usize) -> (&str, &str) {
     let mut used = 0;
     let mut end = 0;
@@ -484,8 +496,12 @@ impl Widget for Popover<'_> {
             };
             let mut x = at.x;
             for grapheme in format!(" {label} ").graphemes(true) {
+                let width = u16::try_from(grapheme.width()).unwrap_or(1);
+                if x.saturating_add(width) > at.right() {
+                    break;
+                }
                 cells[(x, at.y)].set_symbol(grapheme).set_style(style);
-                x += u16::try_from(grapheme.width()).unwrap_or(1);
+                x += width;
             }
         }
     }
@@ -549,6 +565,21 @@ mod tests {
         let first: String = (card.x..card.right()).map(|x| cells[(x, card.y)].symbol()).collect();
         assert!(first.trim_end().ends_with("word"), "no word is cut in half: {first:?}");
         assert_eq!(cells[(card.right() - 1, card.bottom() - 1)].symbol(), "▾", "more below");
+    }
+
+    #[test]
+    fn a_button_is_measured_as_it_is_drawn_and_never_drawn_past() {
+        let palette = palette();
+        let body = body("unused variable");
+        // Two graphemes to its width in one piece, four drawn one by one.
+        let buttons = vec!["لالا".to_string(), "Next".to_string()];
+        let popover = Popover::new(&body, &palette).buttons(&buttons);
+        let card = popover.place(Rect::new(0, 0, 1, 1), SCREEN).unwrap();
+        let areas = popover.button_areas(card);
+        assert_eq!(areas[0].width, 6, "four columns and a space each side");
+        let mut cells = Cells::empty(SCREEN);
+        popover.render(card, &mut cells);
+        assert_eq!(cells[(areas[1].x + 1, areas[1].y)].symbol(), "N", "not drawn over");
     }
 
     #[test]

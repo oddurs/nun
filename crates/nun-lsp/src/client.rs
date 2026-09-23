@@ -25,7 +25,8 @@ use serde_json::Value;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 use crate::event::{
-    Capabilities, DocId, Error, Event, Published, RequestId, Response, ServerId, Status,
+    Capabilities, DocId, EditRequest, Error, Event, Published, RequestId, Response, ServerId,
+    Status,
 };
 use crate::language::{self, Language};
 use crate::log::Log;
@@ -78,6 +79,12 @@ enum Command {
         id: RequestId,
         doc: DocId,
     },
+    AnswerEdit {
+        server: ServerId,
+        run: u64,
+        id: Value,
+        result: Result<(), String>,
+    },
     Restart {
         server: ServerId,
     },
@@ -111,6 +118,9 @@ pub enum Handled {
     /// The answer to a request that is still wanted. Answers to requests that
     /// were cancelled never get this far.
     Response(Response),
+    /// A server wants an edit made, and waits to hear whether it was: answer
+    /// it with [`Lsp::answer_edit`], always.
+    ApplyEdit(EditRequest),
 }
 
 /// A document, as the editor's side knows it.
@@ -480,6 +490,7 @@ impl Lsp {
                 }
                 if shown { Handled::Redraw } else { Handled::Nothing }
             }
+            Event::ApplyEdit(request) => Handled::ApplyEdit(request),
             Event::Message { server, kind, text } => {
                 // Errors and warnings are for the person; the rest is chatter,
                 // and is in the log for anyone who wants it.
@@ -518,6 +529,14 @@ impl Lsp {
             )),
             _ => Handled::Redraw,
         }
+    }
+
+    /// Tell a server whether the edit it asked for was made: `Ok` when it
+    /// was, in full, or why it was not. An answer for a server that has
+    /// restarted since it asked goes nowhere, as nothing is waiting for it.
+    pub fn answer_edit(&mut self, request: EditRequest, result: Result<(), String>) {
+        let EditRequest { server, run, id, .. } = request;
+        self.send(Command::AnswerEdit { server, run, id, result });
     }
 
     /// Stop and start again the server of a document — after a crash, after
@@ -747,6 +766,12 @@ impl Router {
                     self.deliver(doc, ToServer::Notify { method, params });
                 }
                 Command::Cancel { id, doc } => self.deliver(doc, ToServer::Cancel { id }),
+                Command::AnswerEdit { server, run, id, result } => {
+                    if let Some(running) = self.servers.iter().find(|running| running.id == server)
+                    {
+                        let _ = running.inbox.send(ToServer::AnswerEdit { run, id, result });
+                    }
+                }
                 Command::Restart { server } => {
                     if let Some(running) = self.servers.iter().find(|running| running.id == server)
                     {

@@ -212,6 +212,9 @@ impl App {
             commands.push(Command::Unfold);
         }
         commands.push(Command::RenameSymbol);
+        if self.can_code_action() {
+            commands.push(Command::CodeActions);
+        }
         commands.push(Command::GrowSelection);
         if self.can_shrink() {
             commands.push(Command::ShrinkSelection);

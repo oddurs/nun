@@ -41,7 +41,11 @@ pub(super) struct Card {
     body: Vec<Paragraph>,
     /// What each button says, and the command it runs.
     buttons: Vec<(String, Command)>,
-    /// The labels alone, as the widget takes them.
+    /// How many buttons, at the front, are fixes a server offered rather
+    /// than commands; `code_actions` knows what each does.
+    fixes: usize,
+    /// The labels alone, as the widget takes them: the fixes, then the
+    /// commands.
     labels: Vec<String>,
     /// How far the body is scrolled.
     scroll: usize,
@@ -72,6 +76,7 @@ impl Card {
             anchor,
             body,
             buttons,
+            fixes: 0,
             labels,
             scroll: 0,
             opener,
@@ -105,6 +110,25 @@ impl Card {
         self.links.get(index).map(String::as_str)
     }
 
+    /// What it is about.
+    pub(super) const fn anchor(&self) -> Anchor {
+        self.anchor
+    }
+
+    /// How many of its buttons are fixes. Only the tests ask.
+    #[cfg(test)]
+    pub(super) const fn fixes(&self) -> usize {
+        self.fixes
+    }
+
+    /// Put buttons for fixes in front of the card's own, in place of any
+    /// offered before.
+    pub(super) fn offer_fixes(&mut self, labels: Vec<String>) {
+        self.fixes = labels.len();
+        self.labels = labels;
+        self.labels.extend(self.buttons.iter().map(|(label, _)| label.clone()));
+    }
+
     fn popover<'a>(&'a self, palette: &'a nun_ui::Palette) -> Popover<'a> {
         Popover::new(&self.body, palette)
             .buttons(&self.labels)
@@ -117,11 +141,13 @@ impl Card {
 impl App {
     /// Show `card`, in place of any other.
     pub(super) fn show_card(&mut self, card: Card) {
+        self.forget_card_fixes();
         self.card = Some(card);
     }
 
     /// Put the card away. Whether there was one.
     pub(super) fn close_card(&mut self) -> bool {
+        self.forget_card_fixes();
         self.card.take().is_some()
     }
 
@@ -214,8 +240,12 @@ impl App {
         let card = self.card.as_ref()?;
         match target {
             Target::Card => Some(Outcome::Continue),
+            Target::CardButton(index) if index < card.fixes => {
+                self.close_card();
+                Some(self.card_fix(index))
+            }
             Target::CardButton(index) => {
-                let command = card.buttons.get(index).map(|(_, command)| *command);
+                let command = card.buttons.get(index - card.fixes).map(|(_, command)| *command);
                 self.close_card();
                 Some(command.map_or(Outcome::Redraw, |command| self.run(command)))
             }

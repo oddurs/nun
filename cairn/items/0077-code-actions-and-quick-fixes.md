@@ -2,12 +2,14 @@
 id: 77
 title: Code actions and quick fixes
 type: feature
-status: backlog
+status: done
 milestone: m4
-created: 2026-09-22
-updated: 2026-09-22
+assignee: Oddur Sigurdsson
 depends_on:
 - 32
+created: 2026-09-22
+updated: 2026-09-23
+closed_at: 2026-09-23
 priority: p1
 effort: m
 area: lsp
@@ -34,7 +36,11 @@ focused.
 
 ## Acceptance criteria
 
-- [ ] Quick fixes appear as clickable buttons on the diagnostic card
-- [ ] Applying one is a single undo step, across every file it touches
-- [ ] A slow server never delays the card; the fixes appear when they arrive
-- [ ] The same fixes are reachable from the keyboard
+- [x] Quick fixes appear as clickable buttons on the diagnostic card
+- [x] Applying one is a single undo step, across every file it touches
+- [x] A slow server never delays the card; the fixes appear when they arrive
+- [x] The same fixes are reachable from the keyboard
+
+## 2026-09-23
+
+Rename's WorkspaceEdit machinery moved to app/workspace_edit.rs, shared by rename and code actions. Rule: an edit chosen with the text in front of the person (a code action, or the applyEdit of a command it just ran, text unchanged) that touches one open file goes straight in as one undo step; anything wider, anything touching a closed file, and any server edit sent unprompted or after the text moved is previewed like a rename, with the cross-file Undo. workspace/applyEdit now reaches the editor as an event and is answered when the edit is done with (applied, refused, or the preview put away). The combined hover+diagnostic card from 0034 asks for fixes too. Not done: a lightbulb in the gutter (filed separately).

@@ -24,6 +24,7 @@ use ratatui::widgets::Widget;
 use crate::commands::Command;
 
 mod card;
+mod code_actions;
 mod completion;
 mod diagnostics;
 mod folds;
@@ -40,6 +41,7 @@ mod search;
 mod sidebar;
 mod syntax;
 mod tabs;
+mod workspace_edit;
 
 /// What the editor wants the caller to do next.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -170,8 +172,8 @@ pub enum Target {
     Completion,
     /// One of its rows, by its place in the list.
     CompletionRow(usize),
-    /// Somewhere in the rename preview.
-    Rename(rename::Spot),
+    /// Somewhere in the preview of an edit across files.
+    EditPreview(workspace_edit::Spot),
 }
 
 impl Target {
@@ -243,8 +245,9 @@ pub enum SidebarView {
     Search,
     /// The references to a symbol.
     References,
-    /// The preview of a rename, in the search panel's clothes.
-    Rename,
+    /// The preview of an edit across files — a rename, a code action — in
+    /// the search panel's clothes.
+    EditPreview,
 }
 
 /// What has the keyboard.
@@ -257,8 +260,8 @@ pub enum Focus {
     Sidebar,
     /// The project search panel, where typing goes to the query.
     Search,
-    /// The rename preview.
-    Rename,
+    /// The preview of an edit across files.
+    EditPreview,
 }
 
 /// One open file: its text, and where the view on it is.
@@ -368,10 +371,15 @@ pub struct App {
     card: Option<card::Card>,
     /// The completion popup, and the tab-stops of a snippet it inserted.
     completion: completion::Completion,
-    /// A symbol being renamed, its preview, and the last rename applied.
+    /// A symbol being renamed, until the server's edit is in hand.
     rename: rename::Renaming,
     /// Resting on a symbol to see what it is.
     hovering: hover::Hovering,
+    /// Edits across files — renames, code actions — their preview, and the
+    /// last one applied.
+    edits: workspace_edit::Edits,
+    /// Quick fixes and code actions offered, and asked for.
+    code_actions: code_actions::CodeActions,
 }
 
 impl App {
@@ -448,6 +456,8 @@ impl App {
             completion: completion::Completion::default(),
             rename: rename::Renaming::default(),
             hovering: hover::Hovering::default(),
+            edits: workspace_edit::Edits::default(),
+            code_actions: code_actions::CodeActions::default(),
         };
         app.relayout();
         app
@@ -576,7 +586,7 @@ impl App {
         self.layout_sidebar(&mut hits);
         self.layout_search(&mut hits);
         self.layout_references(&mut hits);
-        self.layout_rename(&mut hits);
+        self.layout_edit_preview(&mut hits);
         self.layout_panes(&mut hits);
         self.layout_diagnostics(&mut hits);
         self.layout_card(&mut hits);
@@ -893,7 +903,7 @@ impl App {
                 match self.focus {
                     Focus::Search => self.search_key(event, Instant::now()),
                     Focus::Sidebar => self.sidebar_key(event),
-                    Focus::Rename => self.rename_key(event),
+                    Focus::EditPreview => self.edit_preview_key(event),
                     Focus::Editor => Outcome::Continue,
                 }
             }
@@ -908,9 +918,9 @@ impl App {
                     self.acknowledge();
                     self.search_key(event, Instant::now())
                 }
-                Some(event) if self.focus == Focus::Rename => {
+                Some(event) if self.focus == Focus::EditPreview => {
                     self.acknowledge();
-                    self.rename_key(event)
+                    self.edit_preview_key(event)
                 }
                 Some(event) if self.focus == Focus::Sidebar => {
                     self.acknowledge();
@@ -1032,8 +1042,9 @@ impl App {
             Command::PreviousDiagnostic => return self.step_diagnostic(false),
             Command::Complete => return self.complete_here(),
             Command::RenameSymbol => return self.start_rename(),
-            Command::UndoRename => return self.undo_rename(),
+            Command::UndoRename => return self.undo_edit(),
             Command::ShowHover => return self.show_hover(),
+            Command::CodeActions => return self.code_actions_here(),
             Command::ShrinkSelection => return self.shrink_selection(),
             Command::SplitIntoLines => {
                 if !self.doc_mut().buffer.split_into_lines() {
@@ -1136,9 +1147,9 @@ impl App {
                 self.completion_scroll(mouse.kind == MouseEventKind::ScrollDown)
             }
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
-                if matches!(target, Some(Target::Rename(_))) =>
+                if matches!(target, Some(Target::EditPreview(_))) =>
             {
-                self.rename_scroll(mouse.kind == MouseEventKind::ScrollDown)
+                self.edit_preview_scroll(mouse.kind == MouseEventKind::ScrollDown)
             }
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
                 if target.is_some_and(Target::in_search) =>
@@ -1283,16 +1294,16 @@ impl App {
                 self.acknowledge();
                 self.diagnostics_press(target, mouse.row)
             }
-            Target::StatusUndo if self.rename_offered() => self.undo_rename(),
+            Target::StatusUndo if self.edit_undo_offered() => self.undo_edit(),
             Target::StatusUndo if self.last_undone => self.redo_file_op(),
             Target::StatusUndo => self.undo_file_op(),
             Target::StatusFiles => {
                 self.acknowledge();
                 self.toggle_sidebar()
             }
-            Target::Rename(spot) => {
+            Target::EditPreview(spot) => {
                 self.acknowledge();
-                self.rename_press(spot)
+                self.edit_preview_press(spot)
             }
             target if target.in_search() => {
                 self.acknowledge();
@@ -1485,7 +1496,7 @@ impl App {
         self.render_references(cells);
         self.render_card(cells);
         self.render_completion(cells);
-        self.render_rename(cells);
+        self.render_edit_preview(cells);
 
         if status.height > 0 {
             self.render_status(status, cells);

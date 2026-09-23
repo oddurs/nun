@@ -19,9 +19,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use lsp_types::{
-    InitializeResult, ProgressParams, ProgressParamsValue, PublishDiagnosticsParams,
-    ServerCapabilities, ShowMessageParams, TextDocumentSyncCapability, TextDocumentSyncKind,
-    TextDocumentSyncSaveOptions, Uri, WorkDoneProgress,
+    ApplyWorkspaceEditParams, InitializeResult, ProgressParams, ProgressParamsValue,
+    PublishDiagnosticsParams, ServerCapabilities, ShowMessageParams, TextDocumentSyncCapability,
+    TextDocumentSyncKind, TextDocumentSyncSaveOptions, Uri, WorkDoneProgress,
 };
 use nun_core::Edit;
 use ropey::Rope;
@@ -31,7 +31,8 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio::time::{Instant, sleep_until, timeout_at};
 
 use crate::event::{
-    Capabilities, DocId, Error, Event, Published, RequestId, Response, ServerId, Status,
+    Capabilities, DocId, EditRequest, Error, Event, Published, RequestId, Response, ServerId,
+    Status,
 };
 use crate::log::{Direction, Log};
 use crate::position::Encoding;
@@ -187,6 +188,13 @@ pub(crate) enum ToServer {
     Cancel {
         id: RequestId,
     },
+    /// The editor's answer to a `workspace/applyEdit` of run `run`: whether
+    /// the edit was made, or why not.
+    AnswerEdit {
+        run: u64,
+        id: Value,
+        result: Result<(), String>,
+    },
     Restart,
     Shutdown {
         deadline: Instant,
@@ -254,6 +262,9 @@ struct Session {
     progress: Vec<(String, String)>,
     progress_said: Option<String>,
     progress_at: Option<Instant>,
+    /// The server's `workspace/applyEdit` requests the editor has not
+    /// answered yet, by their wire ids.
+    edits_asked: Vec<Value>,
 }
 
 /// The wire id of `initialize`, which is always the first request of a run.
@@ -271,6 +282,8 @@ pub(crate) struct Server {
     shared: Shared,
     /// Whether any run of it has got as far as initializing.
     been_ready: bool,
+    /// How many runs it has had: the current one's number.
+    runs: u64,
     docs: HashMap<DocId, Doc>,
 }
 
@@ -293,6 +306,7 @@ impl Server {
             inbox,
             shared,
             been_ready: false,
+            runs: 0,
             docs: HashMap::new(),
         }
     }
@@ -399,6 +413,8 @@ impl Server {
             ToServer::Save { .. }
             | ToServer::Notify { .. }
             | ToServer::Cancel { .. }
+            // The run that asked has gone, and nobody is waiting any more.
+            | ToServer::AnswerEdit { .. }
             | ToServer::Restart
             | ToServer::Shutdown { .. } => {}
         }
@@ -428,6 +444,7 @@ impl Server {
             tokio::spawn(read_stderr(stderr, self.shared.log.clone(), self.name.clone()));
         }
 
+        self.runs += 1;
         let mut session = Session::new(outgoing, Instant::now() + self.shared.timing.initialize);
         self.send(
             &mut session,
@@ -660,6 +677,20 @@ impl Server {
                     self.notify(session, "$/cancelRequest", json!({ "id": wire }));
                 }
             }
+            ToServer::AnswerEdit { run, id, result } => {
+                if run != self.runs {
+                    return;
+                }
+                let Some(at) = session.edits_asked.iter().position(|asked| *asked == id) else {
+                    return;
+                };
+                session.edits_asked.remove(at);
+                let result = match result {
+                    Ok(()) => json!({ "applied": true }),
+                    Err(why) => json!({ "applied": false, "failureReason": why }),
+                };
+                self.send(session, &Message::Response { id, result: Ok(result) });
+            }
             // Handled by the session loop before they get here.
             ToServer::Restart | ToServer::Shutdown { .. } => {}
         }
@@ -704,6 +735,9 @@ impl Server {
                 let result =
                     result.map_err(|Failure { code, message }| Error::Server { code, message });
                 self.answer(request.id, request.doc, request.version, result);
+            }
+            Message::Request { id, method, params } if method == "workspace/applyEdit" => {
+                self.edit_asked(session, id, params);
             }
             Message::Request { id, method, params } => {
                 let result = self.server_request(&method, &params);
@@ -775,14 +809,34 @@ impl Server {
                 }
                 Ok(Value::Null)
             }
-            "workspace/applyEdit" => Ok(json!({
-                "applied": false,
-                "failureReason": "nun does not apply edits a server asks for",
-            })),
             _ => Err(Failure {
                 code: rpc::METHOD_NOT_FOUND,
                 message: format!("nun does not handle `{method}`"),
             }),
+        }
+    }
+
+    /// The server wants an edit made. The editor decides, perhaps after the
+    /// person has looked it over, so the answer goes back when it is given
+    /// rather than now; meanwhile this task carries on as ever.
+    fn edit_asked(&self, session: &mut Session, id: Value, params: Value) {
+        match serde_json::from_value::<ApplyWorkspaceEditParams>(params) {
+            Ok(ApplyWorkspaceEditParams { label, edit }) => {
+                session.edits_asked.push(id.clone());
+                (self.shared.report)(Event::ApplyEdit(EditRequest {
+                    server: self.id,
+                    label,
+                    edit,
+                    encoding: session.encoding,
+                    run: self.runs,
+                    id,
+                }));
+            }
+            Err(error) => {
+                let failure =
+                    Failure { code: rpc::INVALID_PARAMS, message: format!("not an edit: {error}") };
+                self.send(session, &Message::Response { id, result: Err(failure) });
+            }
         }
     }
 
@@ -913,6 +967,7 @@ impl Session {
             progress: Vec::new(),
             progress_said: None,
             progress_at: None,
+            edits_asked: Vec::new(),
         }
     }
 
@@ -995,10 +1050,13 @@ fn initialize_params(root: &Path) -> Value {
             "workspace": {
                 "configuration": true,
                 "workspaceFolders": true,
-                "applyEdit": false,
-                // Versioned edits, so a rename computed against text that has
+                // Answered once the editor has made the edit, or decided not
+                // to: see `edit_asked`.
+                "applyEdit": true,
+                "executeCommand": {},
+                // Versioned edits, so an edit computed against text that has
                 // moved on is refused rather than applied in the wrong place.
-                // No resource operations: a rename that would create, move or
+                // No resource operations: an edit that would create, move or
                 // delete files is refused whole, so servers are told not to.
                 "workspaceEdit": {
                     "documentChanges": true,
@@ -1037,6 +1095,30 @@ fn initialize_params(root: &Path) -> Value {
                 "references": {},
                 "rename": { "prepareSupport": true },
                 "formatting": {},
+                // Literals rather than bare commands, so a fix can be shown
+                // before it is chosen; the edit itself may be left for when it
+                // is, which is what resolving is for.
+                "codeAction": {
+                    "codeActionLiteralSupport": {
+                        "codeActionKind": {
+                            "valueSet": [
+                                "",
+                                "quickfix",
+                                "refactor",
+                                "refactor.extract",
+                                "refactor.inline",
+                                "refactor.rewrite",
+                                "source",
+                                "source.organizeImports",
+                                "source.fixAll",
+                            ],
+                        },
+                    },
+                    "isPreferredSupport": true,
+                    "disabledSupport": true,
+                    "dataSupport": true,
+                    "resolveSupport": { "properties": ["edit"] },
+                },
             },
         },
     })
@@ -1175,10 +1257,6 @@ mod tests {
         assert_eq!(
             server.server_request("window/workDoneProgress/create", &json!({})),
             Ok(Value::Null)
-        );
-        assert_eq!(
-            server.server_request("workspace/applyEdit", &json!({})).unwrap()["applied"],
-            json!(false)
         );
         assert_eq!(
             server.server_request("something/new", &Value::Null).unwrap_err().code,

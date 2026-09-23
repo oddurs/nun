@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use lsp_types::{Diagnostic, MessageType, ServerCapabilities};
+use lsp_types::{Diagnostic, MessageType, ServerCapabilities, WorkspaceEdit};
 use serde_json::Value;
 
 use crate::position::Encoding;
@@ -152,6 +152,30 @@ pub struct Published {
     pub diagnostics: Vec<Diagnostic>,
 }
 
+/// A server asking for an edit to be made — `workspace/applyEdit`, usually
+/// while it carries out a command a code action named.
+///
+/// The server waits for the answer, so every one of these must be answered,
+/// with [`crate::Lsp::answer_edit`], whatever becomes of the edit. It is
+/// answered when the editor is done with it, which may be after the person
+/// has looked it over: nothing on the server's side blocks meanwhile.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EditRequest {
+    /// Which server asked.
+    pub server: ServerId,
+    /// What the server calls the edit, for the person.
+    pub label: Option<String>,
+    /// The edit.
+    pub edit: WorkspaceEdit,
+    /// The unit every position in it counts in: its server's.
+    pub encoding: Encoding,
+    /// Which run of the server asked, so an answer never reaches a later
+    /// run that asked nothing.
+    pub(crate) run: u64,
+    /// The request's id on the wire, echoed in the answer.
+    pub(crate) id: Value,
+}
+
 /// Something a server did, for the editor's channel.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
@@ -200,6 +224,8 @@ pub enum Event {
         /// What it published.
         published: Published,
     },
+    /// A server asked for an edit to be made, and is waiting for the answer.
+    ApplyEdit(EditRequest),
     /// A server asked for something to be shown: `window/showMessage`.
     Message {
         /// Which.

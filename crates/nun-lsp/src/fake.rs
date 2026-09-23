@@ -235,6 +235,17 @@ impl Fake {
                 }));
                 self.reply(&id, &Value::Null);
             }
+            // Asks for `params` to be applied as an edit, as a server carrying
+            // out a command does, and answers once it has its answer.
+            "test/edit" => {
+                self.send(json!({
+                    "jsonrpc": "2.0",
+                    "id": 77,
+                    "method": "workspace/applyEdit",
+                    "params": params,
+                }));
+                self.hanging.push(id);
+            }
             // Everything else hangs, as a busy server would.
             _ => self.hanging.push(id),
         }
@@ -653,6 +664,48 @@ mod tests {
         fake.answer(id).await.unwrap();
         fake.settle().await;
         assert_eq!(*fake.seen.answers.lock().unwrap(), [json!([null])]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_edit_the_server_asks_for_is_answered_when_the_editor_says() {
+        let mut fake = start(Script::default(), timing());
+        fake.open(1, "", 0);
+        fake.ready().await;
+        let edit = json!({ "label": "Fix it", "edit": { "changes": {} } });
+        fake.ask("test/edit", edit, None);
+        let Event::ApplyEdit(request) =
+            fake.until(|event| matches!(event, Event::ApplyEdit(_))).await
+        else {
+            unreachable!()
+        };
+        assert_eq!(request.label.as_deref(), Some("Fix it"));
+        assert_eq!(request.encoding, Encoding::Utf16);
+        // Nothing is said until the editor answers; meanwhile the server is
+        // served as ever.
+        fake.settle().await;
+        assert!(fake.seen.answers.lock().unwrap().is_empty());
+
+        let (run, id) = (request.run, request.id.clone());
+        fake.send(ToServer::AnswerEdit { run, id: id.clone(), result: Err("no".into()) });
+        // Answered once only, however often the editor says.
+        fake.send(ToServer::AnswerEdit { run, id: id.clone(), result: Ok(()) });
+        // And never to a run that did not ask.
+        fake.send(ToServer::AnswerEdit { run: run + 1, id, result: Ok(()) });
+        fake.settle().await;
+        assert_eq!(
+            *fake.seen.answers.lock().unwrap(),
+            [json!({ "applied": false, "failureReason": "no" })]
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_edit_that_is_not_one_is_refused_at_once() {
+        let mut fake = start(Script::default(), timing());
+        fake.open(1, "", 0);
+        fake.ready().await;
+        fake.ask("test/edit", json!({ "edit": 7 }), None);
+        fake.settle().await;
+        assert_eq!(*fake.seen.answers.lock().unwrap(), [Value::Null], "an error, not a result");
     }
 
     #[tokio::test(start_paused = true)]

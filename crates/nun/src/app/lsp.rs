@@ -117,6 +117,10 @@ impl App {
             Handled::Response(response) if self.hovering.asked(response.id) => {
                 self.hover_answered(&response)
             }
+            Handled::Response(response) if self.code_actions.owns(response.id) => {
+                self.code_action_answer(&response)
+            }
+            Handled::ApplyEdit(request) => self.server_edit(request),
             Handled::Nothing => Outcome::Continue,
             Handled::Response(response) => {
                 self.navigation_answered(&response).unwrap_or(Outcome::Continue)
