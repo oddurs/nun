@@ -3,9 +3,12 @@ id: 44
 title: Meet the latency budget
 type: chore
 status: backlog
-milestone: m6
+milestone: perf
+depends_on:
+- 32
+- 57
 created: 2026-09-10
-updated: 2026-09-10
+updated: 2026-09-22
 priority: p0
 effort: m
 area: perf
@@ -20,6 +23,11 @@ area: perf
 An end-to-end benchmark from input event to flushed frame, asserted in CI on
 representative files. The budget is 8 ms at p99 for a single-character insert in
 a 10k-line file with syntax and diagnostics active.
+
+The harness and the CI job come from 0057; this item holds the budget itself.
+Diagnostics need the language-server work in m4 (0032), which is why this item
+depends on it. The syntax-only half can be measured, and fixed, well before
+that.
 
 ## Acceptance criteria
 

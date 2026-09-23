@@ -78,19 +78,43 @@
 - [ ] [`0042`](https://github.com/oddurs/nun/blob/main/cairn/items/0042-layered-config-with-hot-reload.md) Layered config with hot reload <sup>feature · p0</sup>
 - [ ] [`0043`](https://github.com/oddurs/nun/blob/main/cairn/items/0043-session-restore.md) Session restore <sup>feature · p2</sup>
 
-## m6 — Polish until it is boring
+## perf — Fast on anything
 
-`##········` 13% · 1 of 8 done · due 2026-12-17
+`··········` 0% · 0 of 20 done · due 2026-12-10
 
 ### backlog
 
 - [ ] [`0044`](https://github.com/oddurs/nun/blob/main/cairn/items/0044-meet-the-latency-budget.md) Meet the latency budget <sup>chore · p0</sup>
 - [ ] [`0045`](https://github.com/oddurs/nun/blob/main/cairn/items/0045-zero-idle-cost.md) Zero idle cost <sup>chore · p0</sup>
+- [ ] [`0053`](https://github.com/oddurs/nun/blob/main/cairn/items/0053-load-and-save-the-buffer-off-the-main-thread.md) Load and save the buffer off the main thread <sup>chore · p1</sup>
+- [ ] [`0057`](https://github.com/oddurs/nun/blob/main/cairn/items/0057-benchmarks-and-a-release-mode-perf-job.md) Benchmarks and a release-mode perf job <sup>chore · p0</sup>
+- [ ] [`0058`](https://github.com/oddurs/nun/blob/main/cairn/items/0058-a-profiling-build-and-trace-spans.md) A profiling build and trace spans <sup>chore · p1</sup>
+- [ ] [`0059`](https://github.com/oddurs/nun/blob/main/cairn/items/0059-highlighting-switches-itself-off-after-a-burst-of-edits.md) Highlighting switches itself off after a burst of edits <sup>bug · p0</sup>
+- [ ] [`0060`](https://github.com/oddurs/nun/blob/main/cairn/items/0060-draw-and-measure-lines-without-copying-them.md) Draw and measure lines without copying them <sup>chore · p0</sup>
+- [ ] [`0061`](https://github.com/oddurs/nun/blob/main/cairn/items/0061-scroll-horizontally-past-the-right-edge.md) Scroll horizontally past the right edge <sup>feature · p1</sup>
+- [ ] [`0062`](https://github.com/oddurs/nun/blob/main/cairn/items/0062-open-large-files-without-tripling-their-size-in-memory.md) Open large files without tripling their size in memory <sup>chore · p0</sup>
+- [ ] [`0063`](https://github.com/oddurs/nun/blob/main/cairn/items/0063-rebuild-layout-once-per-frame.md) Rebuild layout once per frame <sup>chore · p1</sup>
+- [ ] [`0064`](https://github.com/oddurs/nun/blob/main/cairn/items/0064-cache-fold-visibility-and-update-folds-in-place.md) Cache fold visibility and update folds in place <sup>chore · p1</sup>
+- [ ] [`0065`](https://github.com/oddurs/nun/blob/main/cairn/items/0065-bound-the-cost-of-undo-history.md) Bound the cost of undo history <sup>chore · p1</sup>
+- [ ] [`0066`](https://github.com/oddurs/nun/blob/main/cairn/items/0066-find-the-next-occurrence-without-copying-the-file.md) Find the next occurrence without copying the file <sup>chore · p1</sup>
+- [ ] [`0067`](https://github.com/oddurs/nun/blob/main/cairn/items/0067-one-reply-per-parse-with-folds-from-the-changed-ranges.md) One reply per parse, with folds from the changed ranges <sup>chore · p1</sup>
+- [ ] [`0068`](https://github.com/oddurs/nun/blob/main/cairn/items/0068-compile-grammar-queries-on-first-use.md) Compile grammar queries on first use <sup>chore · p1</sup>
+- [ ] [`0069`](https://github.com/oddurs/nun/blob/main/cairn/items/0069-give-project-replace-its-own-worker.md) Give project replace its own worker <sup>chore · p1</sup>
+- [ ] [`0070`](https://github.com/oddurs/nun/blob/main/cairn/items/0070-search-the-project-in-parallel-and-cap-what-it-keeps.md) Search the project in parallel, and cap what it keeps <sup>chore · p2</sup>
+- [ ] [`0071`](https://github.com/oddurs/nun/blob/main/cairn/items/0071-highlights-drift-for-a-frame-after-an-edit.md) Highlights drift for a frame after an edit <sup>bug · p2</sup>
+- [ ] [`0072`](https://github.com/oddurs/nun/blob/main/cairn/items/0072-reuse-parses-of-injected-languages.md) Reuse parses of injected languages <sup>chore · p2</sup>
+- [ ] [`0073`](https://github.com/oddurs/nun/blob/main/cairn/items/0073-compute-per-frame-constants-once-per-frame.md) Compute per-frame constants once per frame <sup>chore · p2</sup>
+
+## m6 — Polish until it is boring
+
+`##········` 20% · 1 of 5 done · due 2026-12-17
+
+### backlog
+
 - [ ] [`0046`](https://github.com/oddurs/nun/blob/main/cairn/items/0046-terminal-support-matrix.md) Terminal support matrix <sup>docs · p0</sup>
 - [ ] [`0047`](https://github.com/oddurs/nun/blob/main/cairn/items/0047-first-run.md) First run <sup>feature · p1</sup>
 - [ ] [`0048`](https://github.com/oddurs/nun/blob/main/cairn/items/0048-one-command-install.md) One-command install <sup>chore · p1</sup>
 - [ ] [`0049`](https://github.com/oddurs/nun/blob/main/cairn/items/0049-freeze-and-ship-0-1.md) Freeze and ship 0.1 <sup>chore · p0</sup>
-- [ ] [`0053`](https://github.com/oddurs/nun/blob/main/cairn/items/0053-load-and-save-the-buffer-off-the-main-thread.md) Load and save the buffer off the main thread <sup>chore · p1</sup>
 
 ### done
 

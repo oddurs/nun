@@ -3,14 +3,13 @@ id: 53
 title: Load and save the buffer off the main thread
 type: chore
 status: backlog
-milestone: m6
+milestone: perf
 created: 2026-09-19
-updated: 2026-09-19
+updated: 2026-09-22
 priority: p1
 effort: m
 area: ui
 ---
-
 
 ## Problem
 
@@ -33,6 +32,15 @@ that was decoded lossily — so the check belongs with the write, on the worker.
 
 While a load is in flight the editor needs something to show, and a save that
 fails still has to reach the status line.
+
+Two more callers go through the same synchronous path and should move with it:
+opening from the palette (`crates/nun/src/app/tabs.rs:196`), and reloading the
+open buffers a project replace touched (`crates/nun/src/app/search.rs:974`).
+Save currently builds the whole file as one `String` before writing
+(`crates/nun-core/src/buffer.rs:366-377`); on the worker it can write the
+rope's chunks straight through instead. The worker needs a snapshot of the rope
+(cheap, since ropey clones share structure) and the revision it was taken at,
+so an edit made while the save is in flight still leaves the buffer dirty.
 
 ## Acceptance criteria
 
