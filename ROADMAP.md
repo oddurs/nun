@@ -53,13 +53,13 @@
 
 ## m4 — Language servers
 
-`########··` 73% · 8 of 11 done · due 2026-11-19
+`########··` 75% · 9 of 12 done · due 2026-11-19
 
 ### backlog
 
-- [ ] [`0037`](https://github.com/oddurs/nun/blob/main/cairn/items/0037-format-on-save.md) Format on save <sup>feature · p1</sup>
 - [ ] [`0077`](https://github.com/oddurs/nun/blob/main/cairn/items/0077-code-actions-and-quick-fixes.md) Code actions and quick fixes <sup>feature · p1</sup>
 - [ ] [`0079`](https://github.com/oddurs/nun/blob/main/cairn/items/0079-scroll-a-keyboard-opened-card-from-the-keyboard.md) Scroll a keyboard-opened card from the keyboard <sup>feature · p2</sup>
+- [ ] [`0080`](https://github.com/oddurs/nun/blob/main/cairn/items/0080-show-where-a-snippet-s-tab-stops-are.md) Show where a snippet's tab-stops are <sup>feature · p2</sup>
 
 ### done
 
@@ -69,6 +69,7 @@
 - [x] [`0034`](https://github.com/oddurs/nun/blob/main/cairn/items/0034-hover-cards.md) Hover cards <sup>feature · p1</sup>
 - [x] [`0035`](https://github.com/oddurs/nun/blob/main/cairn/items/0035-go-to-definition-and-find-references.md) Go to definition and find references <sup>feature · p0</sup>
 - [x] [`0036`](https://github.com/oddurs/nun/blob/main/cairn/items/0036-rename.md) Rename <sup>feature · p1</sup>
+- [x] [`0037`](https://github.com/oddurs/nun/blob/main/cairn/items/0037-format-on-save.md) Format on save <sup>feature · p1</sup>
 - [x] [`0074`](https://github.com/oddurs/nun/blob/main/cairn/items/0074-pasted-text-can-put-a-bare-carriage-return-in-the-buffer.md) Pasted text can put a bare carriage return in the buffer <sup>bug · p1</sup>
 - [x] [`0076`](https://github.com/oddurs/nun/blob/main/cairn/items/0076-say-where-ctrl-click-is-taken-by-the-terminal.md) Say where Ctrl-click is taken by the terminal <sup>feature · p2</sup>
 
