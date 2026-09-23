@@ -12,10 +12,12 @@ use std::time::Instant;
 
 use app::{App, Outcome};
 use commands::KeySet;
-use nun_config::{Loaded, Polarity};
+use nun_config::{Loaded, Polarity, Undercurl};
 use nun_core::{Buffer, LoadReport};
 use nun_theme::{Probe, Ramp, Rgb, Role, Source, derive, derive_with_polarity};
-use nun_ui::{Capabilities, Events, Palette, Screen, install_panic_hook};
+use nun_ui::{
+    Capabilities, Events, Palette, Screen, UnderlineProbe, Underlines, install_panic_hook,
+};
 use ratatui::buffer::Buffer as Cells;
 use ratatui::layout::Rect;
 use ratatui::widgets::Widget;
@@ -34,6 +36,10 @@ fn main() {
 
     match args.first().map(String::as_str) {
         Some("--version" | "-V") => println!("nun {VERSION}"),
+        Some("--capabilities") => {
+            let startup = terminal::probe(terminal::PROBE_TIMEOUT);
+            print!("{}", capabilities_report(&nun_config::load(), &startup));
+        }
         Some("theme") => print!("{}", theme(args.get(1).map(String::as_str))),
         Some("config") => print!("{}", nun_config::load().describe()),
         Some("keys") => print!("{}", commands::reference()),
@@ -147,7 +153,8 @@ fn edit(path: &Path, lsp_log: Option<&Path>) -> io::Result<()> {
         app.warn(notice);
     }
 
-    let mut screen = Screen::open(capabilities(&settings, set)).map_err(|error| {
+    let underlines = underlines(&settings, &startup.underlines);
+    let mut screen = Screen::open(capabilities(&settings, set), underlines).map_err(|error| {
         // The usual cause is no tty at all — piped input, or a CI runner — and
         // the platform's own message for that is "Device not configured".
         io::Error::new(error.kind(), format!("nun needs an interactive terminal ({error})"))
@@ -388,6 +395,64 @@ fn capabilities(settings: &Loaded, set: KeySet) -> Capabilities {
     }
 }
 
+/// Which underlines to draw: what the terminal said, unless the config says
+/// otherwise. `on` is the person declaring support nun cannot detect — tmux
+/// set up with `usstyle`, or Alacritty — not a guess from `$TERM`.
+fn underlines(settings: &Loaded, probe: &UnderlineProbe) -> Underlines {
+    match settings.config.undercurl {
+        Undercurl::Auto => probe.underlines(),
+        Undercurl::On => Underlines::FULL,
+        Undercurl::Off => Underlines::PLAIN,
+    }
+}
+
+/// What `nun --capabilities` prints: what the terminal said about itself, and
+/// what nun is doing about it.
+fn capabilities_report(settings: &Loaded, startup: &terminal::Startup) -> String {
+    use std::fmt::Write as _;
+
+    let yes = |on: bool| if on { "yes" } else { "no" };
+    let probe = &startup.underlines;
+    let mut out = String::new();
+    let _ = writeln!(out, "terminal: {}", probe.version().unwrap_or("(did not say)"));
+    let _ = writeln!(
+        out,
+        "palette: {}",
+        match startup.palette.source {
+            Source::Terminal => "probed from this terminal",
+            Source::ColorFgBg => "no reply; polarity from COLORFGBG",
+            Source::Builtin => "no reply; nun's built-in neutrals",
+        }
+    );
+    let _ = writeln!(
+        out,
+        "kitty keyboard protocol: {}",
+        match startup.kitty_keyboard {
+            Some(true) => "yes",
+            Some(false) => "no",
+            None => "no answer in time",
+        }
+    );
+    let (curly, colour) = (probe.curly(), probe.colour());
+    let _ = writeln!(out, "curly underline: {} ({})", yes(curly.supported()), curly.describe());
+    let _ = writeln!(out, "underline colour: {} ({})", yes(colour.supported()), colour.describe());
+
+    let used = underlines(settings, probe);
+    let drawn = match (used.curly, used.colour) {
+        (true, true) => "a curly underline in the severity's colour",
+        (true, false) => "a curly underline in the text's colour",
+        (false, true) => "a straight underline in the severity's colour",
+        (false, false) => "a straight underline in the text's colour; severity is on the rail",
+    };
+    let why = match settings.config.undercurl {
+        Undercurl::Auto => "undercurl = \"auto\": as the terminal said",
+        Undercurl::On => "undercurl = \"on\" in the config",
+        Undercurl::Off => "undercurl = \"off\" in the config",
+    };
+    let _ = writeln!(out, "diagnostics: {drawn} ({why})");
+    out
+}
+
 /// Anything worth telling the user once, in priority order.
 fn warnings(report: LoadReport, settings: &Loaded, role_problems: &[String]) -> Vec<String> {
     let mut warnings = Vec::new();
@@ -452,6 +517,7 @@ fn usage() -> String {
          Options:\n  \
            -h, --help         Print help\n  \
            -V, --version      Print version\n  \
+           --capabilities     Probe this terminal and say what nun will use\n  \
            --lsp-log <path>   Write every message to and from the language servers to <path>\n\n\
          Commands:\n  \
            config         Print the effective configuration and where it came from\n  \
@@ -670,6 +736,38 @@ mod tests {
         assert!(!servers.contains_key("python"), "turned off");
         assert_eq!(problems.len(), 1, "{problems:?}");
         assert!(problems[0].contains("no language called `zig`"), "{problems:?}");
+    }
+
+    #[test]
+    fn the_undercurl_setting_overrides_the_probe_both_ways() {
+        let mut quiet = UnderlineProbe::new();
+        let mut kitty = UnderlineProbe::new();
+        let _ = kitty.feed(b"\x1bP1$r0;4:3m\x1b\\\x1bP1$r0;58:2:1:2:3m\x1b\\");
+        let _ = quiet.feed(b"\x1bP0$r\x1b\\");
+
+        let mut settings = Loaded::defaults();
+        assert_eq!(underlines(&settings, &kitty), Underlines::FULL, "detected");
+        assert_eq!(underlines(&settings, &quiet), Underlines::PLAIN, "never assumed");
+        settings.config.undercurl = Undercurl::On;
+        assert_eq!(underlines(&settings, &quiet), Underlines::FULL, "declared by the person");
+        settings.config.undercurl = Undercurl::Off;
+        assert_eq!(underlines(&settings, &kitty), Underlines::PLAIN);
+    }
+
+    #[test]
+    fn the_capabilities_report_says_what_was_found_and_why() {
+        let mut underlines = UnderlineProbe::new();
+        let _ = underlines.feed(b"\x1bP0$r\x1b\\\x1bP>|tmux 3.5a\x1b\\");
+        let startup = terminal::Startup {
+            palette: Probe::builtin_dark(),
+            kitty_keyboard: Some(false),
+            underlines,
+        };
+        let report = capabilities_report(&Loaded::defaults(), &startup);
+        assert!(report.contains("terminal: tmux 3.5a"), "{report}");
+        assert!(report.contains("curly underline: no (the terminal could not say"), "{report}");
+        assert!(report.contains("straight underline in the text's colour"), "{report}");
+        assert!(report.contains("undercurl = \"auto\""), "{report}");
     }
 
     #[test]

@@ -66,3 +66,5 @@ This file is generated from the source by `nun keys`. Do not edit it by hand.
 | Go forward | `nav.forward` | `Alt+Right` | `Alt+Right` |
 | Next reference | `nav.next_reference` | `F4` | `F4` |
 | Previous reference | `nav.previous_reference` | `Shift+F4` | `Shift+F4` |
+| Go to the next problem | `diagnostics.next` | `F8` | `F8` |
+| Go to the previous problem | `diagnostics.previous` | `Shift+F8` | `Shift+F8` |

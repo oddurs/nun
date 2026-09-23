@@ -8,6 +8,7 @@ use ratatui::widgets::Widget;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
+use crate::marks::Mark;
 use crate::style::Palette;
 
 /// Space between the gutter digits and the text.
@@ -22,13 +23,30 @@ pub struct EditorView<'a> {
     marker: Option<usize>,
     highlights: &'a [nun_syntax::Span],
     foldable: &'a [nun_syntax::FoldRange],
+    marks: &'a [Mark],
 }
 
 impl<'a> EditorView<'a> {
     /// A view of `buffer`, scrolled so `scroll` is the top visible line.
     #[must_use]
     pub const fn new(buffer: &'a Buffer, palette: &'a Palette) -> Self {
-        Self { buffer, palette, scroll: 0, marker: None, highlights: &[], foldable: &[] }
+        Self {
+            buffer,
+            palette,
+            scroll: 0,
+            marker: None,
+            highlights: &[],
+            foldable: &[],
+            marks: &[],
+        }
+    }
+
+    /// Underline these diagnostics, each in the colour of its severity. They
+    /// may be in any order and may overlap; where they do, the worst wins.
+    #[must_use]
+    pub const fn marked(mut self, marks: &'a [Mark]) -> Self {
+        self.marks = marks;
+        self
     }
 
     /// Put an arrow in the gutter beside every region that can be folded.
@@ -118,6 +136,50 @@ impl<'a> EditorView<'a> {
         Some(end)
     }
 
+    /// The cells the chars `from..to` are drawn in, one rectangle per row in
+    /// view, for `area` as it would be drawn. An empty range is the one
+    /// character at `from`; a range reaching a line's end includes the cell
+    /// after its last character, where an underline there is drawn.
+    ///
+    /// What a hover over a diagnostic is resolved against, and what a card
+    /// about it is kept clear of.
+    #[must_use]
+    pub fn screen_rects(&self, area: Rect, from: usize, to: usize) -> Vec<Rect> {
+        let gutter = usize::from(self.gutter_width());
+        let width = usize::from(area.width);
+        let mut rects = Vec::new();
+        for (row, line) in
+            self.buffer.hidden().from(self.scroll).take(area.height.into()).enumerate()
+        {
+            let text = self.buffer.line_text(line);
+            let mut span: Option<(usize, usize)> = None;
+            let mut eol = (self.buffer.line_start(line), 0);
+            for cell in self.cells_of(line, &text) {
+                if overlaps(from, to, cell.char_index, cell.char_index + cell.chars) {
+                    let start = span.map_or(cell.column, |(start, _)| start);
+                    span = Some((start, cell.column + cell.width));
+                }
+                eol = (cell.char_index + cell.chars, cell.column + cell.width);
+            }
+            if overlaps(from, to, eol.0, eol.0 + 1) {
+                let start = span.map_or(eol.1, |(start, _)| start);
+                span = Some((start, eol.1 + 1));
+            }
+            let Some((start, end)) = span else { continue };
+            let (start, end) = ((gutter + start).min(width), (gutter + end).min(width));
+            if start >= end {
+                continue;
+            }
+            let (Ok(x), Ok(w), Ok(y)) =
+                (u16::try_from(start), u16::try_from(end - start), u16::try_from(row))
+            else {
+                continue;
+            };
+            rects.push(Rect::new(area.x + x, area.y + y, w, 1));
+        }
+        rects
+    }
+
     /// The grapheme clusters of `line`, whose text is `text`, as they are
     /// laid out on screen.
     ///
@@ -142,6 +204,13 @@ impl<'a> EditorView<'a> {
             laid
         })
     }
+}
+
+/// Whether a mark over `start..end` touches the chars `from..to`. An empty
+/// mark is the one character at its start.
+const fn overlaps(start: usize, end: usize, from: usize, to: usize) -> bool {
+    let end = if end > start { end } else { start + 1 };
+    start < to && end > from
 }
 
 /// One grapheme cluster, placed.
@@ -310,6 +379,23 @@ impl EditorView<'_> {
         let ranges = selections.ranges();
         let mut range = ranges.partition_point(|r| r.to() <= self.buffer.line_start(line));
 
+        // The marks that reach this line, found once rather than per cell.
+        let line_from = self.buffer.line_start(line);
+        let line_to = line_from + text.chars().count();
+        let marks: Vec<&Mark> = self
+            .marks
+            .iter()
+            .filter(|mark| overlaps(mark.start, mark.end, line_from, line_to + 1))
+            .collect();
+        let underline = |from: usize, to: usize| {
+            marks
+                .iter()
+                .filter(|mark| overlaps(mark.start, mark.end, from, to))
+                .map(|mark| mark.severity)
+                .min()
+                .map(|severity| self.palette.underline(severity.role()))
+        };
+
         let mut x = area.left() + gutter;
         let mut char_index = self.buffer.line_start(line);
 
@@ -347,6 +433,10 @@ impl EditorView<'_> {
             if is_caret(char_index) {
                 style = caret_style(char_index);
             }
+            // Last, so the caret keeps the underline it is standing on.
+            if let Some(line) = underline(char_index, char_index + chars) {
+                style = style.patch(line);
+            }
 
             let symbol = if cluster == "\t" { " " } else { cluster };
             cells[(x, y)].set_symbol(symbol).set_style(style);
@@ -367,9 +457,16 @@ impl EditorView<'_> {
             char_index += chars;
         }
 
-        // The caret may sit one past the last character on the line.
-        if is_caret(char_index) && x < area.right() {
-            cells[(x, y)].set_symbol(" ").set_style(caret_style(char_index));
+        // The caret may sit one past the last character on the line, and so
+        // may a diagnostic: a missing semicolon is reported there.
+        let past_end = underline(char_index, char_index + 1);
+        if (is_caret(char_index) || past_end.is_some()) && x < area.right() {
+            let mut style =
+                if is_caret(char_index) { caret_style(char_index) } else { cells[(x, y)].style() };
+            if let Some(line) = past_end {
+                style = style.patch(line);
+            }
+            cells[(x, y)].set_symbol(" ").set_style(style);
         }
         x
     }

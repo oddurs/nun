@@ -72,6 +72,18 @@ impl Palette {
         Style::default().bg(to_color(self.ramp.get(Role::CursorLine)))
     }
 
+    /// An underline in one role's colour, over whatever the text already has.
+    ///
+    /// Asking for a colour is asking for a curl: the backend draws one where
+    /// the terminal can, and a straight line, coloured or not, where it
+    /// cannot. See `NunBackend`.
+    #[must_use]
+    pub fn underline(&self, role: Role) -> Style {
+        Style::default()
+            .add_modifier(Modifier::UNDERLINED)
+            .underline_color(to_color(self.ramp.get(role)))
+    }
+
     /// Gutter digits, emphasised on the caret's own line.
     #[must_use]
     pub fn gutter(&self, current: bool) -> Style {
@@ -113,6 +125,16 @@ mod tests {
     #[test]
     fn selection_keeps_the_foreground_it_lands_on() {
         assert_eq!(palette().selection().fg, None, "a selection must not flatten syntax colour");
+    }
+
+    #[test]
+    fn an_underline_is_coloured_from_its_role_and_leaves_the_text_alone() {
+        let palette = palette();
+        let style = palette.underline(Role::Warn);
+        assert!(style.add_modifier.contains(Modifier::UNDERLINED));
+        let expected = palette.ramp().get(Role::Warn);
+        assert_eq!(style.underline_color, Some(Color::Rgb(expected.r, expected.g, expected.b)));
+        assert_eq!((style.fg, style.bg), (None, None), "the syntax colour shows through");
     }
 
     #[test]

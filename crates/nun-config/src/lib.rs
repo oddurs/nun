@@ -66,6 +66,20 @@ pub enum Polarity {
     Light,
 }
 
+/// Whether to draw diagnostics with a curly, coloured underline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Undercurl {
+    /// Ask the terminal, and use it only if it says it can.
+    #[default]
+    Auto,
+    /// Use it whatever the terminal says: for a terminal that has it and
+    /// cannot say so, such as tmux set up with `usstyle`, or Alacritty.
+    On,
+    /// Never use it; a plain underline, in the text's own colour.
+    Off,
+}
+
 /// How to start the language server for one language: `[lsp.<language>]`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LspServer {
@@ -137,6 +151,8 @@ pub struct Config {
     pub alternate_screen: bool,
     /// Negotiate the Kitty keyboard protocol.
     pub keyboard_enhancement: bool,
+    /// Draw diagnostics with a curly, coloured underline.
+    pub undercurl: Undercurl,
     /// Longest gap between presses that still makes a double or triple click,
     /// in milliseconds. `None` uses the platform's usual value.
     pub double_click_ms: Option<u64>,
@@ -161,6 +177,7 @@ impl Default for Config {
             mouse: true,
             alternate_screen: true,
             keyboard_enhancement: true,
+            undercurl: Undercurl::Auto,
             double_click_ms: None,
             keys: BTreeMap::new(),
             lsp: default_servers(),
@@ -227,6 +244,12 @@ impl Loaded {
         ] {
             let _ = writeln!(out, "{key} = {value}{}", self.note(key));
         }
+        let _ = writeln!(
+            out,
+            "undercurl = {:?}{}",
+            format!("{:?}", c.undercurl).to_lowercase(),
+            self.note("undercurl")
+        );
         match c.double_click_ms {
             Some(ms) => {
                 let _ = writeln!(out, "double_click_ms = {ms}{}", self.note("double_click_ms"));
@@ -366,6 +389,7 @@ struct RawUi {
     mouse: Option<bool>,
     alternate_screen: Option<bool>,
     keyboard_enhancement: Option<bool>,
+    undercurl: Option<Undercurl>,
     double_click_ms: Option<u64>,
 }
 
@@ -412,6 +436,10 @@ impl RawConfig {
             if let Some(value) = ui.keyboard_enhancement {
                 loaded.config.keyboard_enhancement = value;
                 set("keyboard_enhancement");
+            }
+            if let Some(value) = ui.undercurl {
+                loaded.config.undercurl = value;
+                set("undercurl");
             }
             if let Some(ms) = ui.double_click_ms {
                 // Below 100 ms nobody can double-click; above 2 s two separate

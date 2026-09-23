@@ -2,12 +2,14 @@
 id: 32
 title: Diagnostics and the mark rail
 type: feature
-status: backlog
+status: done
 milestone: m4
+assignee: Oddur Sigurdsson
 depends_on:
 - 31
 created: 2026-09-10
-updated: 2026-09-10
+updated: 2026-09-22
+closed_at: 2026-09-22
 priority: p0
 effort: m
 area: lsp
@@ -27,7 +29,11 @@ quick fixes as clickable buttons.
 
 ## Acceptance criteria
 
-- [ ] Undercurl capability is detected, with a correct fallback
-- [ ] Ranges stay attached to the right text as the buffer is edited
-- [ ] The rail shows density honestly when marks collide at one row
-- [ ] Counts in the status line match what the rail shows
+- [x] Undercurl capability is detected, with a correct fallback
+- [x] Ranges stay attached to the right text as the buffer is edited
+- [x] The rail shows density honestly when marks collide at one row
+- [x] Counts in the status line match what the rail shows
+
+## 2026-09-22
+
+Undercurl is probed with DECRQSS plus XTGETTCAP Smulx/Setulc, and drawn by NunBackend in nun-ui. ui.undercurl = auto|on|off overrides the probe, and nun --capabilities reports the result. Published ranges are read against the kept text of published.version and mapped through the edits since. Quick fixes are split out as 0077.
