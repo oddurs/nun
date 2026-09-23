@@ -56,6 +56,9 @@ pub(crate) const REQUEST_CANCELLED: i64 = -32800;
 /// `MethodNotFound`.
 pub(crate) const METHOD_NOT_FOUND: i64 = -32601;
 
+/// `InvalidParams`.
+pub(crate) const INVALID_PARAMS: i64 = -32602;
+
 impl Message {
     /// Sort a parsed JSON value. `None` for something that is none of the
     /// three: no method and no id, or an id with neither a result nor an error.

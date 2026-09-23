@@ -36,7 +36,8 @@ mod fake;
 
 pub use client::{Handled, Indicator, Lsp, ServerSpec};
 pub use event::{
-    Capabilities, DocId, Error, Event, Published, RequestId, Response, ServerId, Status,
+    Capabilities, DocId, EditRequest, Error, Event, Published, RequestId, Response, ServerId,
+    Status,
 };
 pub use language::{Language, names as languages, of_path as language_of};
 pub use lsp_types as types;

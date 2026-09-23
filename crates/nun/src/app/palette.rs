@@ -81,6 +81,8 @@ pub(super) enum Pick {
     Prefix(&'static str),
     /// Go to this place a server named, here or beside.
     Place(super::navigation::Place, super::navigation::Open),
+    /// Carry out this code action, by its place in the chooser.
+    Action(usize),
     /// Nothing: a row that is only telling you something.
     Nothing,
 }
@@ -521,6 +523,10 @@ impl App {
                 self.finder = None;
                 let open = if split { super::navigation::Open::Beside } else { open };
                 return self.pick_place(&place, open);
+            }
+            Pick::Action(index) => {
+                self.finder = None;
+                return self.pick_code_action(index);
             }
             Pick::Prefix(prefix) => {
                 if let Some(palette) = self.finder.as_mut() {

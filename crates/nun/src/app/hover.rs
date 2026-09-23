@@ -373,6 +373,7 @@ impl App {
         let markdown =
             found.map_or_else(Markdown::default, |hover| contents(hover.contents, language));
         let problems = self.problems_on(doc, &word);
+        let fixable = !problems.is_empty();
         if markdown.is_empty() && problems.is_empty() {
             if pointer {
                 return Outcome::Continue;
@@ -390,6 +391,9 @@ impl App {
         let card = Card::new(anchor, body, Vec::new(), None)
             .with_links(markdown.links, self.hovering.hyperlinks);
         self.show_card(if pointer { card.held_over_anchor() } else { card });
+        if fixable {
+            self.ask_fixes();
+        }
         Outcome::Redraw
     }
 

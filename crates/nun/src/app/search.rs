@@ -327,6 +327,7 @@ impl App {
             self.warn("Open a folder to search it.".to_string());
             return Outcome::Redraw;
         }
+        self.leave_edit_preview();
         self.sidebar_view = SidebarView::Search;
         self.focus = Focus::Search;
         // Reopening with a query already there selects it in the sense that
@@ -347,8 +348,9 @@ impl App {
 
     /// Swap the sidebar back to the file tree.
     pub(super) fn show_file_tree(&mut self) -> Outcome {
+        self.leave_edit_preview();
         self.sidebar_view = SidebarView::Files;
-        if matches!(self.focus, Focus::Search | Focus::Rename) {
+        if matches!(self.focus, Focus::Search | Focus::EditPreview) {
             self.focus = Focus::Sidebar;
         }
         // The walk is worth nothing to a panel nobody can see. The deadline

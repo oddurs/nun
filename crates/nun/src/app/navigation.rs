@@ -952,6 +952,7 @@ impl App {
         if let Some(sidebar) = self.sidebar.as_mut() {
             sidebar.visible = true;
         }
+        self.leave_edit_preview();
         self.sidebar_view = SidebarView::References;
         self.message = None;
         self.relayout();

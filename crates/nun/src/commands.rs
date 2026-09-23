@@ -117,10 +117,14 @@ pub enum Command {
     /// Rename the symbol at the caret across the project, through the
     /// language server, after previewing every edit.
     RenameSymbol,
-    /// Take back the last rename, in every file it touched.
+    /// Take back the last rename, or code action that was previewed, in
+    /// every file it touched.
     UndoRename,
     /// Say what the symbol at the caret is, in a card beside it.
     ShowHover,
+    /// Offer the language server's code actions at the caret: quick fixes
+    /// for the problems there first.
+    CodeActions,
 }
 
 impl Command {
@@ -177,6 +181,7 @@ impl Command {
         Self::RenameSymbol,
         Self::UndoRename,
         Self::ShowHover,
+        Self::CodeActions,
     ];
 
     /// The name used in `[keys]` in `nun.toml`.
@@ -234,6 +239,7 @@ impl Command {
             Self::RenameSymbol => "lsp.rename",
             Self::UndoRename => "lsp.undo_rename",
             Self::ShowHover => "lsp.hover",
+            Self::CodeActions => "lsp.code_actions",
         }
     }
 
@@ -292,6 +298,7 @@ impl Command {
             Self::RenameSymbol => "Rename symbol",
             Self::UndoRename => "Undo rename",
             Self::ShowHover => "Show hover",
+            Self::CodeActions => "Code actions",
         }
     }
 
@@ -317,6 +324,7 @@ impl Command {
                 | Self::FormatDocument
                 | Self::Complete
                 | Self::RenameSymbol
+                | Self::CodeActions
         )
     }
 
@@ -404,6 +412,9 @@ const BASIC: &[(&str, Command)] = &[
     ("ctrl+k z", Command::UndoRename),
     // VS Code's is Ctrl+K Ctrl+I, and Ctrl+I is Tab to a legacy terminal.
     ("ctrl+k h", Command::ShowHover),
+    // Ctrl+. is VS Code's, and only the Kitty protocol reports it; the chord
+    // is the same key after the prefix every terminal can send.
+    ("ctrl+k .", Command::CodeActions),
 ];
 
 /// Bindings that need the Kitty keyboard protocol, added over [`BASIC`].
@@ -439,6 +450,8 @@ const FULL: &[(&str, Command)] = &[
     // VS Code's.
     ("alt+shift+f", Command::FormatDocument),
     ("ctrl+k ctrl+i", Command::ShowHover),
+    ("ctrl+.", Command::CodeActions),
+    ("cmd+.", Command::CodeActions),
 ];
 
 /// The default bindings for `set`.

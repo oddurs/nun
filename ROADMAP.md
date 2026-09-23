@@ -53,12 +53,12 @@
 
 ## m4 — Language servers
 
-`#########·` 83% · 10 of 12 done · due 2026-11-19
+`#########·` 85% · 11 of 13 done · due 2026-11-19
 
 ### backlog
 
-- [ ] [`0077`](https://github.com/oddurs/nun/blob/main/cairn/items/0077-code-actions-and-quick-fixes.md) Code actions and quick fixes <sup>feature · p1</sup>
 - [ ] [`0079`](https://github.com/oddurs/nun/blob/main/cairn/items/0079-scroll-a-keyboard-opened-card-from-the-keyboard.md) Scroll a keyboard-opened card from the keyboard <sup>feature · p2</sup>
+- [ ] [`0081`](https://github.com/oddurs/nun/blob/main/cairn/items/0081-mark-lines-that-have-code-actions-with-a-lightbulb.md) Mark lines that have code actions with a lightbulb <sup>feature · p3</sup>
 
 ### done
 
@@ -71,6 +71,7 @@
 - [x] [`0037`](https://github.com/oddurs/nun/blob/main/cairn/items/0037-format-on-save.md) Format on save <sup>feature · p1</sup>
 - [x] [`0074`](https://github.com/oddurs/nun/blob/main/cairn/items/0074-pasted-text-can-put-a-bare-carriage-return-in-the-buffer.md) Pasted text can put a bare carriage return in the buffer <sup>bug · p1</sup>
 - [x] [`0076`](https://github.com/oddurs/nun/blob/main/cairn/items/0076-say-where-ctrl-click-is-taken-by-the-terminal.md) Say where Ctrl-click is taken by the terminal <sup>feature · p2</sup>
+- [x] [`0077`](https://github.com/oddurs/nun/blob/main/cairn/items/0077-code-actions-and-quick-fixes.md) Code actions and quick fixes <sup>feature · p1</sup>
 - [x] [`0080`](https://github.com/oddurs/nun/blob/main/cairn/items/0080-show-where-a-snippet-s-tab-stops-are.md) Show where a snippet's tab-stops are <sup>feature · p2</sup>
 
 ## m5 — Git and terminal

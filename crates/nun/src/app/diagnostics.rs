@@ -82,6 +82,9 @@ pub(super) struct Note {
     pub(super) source: Option<String>,
     /// Its code, such as `E0308`.
     pub(super) code: Option<String>,
+    /// All of it, as the server said it, for handing back to the server
+    /// when asking what would fix it.
+    pub(super) diagnostic: Diagnostic,
 }
 
 impl Diagnostics {
@@ -228,6 +231,7 @@ fn note(diagnostic: &Diagnostic) -> Note {
             NumberOrString::Number(number) => number.to_string(),
             NumberOrString::String(text) => text.clone(),
         }),
+        diagnostic: diagnostic.clone(),
     }
 }
 
@@ -398,6 +402,7 @@ impl App {
         let body = self.card_body(id, index);
         let buttons = self.stepping_buttons(id);
         self.show_card(Card::new(anchor, body, buttons, None));
+        self.ask_fixes();
         Outcome::Redraw
     }
 
@@ -493,6 +498,7 @@ impl App {
         let body = self.card_body(id, index);
         let buttons = self.stepping_buttons(id);
         self.show_card(Card::new(anchor, body, buttons, Some(Target::Diagnostic(pane, index))));
+        self.ask_fixes();
         Outcome::Redraw
     }
 
