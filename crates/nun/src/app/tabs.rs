@@ -142,6 +142,12 @@ impl App {
                     Target::Text,
                     false,
                 );
+                if pane == self.panes.focus()
+                    && let Some(y) = self.lightbulb_row(text)
+                {
+                    let x = text.x + gutter.saturating_sub(1);
+                    hits.push(super::cells(Rect::new(x, y, 1, 1)), Target::Lightbulb, false);
+                }
             }
             let Some(strip) = self.strip_area(pane) else { continue };
             hits.push(super::cells(strip), Target::TabStrip, false);
@@ -597,6 +603,7 @@ impl App {
                     .foldable(&doc.syntax.folding.ranges)
                     .marked(self.diagnostics.marks(doc.id))
                     .with_stops(&stops)
+                    .with_lightbulb(focused.then(|| self.lightbulb_line()).flatten())
                     .with_drop_marker(focused.then(|| self.drop_marker()).flatten())
                     .render(text, cells);
                 if let Some(rail) = rail {

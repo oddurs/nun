@@ -458,6 +458,36 @@ fn a_folded_region_is_drawn_as_its_header_with_a_marker() {
 }
 
 #[test]
+fn the_code_action_mark_sits_between_the_arrows_and_the_text() {
+    let buffer = Buffer::from_text("fn a() {\n    one();\n}\n");
+    let foldable = [nun_syntax::FoldRange { header: 0, last: 2 }];
+    let palette = palette();
+    let mut harness = Harness::new(24, 3);
+    let view = EditorView::new(&buffer, &palette).foldable(&foldable).with_lightbulb(Some(0));
+    assert_eq!(view.lightbulb_column(), 2);
+    harness.draw(view);
+    assert_eq!(
+        harness.to_text(),
+        "1▾◊fn a() {\n\
+         2      one();\n\
+         3  }",
+        "beside the arrow, on the one line, and the text not moved"
+    );
+    let mark = harness.cells()[(2, 0)].fg;
+    assert_eq!(mark, palette.fg(Role::Accent).fg.unwrap(), "a role, not a colour of its own");
+}
+
+#[test]
+fn the_code_action_mark_is_one_cell_wherever_it_is_drawn() {
+    use unicode_width::UnicodeWidthStr;
+    // Narrow both where ambiguous characters are narrow and where they are
+    // wide, so no terminal setting can push the text a cell to the right.
+    assert_eq!(nun_ui::LIGHTBULB.width(), 1);
+    assert_eq!(nun_ui::LIGHTBULB.width_cjk(), 1);
+    assert_eq!(nun_ui::LIGHTBULB.chars().count(), 1, "no variation selector to go wrong");
+}
+
+#[test]
 fn a_click_below_a_fold_maps_to_the_line_drawn_there() {
     let mut buffer = Buffer::from_text("fn a() {\n    one();\n}\nlast\n");
     buffer.set_selections(Selections::single(Range::caret(buffer.len_chars())));

@@ -165,6 +165,9 @@ pub struct Config {
     /// Mark links in cards with OSC 8 as well as drawing them as links, so a
     /// terminal that knows it can show or copy where they go.
     pub hyperlinks: bool,
+    /// Mark the caret's line in the gutter when its language server offers
+    /// code actions there.
+    pub lightbulb: bool,
     /// Key bindings added over the defaults: key sequence to command id.
     ///
     /// Kept as text here. Which sequences and commands exist is the binary's
@@ -190,6 +193,7 @@ impl Default for Config {
             double_click_ms: None,
             hover_delay_ms: 400,
             hyperlinks: true,
+            lightbulb: true,
             keys: BTreeMap::new(),
             lsp: default_servers(),
         }
@@ -253,6 +257,7 @@ impl Loaded {
             ("alternate_screen", c.alternate_screen),
             ("keyboard_enhancement", c.keyboard_enhancement),
             ("hyperlinks", c.hyperlinks),
+            ("lightbulb", c.lightbulb),
         ] {
             let _ = writeln!(out, "{key} = {value}{}", self.note(key));
         }
@@ -407,6 +412,7 @@ struct RawUi {
     double_click_ms: Option<u64>,
     hover_delay_ms: Option<u64>,
     hyperlinks: Option<bool>,
+    lightbulb: Option<bool>,
 }
 
 impl RawUi {
@@ -434,6 +440,10 @@ impl RawUi {
         if let Some(value) = self.hyperlinks {
             loaded.config.hyperlinks = value;
             set("hyperlinks");
+        }
+        if let Some(value) = self.lightbulb {
+            loaded.config.lightbulb = value;
+            set("lightbulb");
         }
         if let Some(ms) = self.hover_delay_ms {
             // Much under 100 ms and every symbol the pointer crosses on
