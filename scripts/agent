@@ -142,10 +142,7 @@ cmd_pr() {
     _d=$(default_branch)
     [ "$_b" != "$_d" ] || die "refusing to open a PR from the default branch ($_d)"
 
-    say 'running the full check before pushing'
-    "$(root)/scripts/task" check
-
-    say "pushing $_b"
+    say "pushing $_b (the pre-push hook runs the full check)"
     git push -u origin "$_b"
 
     say 'opening the pull request'
@@ -162,6 +159,39 @@ cmd_sync() {
     git fetch --quiet origin
     git rebase "origin/$_d"
     ok "$_b is up to date with origin/$_d"
+}
+
+# Merge is where the check has to hold for the code that lands, not the code that
+# was pushed. A branch behind the default branch is rebased and pushed again, so
+# the pre-push hook re-runs the check on what the squash will actually produce.
+cmd_merge() {
+    _b=$(git rev-parse --abbrev-ref HEAD)
+    _d=$(default_branch)
+    [ "$_b" != "$_d" ] || die "on $_d; run this from inside the worktree you are merging"
+    [ -z "$(git status --porcelain)" ] || die 'uncommitted changes; commit them or stash them first'
+
+    _state=$(gh pr view "$_b" --json state --jq .state 2>/dev/null || true)
+    [ "$_state" = 'OPEN' ] || die "the PR for $_b is ${_state:-missing}, not OPEN
+  open one with: scripts/agent pr"
+
+    say "fetching origin"
+    git fetch --quiet origin
+    if ! git merge-base --is-ancestor "origin/$_d" HEAD; then
+        say "behind origin/$_d; rebasing"
+        git rebase "origin/$_d" || die "rebase stopped on a conflict
+  resolve it, run: git rebase --continue, then scripts/agent merge again"
+    fi
+
+    if [ "$(git rev-parse HEAD)" != "$(git rev-parse "origin/$_b" 2>/dev/null || true)" ]; then
+        say "pushing $_b (the pre-push hook runs the full check)"
+        git push --force-with-lease origin "$_b"
+    fi
+
+    say "squash-merging the PR for $_b"
+    gh pr merge "$_b" --squash
+    ok "$_b merged into $_d"
+
+    cmd_done
 }
 
 cmd_done() {
@@ -207,7 +237,8 @@ Usage: scripts/agent <command>
   start <type>/<slug>   Create a branch and its own worktree
   check                 Run the full local check (scripts/task check)
   commit <message>      Validate the Conventional Commit, then commit
-  pr [--draft]          Check, push, and open the pull request
+  pr [--draft]          Push (the hook runs the check) and open the pull request
+  merge                 Rebase if behind, re-check, squash-merge, then clean up
   sync                  Rebase this branch onto the default branch
   done                  Verify the PR merged, then remove branch and worktree
   list                  Worktrees, their branches, and PR state
@@ -226,6 +257,7 @@ case "$_cmd" in
     check)  cmd_check  "$@" ;;
     commit) cmd_commit "$@" ;;
     pr)     cmd_pr     "$@" ;;
+    merge)  cmd_merge  "$@" ;;
     sync)   cmd_sync   "$@" ;;
     done)   cmd_done   "$@" ;;
     list)   cmd_list   "$@" ;;

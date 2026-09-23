@@ -52,8 +52,8 @@ Three live in `.claude/agents/` and are worth reaching for by name:
   `missing_errors_doc`, `missing_panics_doc`, `must_use_candidate` and the
   numeric-cast lints on any new public API. Write the docs rather than allowing
   the lint.
-- **`scripts/agent done` removes the directory you are standing in.** It prints
-  where to go; shell state will not follow it.
+- **`scripts/agent merge` and `done` remove the directory you are standing in.**
+  They print where to go; shell state will not follow.
 - **`cairn claim` refuses an item whose dependencies are unfinished.** That is
   correct — pick something from `cairn next` instead of forcing it, unless you
   are deliberately grouping a dependency edge into one PR.

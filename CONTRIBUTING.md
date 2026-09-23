@@ -22,10 +22,12 @@ cd ../.worktrees/nun/feat/0007-terminal-colour-probe
 scripts/agent check
 scripts/agent commit "feat(theme): probe the terminal palette over OSC 4"
 scripts/agent pr
-
-# after the PR merges
-scripts/agent done
+scripts/agent merge
 ```
+
+`scripts/agent merge` rebases the branch if `main` has moved, pushes it again so
+the check re-runs on what will actually land, squash-merges, and removes the
+worktree. `scripts/agent done` cleans up after a PR merged some other way.
 
 `scripts/agent list` shows every worktree with its branch and PR state.
 
@@ -59,14 +61,15 @@ in a `Refs:` trailer.
 
 ### Green before it is a PR
 
-`scripts/agent pr` runs `scripts/task check` before it pushes anything. The
+Every push runs `scripts/task check` before anything leaves the machine. The
 hooks split that work by how often you pay for it:
 
 - **pre-commit** — formatting and lint. Fast enough to run on every commit.
 - **pre-push** — the full check, plus a refusal to push to `main`.
 
-CI runs the same `scripts/task check`, so a green branch locally is a green
-branch on the server.
+That local check is the gate. CI runs the same `scripts/task check` on `main`
+after each merge, as a net for what only Linux or a cold toolchain would catch;
+it does not block a merge, and a red run on `main` is the next thing to fix.
 
 ### Pull requests
 
