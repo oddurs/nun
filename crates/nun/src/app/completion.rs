@@ -33,9 +33,11 @@
 //! **Snippets.** A snippet's placeholders become tab-stops. Tab moves every
 //! caret's copy of the snippet to its next stop at once, and Shift+Tab back;
 //! a stop's placeholders are selected, so typing replaces them, and a stop
-//! used twice is edited in both places. Reaching the final stop, pressing
-//! Escape, or moving the caret out of the stop ends it, and Tab goes back to
-//! typing a tab.
+//! used twice is edited in both places. Every stop is washed while the
+//! snippet is live — the current one, with its mirrors, more strongly — so a
+//! Tab that means something else is never a surprise. Reaching the final stop,
+//! pressing Escape, or moving the caret out of the stop ends it, takes the
+//! marks off, and Tab goes back to typing a tab.
 //!
 //! **Mouse.** Hovering a row previews its documentation beside the popup;
 //! clicking it accepts it, and Shift-clicking accepts it over the whole word
@@ -61,7 +63,7 @@ use ratatui::layout::Rect;
 use ratatui::widgets::Widget as _;
 
 use super::panes::DocId;
-use super::{App, Focus, Outcome, Target};
+use super::{App, Document, Focus, Outcome, Target};
 
 /// Completion's state: the popup, the tab-stops of an inserted snippet, and
 /// what the current keystroke has asked for.
@@ -73,6 +75,9 @@ pub(super) struct Completion {
     typed: Option<char>,
     /// A question to ask once the event's edits have gone to the server.
     wanted: Option<Trigger>,
+    /// Whether the tab-stops ended during the event, and their marks have to
+    /// come off the screen.
+    ended: bool,
 }
 
 /// Why a question is asked.
@@ -343,7 +348,7 @@ impl App {
                 KeyCode::Tab if bare => return Some(self.next_stop(1)),
                 KeyCode::BackTab => return Some(self.next_stop(-1)),
                 KeyCode::Tab if mods == KeyModifiers::SHIFT => return Some(self.next_stop(-1)),
-                KeyCode::Esc => self.completion.stops = None,
+                KeyCode::Esc => self.end_snippet(),
                 _ => {}
             }
         }
@@ -406,9 +411,14 @@ impl App {
                     if let Some(stops) = self.completion.stops.as_mut() {
                         stops.current = index;
                     }
+                    // The current stop's mark moves with it.
+                    outcome = Outcome::Redraw;
                 }
-                None => self.completion.stops = None,
+                None => self.end_snippet(),
             }
+        }
+        if std::mem::take(&mut self.completion.ended) {
+            outcome = Outcome::Redraw;
         }
 
         if self.completion.popup.is_some() {
@@ -867,11 +877,38 @@ impl App {
             .map(|span| Range::new(span.start, span.end))
             .collect();
         if index + 1 >= stops.stops.len() {
-            self.completion.stops = None;
+            self.end_snippet();
         }
         if !ranges.is_empty() {
             self.doc_mut().buffer.set_selections(Selections::new(ranges, primary));
         }
+    }
+
+    /// End the tab-stops: Tab types a tab again, and their marks come off.
+    fn end_snippet(&mut self) {
+        self.completion.ended |= self.completion.stops.take().is_some();
+    }
+
+    /// Where the live snippet's stops are in `doc`, for drawing, and which
+    /// of them is being edited. None when there is no snippet in it, or when
+    /// an edit went unseen and the stops no longer describe the text.
+    pub(super) fn snippet_stops(&self, doc: &Document) -> Vec<nun_ui::Stop> {
+        let Some(stops) = self.completion.stops.as_ref() else { return Vec::new() };
+        if stops.doc != doc.id || stops.len != doc.buffer.len_chars() {
+            return Vec::new();
+        }
+        stops
+            .stops
+            .iter()
+            .enumerate()
+            .flat_map(|(index, stop)| {
+                stop.iter().map(move |(_, span)| nun_ui::Stop {
+                    start: span.start,
+                    end: span.end,
+                    current: index == stops.current,
+                })
+            })
+            .collect()
     }
 
     /// Tab or Shift+Tab: the next stop, or the one before.
@@ -1664,6 +1701,108 @@ mod tests {
         assert_eq!(app.completion.stops.as_ref().map(|stops| stops.current), Some(1));
         app.handle(Event::Key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT)));
         assert_eq!(selections(&app), [(3, 7)], "and Shift+Tab goes back from there");
+    }
+
+    /// The marks drawn for the live snippet: where, and whether current.
+    fn marks(app: &App) -> Vec<(usize, usize, bool)> {
+        let stops = app.snippet_stops(app.doc());
+        stops.iter().map(|stop| (stop.start, stop.end, stop.current)).collect()
+    }
+
+    fn fn_snippet(app: &mut App) {
+        let mut snippet = item("fn");
+        snippet.insert_text = Some("fn ${1:name}(${2:args}) $0".into());
+        snippet.insert_text_format = Some(InsertTextFormat::SNIPPET);
+        ask(app, vec![snippet]);
+        press(app, KeyCode::Enter);
+    }
+
+    #[test]
+    fn every_stop_is_marked_and_the_marks_follow_the_typing() {
+        let mut app = editor("f", 1);
+        fn_snippet(&mut app);
+        assert_eq!(marks(&app), [(3, 7, true), (8, 12, false), (14, 14, false)]);
+        type_text(&mut app, "x");
+        assert_eq!(marks(&app), [(3, 4, true), (5, 9, false), (11, 11, false)], "{}", text(&app));
+        press(&mut app, KeyCode::Tab);
+        assert_eq!(marks(&app), [(3, 4, false), (5, 9, true), (11, 11, false)]);
+        let outcome = app.handle(Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)));
+        assert_eq!(outcome, Outcome::Redraw);
+        assert_eq!(marks(&app), [], "the end of the snippet takes its marks with it");
+    }
+
+    #[test]
+    fn a_click_into_another_stop_moves_the_strong_mark_to_it() {
+        let mut app = editor("f", 1);
+        fn_snippet(&mut app);
+        app.handle(mouse(MouseEventKind::Down(MouseButton::Left), 3 + 9, 0));
+        app.handle(mouse(MouseEventKind::Up(MouseButton::Left), 3 + 9, 0));
+        assert_eq!(marks(&app), [(3, 7, false), (8, 12, true), (14, 14, false)]);
+    }
+
+    #[test]
+    fn escape_or_moving_out_takes_the_marks_off() {
+        let mut app = editor("f", 1);
+        fn_snippet(&mut app);
+        let outcome = app.handle(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)));
+        assert_eq!(outcome, Outcome::Redraw, "the marks have to come off the screen");
+        assert_eq!(marks(&app), []);
+
+        let mut app = editor("f", 1);
+        fn_snippet(&mut app);
+        press(&mut app, KeyCode::Home);
+        assert_eq!(marks(&app), []);
+    }
+
+    #[test]
+    fn a_mirror_shares_the_current_mark() {
+        let mut app = editor("le", 2);
+        let mut snippet = item("let");
+        snippet.insert_text = Some("let ${1:x} = $1;$0".into());
+        snippet.insert_text_format = Some(InsertTextFormat::SNIPPET);
+        ask(&mut app, vec![snippet]);
+        press(&mut app, KeyCode::Enter);
+        type_text(&mut app, "yz");
+        assert_eq!(marks(&app), [(4, 6, true), (9, 11, true), (12, 12, false)]);
+    }
+
+    #[test]
+    fn every_carets_copy_is_marked() {
+        let mut buffer = Buffer::from_text("pr\npr");
+        buffer.set_selections(Selections::new(vec![Range::caret(2), Range::caret(5)], 0));
+        buffer.keep_edits(true);
+        let mut app = App::new(
+            buffer,
+            Palette::new(derive(&Probe::builtin_dark())),
+            crate::commands::defaults(crate::commands::KeySet::Full),
+        );
+        app.set_viewport(Rect::new(0, 0, 80, 12));
+        let mut snippet = item("println!");
+        snippet.insert_text = Some("println!(\"${1}\")$0".into());
+        snippet.insert_text_format = Some(InsertTextFormat::SNIPPET);
+        ask(&mut app, vec![snippet]);
+        press(&mut app, KeyCode::Enter);
+        type_text(&mut app, "hi");
+        assert_eq!(text(&app), "println!(\"hi\")\nprintln!(\"hi\")");
+        assert_eq!(marks(&app), [(10, 12, true), (25, 27, true), (14, 14, false), (29, 29, false)]);
+    }
+
+    #[test]
+    fn the_marks_are_on_screen_while_the_snippet_is_live_and_gone_after() {
+        let mut app = editor("f", 1);
+        fn_snippet(&mut app);
+        type_text(&mut app, "x");
+        let area = Rect::new(0, 0, 80, 12);
+        let palette = Palette::new(derive(&Probe::builtin_dark()));
+        let draw = |app: &App| {
+            let mut cells = Cells::empty(area);
+            app.render(area, &mut cells);
+            // `a` of `args`: a gutter of three, then column 5.
+            cells[(3 + 5, 0)].bg
+        };
+        assert_eq!(Some(draw(&app)), palette.tabstop(false).bg, "the next stop, marked");
+        press(&mut app, KeyCode::Esc);
+        assert_ne!(Some(draw(&app)), palette.tabstop(false).bg, "and not once it has ended");
     }
 
     #[test]

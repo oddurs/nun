@@ -72,6 +72,14 @@ impl Palette {
         Style::default().bg(to_color(self.ramp.get(Role::CursorLine)))
     }
 
+    /// A snippet tab-stop's wash, stronger on the stop being edited, keeping
+    /// whatever foreground the text already had.
+    #[must_use]
+    pub fn tabstop(&self, current: bool) -> Style {
+        let role = if current { Role::TabstopCurrent } else { Role::Tabstop };
+        Style::default().bg(to_color(self.ramp.get(role)))
+    }
+
     /// An underline in one role's colour, over whatever the text already has.
     ///
     /// Asking for a colour is asking for a curl: the backend draws one where
@@ -125,6 +133,14 @@ mod tests {
     #[test]
     fn selection_keeps_the_foreground_it_lands_on() {
         assert_eq!(palette().selection().fg, None, "a selection must not flatten syntax colour");
+    }
+
+    #[test]
+    fn a_tabstop_is_a_wash_stronger_on_the_current_one() {
+        let palette = palette();
+        let (other, current) = (palette.tabstop(false), palette.tabstop(true));
+        assert_eq!((other.fg, current.fg), (None, None), "a stop keeps its syntax colour");
+        assert_ne!(other.bg, current.bg);
     }
 
     #[test]
