@@ -27,8 +27,17 @@
 //! server is told how that went once it has gone. An action chosen after the
 //! text has changed is not made: its positions describe text that is no
 //! longer there.
+//!
+//! **In the gutter.** Once the caret has settled on a line, the server is
+//! asked what it offers anywhere on that line, and if it offers anything a
+//! mark goes beside it; clicking the mark opens those offers in the chooser.
+//! The question waits for the caret to rest, is cancelled when it moves on,
+//! and is not asked again while the line, its text and its diagnostics stay
+//! as they were. An edit never asks it: typing clears the mark and leaves it
+//! off until the caret goes to another line or the line's diagnostics
+//! change, so a burst of typing costs the server nothing.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use nun_lsp::types::request::{CodeActionRequest, CodeActionResolveRequest, ExecuteCommand};
 use nun_lsp::types::{
@@ -38,6 +47,7 @@ use nun_lsp::types::{
 };
 use nun_lsp::{EditRequest, RequestId, Response};
 use nun_ui::PaletteEntry;
+use ratatui::layout::Rect;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
@@ -59,6 +69,10 @@ const MOST_BUTTON_WIDTH: usize = 30;
 /// preview.
 const EXECUTE_TIMEOUT: Duration = Duration::from_secs(300);
 
+/// How long the caret rests on a line before the gutter's question is asked.
+/// Long enough that holding an arrow key down asks nothing on the way.
+const BULB_SETTLE: Duration = Duration::from_millis(300);
+
 /// What the servers have offered, and what has been asked of them.
 #[derive(Debug, Default)]
 pub(super) struct CodeActions {
@@ -74,6 +88,47 @@ pub(super) struct CodeActions {
     resolving: Option<(RequestId, Offered)>,
     /// Commands a server is carrying out.
     executing: Vec<(RequestId, Executing)>,
+    /// Whether to mark the caret's line when it has actions.
+    lightbulb_off: bool,
+    /// The caret's line, and what has been asked or said about it.
+    bulb: Option<Bulb>,
+}
+
+/// The line the gutter's question is about, as it stood.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Place {
+    doc: DocId,
+    line: usize,
+    version: i32,
+    /// How many diagnostics touch it: a server's fixes are for those, so
+    /// when they change the answer may too.
+    diagnostics: usize,
+}
+
+#[derive(Debug)]
+struct Bulb {
+    place: Place,
+    state: BulbState,
+}
+
+impl Bulb {
+    /// Whether the server offered something on the line that can be chosen.
+    fn lit(&self) -> bool {
+        matches!(&self.state, BulbState::Answered(offered)
+            if offered.iter().any(|offer| offer.disabled().is_none()))
+    }
+}
+
+#[derive(Debug)]
+enum BulbState {
+    /// Changed by an edit: nothing asked until the caret goes to another
+    /// line or the line's diagnostics change.
+    Quiet,
+    /// Waiting until this for the caret to rest.
+    Settling(Instant),
+    Asking(RequestId),
+    /// What the server offers on the line.
+    Answered(Vec<Offered>),
 }
 
 /// A command a server is carrying out.
@@ -93,6 +148,10 @@ impl CodeActions {
             || self.chooser_asked == Some(id)
             || self.resolving.as_ref().is_some_and(|(asked, _)| *asked == id)
             || self.executing.iter().any(|(asked, _)| *asked == id)
+            || self
+                .bulb
+                .as_ref()
+                .is_some_and(|bulb| matches!(bulb.state, BulbState::Asking(asked) if asked == id))
     }
 }
 
@@ -232,6 +291,7 @@ impl App {
         from: usize,
         to: usize,
         only_fixes: bool,
+        trigger: CodeActionTriggerKind,
     ) -> Option<CodeActionParams> {
         let lsp = self.lsp.as_ref()?;
         let rope = self.doc_by(doc)?.buffer.rope();
@@ -263,7 +323,7 @@ impl App {
             context: CodeActionContext {
                 diagnostics,
                 only: only_fixes.then(|| vec![CodeActionKind::QUICKFIX]),
-                trigger_kind: Some(CodeActionTriggerKind::INVOKED),
+                trigger_kind: Some(trigger),
             },
             work_done_progress_params: WorkDoneProgressParams::default(),
             partial_result_params: PartialResultParams::default(),
@@ -292,7 +352,11 @@ impl App {
         if self.resolves(doc).is_none() {
             return;
         }
-        let Some(params) = self.code_action_params(doc, from, to, false) else { return };
+        let Some(params) =
+            self.code_action_params(doc, from, to, false, CodeActionTriggerKind::INVOKED)
+        else {
+            return;
+        };
         let Some(lsp) = self.lsp.as_mut() else { return };
         if let Ok(id) = lsp.request::<CodeActionRequest>(doc, params) {
             self.code_actions.card_asked = Some((id, anchor));
@@ -356,7 +420,9 @@ impl App {
             );
             return Outcome::Redraw;
         }
-        let Some(params) = self.code_action_params(doc, from, to, false) else {
+        let Some(params) =
+            self.code_action_params(doc, from, to, false, CodeActionTriggerKind::INVOKED)
+        else {
             return Outcome::Continue;
         };
         let Some(lsp) = self.lsp.as_mut() else { return Outcome::Continue };
@@ -428,6 +494,14 @@ impl App {
         {
             return self.action_resolved(offer, response);
         }
+        if self
+            .code_actions
+            .bulb
+            .as_ref()
+            .is_some_and(|bulb| matches!(bulb.state, BulbState::Asking(asked) if asked == id))
+        {
+            return self.bulb_answered(response);
+        }
         if let Some(at) = self.code_actions.executing.iter().position(|(asked, _)| *asked == id) {
             let (_, executing) = self.code_actions.executing.remove(at);
             if let Err(error) = &response.result {
@@ -477,6 +551,151 @@ impl App {
                 self.message = Some(format!("No code actions: {why}. Try again."));
                 Outcome::Redraw
             }
+        }
+    }
+
+    // ── in the gutter ───────────────────────────────────────────────────────
+
+    /// Mark the caret's line when it has code actions, or not.
+    pub fn set_lightbulb(&mut self, on: bool) {
+        self.code_actions.lightbulb_off = !on;
+        if !on {
+            self.forget_bulb();
+        }
+    }
+
+    /// The line the caret is on in the focused document, as it stands, if
+    /// its server can be asked about it.
+    fn caret_line(&self) -> Option<Place> {
+        if self.code_actions.lightbulb_off {
+            return None;
+        }
+        let doc = self.doc();
+        self.resolves(doc.id)?;
+        let version = self.lsp.as_ref()?.version(doc.id)?;
+        let line = doc.buffer.line_of(doc.buffer.selections().primary().head);
+        let (from, to) = (doc.buffer.line_start(line), doc.buffer.line_end(line));
+        let diagnostics = self
+            .diagnostics
+            .marks(doc.id)
+            .iter()
+            .filter(|mark| mark.start <= to && from <= mark.end)
+            .count();
+        Some(Place { doc: doc.id, line, version, diagnostics })
+    }
+
+    /// After anything that happened: if the caret is on another line, or
+    /// its line changed, what was said about the old one no longer holds.
+    /// Moved or newly diagnosed, the line is asked about once the caret has
+    /// rested; edited, it is not asked about at all.
+    pub(super) fn bulb_follow(&mut self, now: Instant) -> Outcome {
+        let place = self.caret_line();
+        let was = self.code_actions.bulb.as_ref().map(|bulb| bulb.place);
+        if place == was {
+            return Outcome::Continue;
+        }
+        let shown = self.code_actions.bulb.as_ref().is_some_and(Bulb::lit);
+        self.forget_bulb();
+        if let Some(place) = place {
+            let edited =
+                was.is_some_and(|was| was.doc == place.doc && was.version != place.version);
+            let state =
+                if edited { BulbState::Quiet } else { BulbState::Settling(now + BULB_SETTLE) };
+            self.code_actions.bulb = Some(Bulb { place, state });
+        }
+        if shown { Outcome::Redraw } else { Outcome::Continue }
+    }
+
+    /// Stop waiting, and cancel the question if it has been asked.
+    fn forget_bulb(&mut self) {
+        let Some(bulb) = self.code_actions.bulb.take() else { return };
+        if let BulbState::Asking(id) = bulb.state
+            && let Some(lsp) = self.lsp.as_mut()
+        {
+            lsp.cancel(id);
+        }
+    }
+
+    /// When the caret will have rested, if it is resting.
+    pub(super) fn bulb_deadline(&self) -> Option<Instant> {
+        match self.code_actions.bulb.as_ref()?.state {
+            BulbState::Settling(due) => Some(due),
+            _ => None,
+        }
+    }
+
+    /// The caret has rested: ask what the server offers on its line.
+    pub(super) fn bulb_tick(&mut self, now: Instant) -> Outcome {
+        let Some(bulb) = self.code_actions.bulb.as_ref() else { return Outcome::Continue };
+        let BulbState::Settling(due) = bulb.state else { return Outcome::Continue };
+        if now < due {
+            return Outcome::Continue;
+        }
+        let Place { doc, line, .. } = bulb.place;
+        let buffer = &self.doc().buffer;
+        if doc != self.doc().id || line >= buffer.len_lines() {
+            self.forget_bulb();
+            return Outcome::Continue;
+        }
+        let (from, to) = (buffer.line_start(line), buffer.line_end(line));
+        let params =
+            self.code_action_params(doc, from, to, false, CodeActionTriggerKind::AUTOMATIC);
+        let asked = params.and_then(|params| {
+            self.lsp.as_mut().and_then(|lsp| lsp.request::<CodeActionRequest>(doc, params).ok())
+        });
+        if let Some(bulb) = self.code_actions.bulb.as_mut() {
+            bulb.state = asked.map_or(BulbState::Answered(Vec::new()), BulbState::Asking);
+        }
+        Outcome::Continue
+    }
+
+    fn bulb_answered(&mut self, response: &Response) -> Outcome {
+        let offered = self.offered(response).unwrap_or_default();
+        let Some(bulb) = self.code_actions.bulb.as_mut() else { return Outcome::Continue };
+        bulb.state = BulbState::Answered(offered);
+        if self.lightbulb_line().is_some() { Outcome::Redraw } else { Outcome::Continue }
+    }
+
+    /// The caret's line and what is on offer there, while that is still
+    /// the line asked about, as it was, and anything there can be chosen.
+    fn bulb_offers(&self) -> Option<(usize, &[Offered])> {
+        let bulb = self.code_actions.bulb.as_ref().filter(|bulb| bulb.lit())?;
+        let BulbState::Answered(offered) = &bulb.state else { return None };
+        let doc = self.doc();
+        let still = bulb.place.doc == doc.id
+            && bulb.place.line == doc.buffer.line_of(doc.buffer.selections().primary().head)
+            && self.lsp.as_ref().and_then(|lsp| lsp.version(doc.id)) == Some(bulb.place.version);
+        still.then_some((bulb.place.line, offered))
+    }
+
+    /// The focused document's line to mark as having code actions.
+    pub(super) fn lightbulb_line(&self) -> Option<usize> {
+        self.bulb_offers().map(|(line, _)| line)
+    }
+
+    /// The row of `text`, the focused pane's text area, that the mark is
+    /// on, when it is on one.
+    pub(super) fn lightbulb_row(&self, text: Rect) -> Option<u16> {
+        let line = self.lightbulb_line()?;
+        let doc = self.doc();
+        let row = doc
+            .buffer
+            .hidden()
+            .from(doc.scroll)
+            .take(usize::from(text.height))
+            .position(|l| l == line)?;
+        Some(text.y + u16::try_from(row).ok()?)
+    }
+
+    /// The mark was clicked: what it stands for, in the chooser — or, if it
+    /// no longer stands for anything, the question the chooser asks.
+    pub(super) fn lightbulb_click(&mut self) -> Outcome {
+        match self.bulb_offers() {
+            Some((_, offered)) => {
+                let offered = offered.to_vec();
+                self.offer_in_chooser(offered)
+            }
+            None => self.code_actions_here(),
         }
     }
 
@@ -719,6 +938,9 @@ done
         resolved: &'a str,
         delay: &'a str,
         apply: &'a str,
+        /// Whether the caret's line is marked; off unless a test is about
+        /// it, so its questions are not in the others' way.
+        lightbulb: bool,
     }
 
     struct Tester {
@@ -756,6 +978,7 @@ done
                 crate::commands::defaults(crate::commands::KeySet::Full),
             );
             app.set_viewport(Rect::new(0, 0, 120, 30));
+            app.set_lightbulb(says.lightbulb);
             let (sender, done) = channel();
             app.open_folder(
                 dir.path().to_path_buf(),
@@ -1160,6 +1383,150 @@ done
         // Measured as it is drawn: a grapheme at a time.
         let label = button_label(&"لا".repeat(15));
         assert!(drawn_width(&label) <= MOST_BUTTON_WIDTH, "{label}");
+    }
+
+    // ── in the gutter ───────────────────────────────────────────────────────
+
+    impl Tester {
+        /// How many times the server has been asked for code actions.
+        fn asked(&self) -> usize {
+            self.log().lines().filter(|line| line.contains("textDocument/codeAction")).count()
+        }
+
+        /// Whether the gutter's question is on its way.
+        fn bulb_asking(app: &App) -> bool {
+            app.code_actions.bulb.as_ref().is_some_and(|b| matches!(b.state, BulbState::Asking(_)))
+        }
+
+        /// Whether the gutter's question has been answered.
+        fn bulb_answered(app: &App) -> bool {
+            app.code_actions
+                .bulb
+                .as_ref()
+                .is_some_and(|b| matches!(b.state, BulbState::Answered(_)))
+        }
+
+        /// Keep handing the editor what comes in, and ticking it, for `long`.
+        fn wait(&mut self, long: Duration) {
+            let until = Instant::now() + long;
+            self.until(|_| Instant::now() >= until);
+        }
+
+        /// The symbol drawn in the gutter's last column on `row`.
+        fn gutter_mark(&self, row: u16) -> String {
+            let mut cells = Cells::empty(self.app.viewport);
+            self.app.render(self.app.viewport, &mut cells);
+            let (text, _) = self.app.areas();
+            let x = text.x + self.app.gutter_width() - 1;
+            cells[(x, text.y + row)].symbol().to_string()
+        }
+    }
+
+    #[test]
+    fn a_line_with_actions_is_marked_once_the_caret_rests_and_the_mark_opens_them() {
+        let actions = two_fixes_and_a_refactor();
+        let mut t = Tester::new(&Says { actions: &actions, lightbulb: true, ..Says::default() });
+        t.until(|app| app.lightbulb_line() == Some(0));
+        assert_eq!(t.gutter_mark(0), nun_ui::LIGHTBULB);
+        assert_eq!(t.gutter_mark(1), " ", "only the caret's line");
+
+        // Asked about the whole line, as something the person did not ask
+        // for, with the diagnostic on it.
+        let log = t.log();
+        let asked = log.lines().find(|line| line.contains("textDocument/codeAction")).unwrap();
+        assert!(asked.contains(r#""triggerKind":2"#), "{asked}");
+        assert!(asked.contains("unused_variables"), "{asked}");
+        let line = r#""range":{"end":{"character":24,"line":0},"start":{"character":0,"line":0}}"#;
+        assert!(asked.contains(line), "{asked}");
+
+        // Once, and not again while the caret stays on the line.
+        t.key(KeyCode::Right, KeyModifiers::NONE);
+        t.wait(BULB_SETTLE * 2);
+        assert_eq!(t.asked(), 1);
+        assert_eq!(t.app.bulb_deadline(), None, "nothing left to wake up for");
+
+        t.click_on(Target::Lightbulb);
+        let rows: Vec<&str> = t
+            .app
+            .finder
+            .as_ref()
+            .expect("the chooser")
+            .rows
+            .iter()
+            .map(|row| row.entry.label.as_str())
+            .collect();
+        assert_eq!(
+            rows,
+            ["Prefix with an underscore", "Remove the variable", "Extract into a function"]
+        );
+        assert_eq!(t.asked(), 1, "what the mark stands for, without asking again");
+        t.key(KeyCode::Enter, KeyModifiers::NONE);
+        assert_eq!(t.text(), "fn main() { let _x = 1; }\n");
+    }
+
+    #[test]
+    fn typing_neither_asks_nor_waits_and_moving_on_asks_again() {
+        let actions = two_fixes_and_a_refactor();
+        let mut t = Tester::new(&Says { actions: &actions, lightbulb: true, ..Says::default() });
+        t.until(|app| app.lightbulb_line() == Some(0));
+        let before = t.asked();
+
+        for ch in "abc".chars() {
+            t.key(KeyCode::Char(ch), KeyModifiers::NONE);
+            assert_eq!(t.app.lightbulb_line(), None, "the mark is about text no longer there");
+            assert_eq!(t.app.bulb_deadline(), None, "and typing arms nothing");
+        }
+        t.wait(BULB_SETTLE * 2);
+        assert_eq!(t.asked(), before, "typing asked nothing: {}", t.log());
+
+        // Going to another line is resting somewhere new.
+        t.key(KeyCode::Down, KeyModifiers::NONE);
+        assert!(t.app.bulb_deadline().is_some());
+        t.until(|app| app.lightbulb_line() == Some(1));
+        assert_eq!(t.asked(), before + 1);
+    }
+
+    #[test]
+    fn moving_on_cancels_the_question() {
+        let actions = two_fixes_and_a_refactor();
+        let mut t = Tester::new(&Says {
+            actions: &actions,
+            delay: "1",
+            lightbulb: true,
+            ..Says::default()
+        });
+        t.until(Tester::bulb_asking);
+        t.key(KeyCode::Down, KeyModifiers::NONE);
+        assert!(!Tester::bulb_asking(&t.app));
+        let deadline = Instant::now() + std::time::Duration::from_secs(10);
+        while !t.log().contains("$/cancelRequest") {
+            assert!(Instant::now() < deadline, "never cancelled: {}", t.log());
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn a_line_with_nothing_on_offer_is_not_marked() {
+        let mut t = Tester::new(&Says { lightbulb: true, ..Says::default() });
+        t.until(Tester::bulb_answered);
+        assert_eq!(t.app.lightbulb_line(), None);
+        assert_eq!(t.gutter_mark(0), " ");
+        // A click where it would be is the gutter's: it selects the line.
+        let (text, _) = t.app.areas();
+        t.click(text.x + t.app.gutter_width() - 1, text.y, MouseButton::Left);
+        assert!(t.app.finder.is_none());
+    }
+
+    #[test]
+    fn turned_off_it_asks_nothing() {
+        let actions = two_fixes_and_a_refactor();
+        let mut t = Tester::new(&Says { actions: &actions, ..Says::default() });
+        assert_eq!(t.app.bulb_deadline(), None);
+        t.key(KeyCode::Down, KeyModifiers::NONE);
+        assert_eq!(t.app.bulb_deadline(), None);
+        t.wait(BULB_SETTLE * 2);
+        assert_eq!(t.asked(), 0);
+        assert_eq!(t.app.lightbulb_line(), None);
     }
 
     proptest::proptest! {

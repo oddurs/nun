@@ -2,12 +2,14 @@
 id: 81
 title: Mark lines that have code actions with a lightbulb
 type: feature
-status: backlog
+status: done
 milestone: m4
+assignee: Oddur Sigurdsson
 depends_on:
 - 77
 created: 2026-09-23
 updated: 2026-09-23
+closed_at: 2026-09-23
 priority: p3
 effort: s
 area: lsp
@@ -31,6 +33,10 @@ must read from a theme role, never a literal colour.
 
 ## Acceptance criteria
 
-- [ ] A line with code actions at the caret shows a mark once the caret settles
-- [ ] Clicking the mark opens the code actions chooser
-- [ ] Typing never waits on, or triggers, the question
+- [x] A line with code actions at the caret shows a mark once the caret settles
+- [x] Clicking the mark opens the code actions chooser
+- [x] Typing never waits on, or triggers, the question
+
+## 2026-09-23
+
+Mark is ◊ in the gutter's last column (between the fold arrows and the text), Role::Accent. Chosen over 💡 (wide, emoji presentation) and • (East Asian ambiguous width, two cells in CJK-ambiguous-wide terminals): ◊ is neutral width, has no emoji form, and is in WGL4. The question covers the caret's whole line with its diagnostics as context (trigger kind Automatic), after 300 ms of rest; edits never arm it. Clicking the mark opens the kept answer in the chooser without asking again; Ctrl+. still asks afresh (Invoked). ui.lightbulb turns it off.

@@ -105,6 +105,15 @@ fn language_servers(settings: &Loaded) -> (BTreeMap<String, nun_lsp::ServerSpec>
 }
 
 /// Open a file and run the editor over it.
+/// What the settings say about what the pointer does, and what it is shown.
+fn pointer_settings(app: &mut App, config: &nun_config::Config) {
+    if let Some(ms) = config.double_click_ms {
+        app.set_double_click(std::time::Duration::from_millis(ms));
+    }
+    app.set_hover(std::time::Duration::from_millis(config.hover_delay_ms), config.hyperlinks);
+    app.set_lightbulb(config.lightbulb);
+}
+
 fn edit(path: &Path, lsp_log: Option<&Path>) -> io::Result<()> {
     let settings = nun_config::load();
 
@@ -143,13 +152,7 @@ fn edit(path: &Path, lsp_log: Option<&Path>) -> io::Result<()> {
     if let Some(path) = session::Session::default_path() {
         app.attach_session(session::Session::load(path));
     }
-    if let Some(ms) = settings.config.double_click_ms {
-        app.set_double_click(std::time::Duration::from_millis(ms));
-    }
-    app.set_hover(
-        std::time::Duration::from_millis(settings.config.hover_delay_ms),
-        settings.config.hyperlinks,
-    );
+    pointer_settings(&mut app, &settings.config);
     // Only the first is shown: the rest are visible through `nun config`, and a
     // queue of config complaints would bury the editor under them.
     if let Some(warning) = warnings(report, &settings, &problems).into_iter().next() {

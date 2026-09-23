@@ -84,6 +84,8 @@ pub enum Target {
     Text,
     /// The line-number gutter beside it.
     Gutter,
+    /// The mark in the gutter beside a line that has code actions.
+    Lightbulb,
     /// The column of the gutter the fold arrows are drawn in.
     FoldArrow,
     /// The status line.
@@ -706,6 +708,7 @@ impl App {
             self.formatting.deadline(),
             self.link_deadline(),
             self.hover_deadline(),
+            self.bulb_deadline(),
         ]
         .into_iter()
         .flatten()
@@ -746,7 +749,9 @@ impl App {
             .and(self.search_tick(now))
             .and(self.format_tick(now))
             .and(self.link_tick(now))
-            .and(self.hover_tick(now));
+            .and(self.hover_tick(now))
+            .and(self.bulb_follow(now))
+            .and(self.bulb_tick(now));
         if outcome == Outcome::Redraw {
             self.relayout();
         }
@@ -780,7 +785,7 @@ impl App {
         // now, in the order it was done, and only then is anything asked
         // about it.
         self.lsp_flush();
-        let outcome = outcome.and(self.completion_follow());
+        let outcome = outcome.and(self.completion_follow()).and(self.bulb_follow(now));
         // Anything that changed the text or moved the view changes what the
         // parser should be looking at.
         let after = (self.doc().buffer.len_chars(), self.doc().scroll, self.doc().id);

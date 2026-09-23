@@ -14,6 +14,15 @@ use crate::style::Palette;
 /// Space between the gutter digits and the text.
 const GUTTER_PADDING: u16 = 2;
 
+/// The mark beside a line that has code actions.
+///
+/// A lozenge rather than a light bulb: 💡 is two cells wide and drawn as an
+/// emoji, in a colour of its own that no role reaches. This one is a single
+/// cell whatever the terminal makes of ambiguous widths (it is neutral, not
+/// ambiguous, unlike `•`), has no emoji form to be switched into, and is in
+/// every monospace font that has the fold arrows beside it.
+pub const LIGHTBULB: &str = "◊";
+
 /// Where one of a live snippet's tab-stops is, in char indices, and whether
 /// it is the one being edited. An empty stop marks the one cell at `start`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,6 +46,7 @@ pub struct EditorView<'a> {
     foldable: &'a [nun_syntax::FoldRange],
     marks: &'a [Mark],
     stops: &'a [Stop],
+    lightbulb: Option<usize>,
 }
 
 impl<'a> EditorView<'a> {
@@ -52,6 +62,7 @@ impl<'a> EditorView<'a> {
             foldable: &[],
             marks: &[],
             stops: &[],
+            lightbulb: None,
         }
     }
 
@@ -68,6 +79,14 @@ impl<'a> EditorView<'a> {
     #[must_use]
     pub const fn with_stops(mut self, stops: &'a [Stop]) -> Self {
         self.stops = stops;
+        self
+    }
+
+    /// Mark `line` in the gutter as having code actions, in the column
+    /// between the fold arrows and the text.
+    #[must_use]
+    pub const fn with_lightbulb(mut self, line: Option<usize>) -> Self {
+        self.lightbulb = line;
         self
     }
 
@@ -107,6 +126,13 @@ impl<'a> EditorView<'a> {
     #[must_use]
     pub fn arrow_column(&self) -> u16 {
         self.gutter_width() - GUTTER_PADDING
+    }
+
+    /// The gutter column the code-action mark is drawn in, counted from the
+    /// left edge of the view: the last one, just before the text.
+    #[must_use]
+    pub fn lightbulb_column(&self) -> u16 {
+        self.gutter_width() - 1
     }
 
     /// The line drawn on row `row` of the view, counted from its top, or
@@ -324,6 +350,10 @@ impl Widget for EditorView<'_> {
             self.draw_gutter(cells, area, y, line, is_caret_line);
             let folded_here = folded.binary_search(&line).is_ok();
             self.draw_arrow(cells, area, y, line, folded_here);
+            if self.lightbulb == Some(line) {
+                let x = area.left() + self.lightbulb_column();
+                cells[(x, y)].set_symbol(LIGHTBULB).set_style(self.palette.fg(Role::Accent));
+            }
             let end = self.draw_line(cells, area, y, line, gutter, &carets);
             if folded_here {
                 self.draw_fold_marker(cells, area, y, end);

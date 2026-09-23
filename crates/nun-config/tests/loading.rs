@@ -320,3 +320,14 @@ fn the_hover_delay_can_be_set_within_reason_and_links_left_unmarked() {
     assert_eq!(loaded.config.hover_delay_ms, 400, "keeps the default");
     assert!(loaded.problems.iter().any(|problem| problem.message.contains("hover_delay_ms")));
 }
+
+#[test]
+fn the_code_action_mark_is_on_unless_turned_off() {
+    let (loaded, _) = load_text("");
+    assert!(loaded.config.lightbulb);
+
+    let (loaded, _) = load_text("[ui]\nlightbulb = false\n");
+    assert!(loaded.problems.is_empty(), "{:?}", loaded.problems);
+    assert!(!loaded.config.lightbulb);
+    assert!(loaded.describe().contains("lightbulb = false"));
+}

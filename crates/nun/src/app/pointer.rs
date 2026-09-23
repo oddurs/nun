@@ -84,6 +84,10 @@ impl App {
             return outcome;
         }
 
+        if target == Target::Lightbulb {
+            return self.lightbulb_click();
+        }
+
         if target == Target::FoldArrow {
             let (text, _) = self.areas();
             let row = usize::from(row.saturating_sub(text.top()));
