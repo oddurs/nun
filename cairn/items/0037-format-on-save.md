@@ -2,10 +2,11 @@
 id: 37
 title: Format on save
 type: feature
-status: backlog
+status: done
 milestone: m4
 created: 2026-09-10
-updated: 2026-09-22
+updated: 2026-09-23
+closed_at: 2026-09-23
 priority: p1
 effort: s
 area: lsp
@@ -26,9 +27,8 @@ times out leaves the file unformatted and saves it anyway, with a notice.
 
 - [x] Caret and selections land where a human would expect after reformatting
 - [x] Timeout does not block the save
-- [ ] Configurable per language, and per project — per language is done
-      (`[lsp.<language>] format_on_save`); per project waits on the project
-      layer of 0042 and is 0075
+- [x] Configurable per language (`[lsp.<language>] format_on_save`); per
+      project moved to 0075 in m5, since it needs the project layer of 0042
 - [x] Format-on-save off by default for languages with no stable formatter
 
 ## 2026-09-22
