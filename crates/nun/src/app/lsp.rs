@@ -54,6 +54,10 @@ impl App {
             false
         };
         document.buffer.keep_edits(followed);
+        match lsp.version(id).filter(|_| followed) {
+            Some(version) => self.diagnostics.opened(id, version, document.buffer.rope()),
+            None => self.diagnostics.closed(id),
+        }
     }
 
     /// Stop following a document that has gone.
@@ -61,6 +65,7 @@ impl App {
         if let Some(lsp) = self.lsp.as_mut() {
             lsp.close(id);
         }
+        self.diagnostics.closed(id);
     }
 
     /// Send every edit made since the last time, for every document.
@@ -73,7 +78,12 @@ impl App {
         for document in &mut self.docs {
             let edits = document.buffer.take_edits();
             if !edits.is_empty() {
-                lsp.change(document.id, edits, document.buffer.rope());
+                lsp.change(document.id, edits.clone(), document.buffer.rope());
+                // The diagnostics move with the text, and keep this version
+                // for an answer about it that is still on its way.
+                if let Some(version) = lsp.version(document.id) {
+                    self.diagnostics.changed(document.id, version, &edits, document.buffer.rope());
+                }
             }
         }
     }
@@ -89,7 +99,8 @@ impl App {
     /// A server said something.
     pub(super) fn lsp_event(&mut self, event: nun_lsp::Event) -> Outcome {
         let Some(lsp) = self.lsp.as_mut() else { return Outcome::Continue };
-        match lsp.handle(event) {
+        let marks = super::diagnostics::moves_marks(&event);
+        let outcome = match lsp.handle(event) {
             Handled::Response(response) if self.formatting.asked(response.id) => {
                 self.format_answer(&response)
             }
@@ -104,7 +115,11 @@ impl App {
                 self.warn(notice);
                 Outcome::Redraw
             }
+        };
+        if marks {
+            self.refresh_diagnostics();
         }
+        outcome
     }
 
     /// Restart the server of the file being edited.

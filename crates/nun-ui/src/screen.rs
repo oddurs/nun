@@ -3,11 +3,12 @@
 use std::io::{self, Stdout};
 
 use ratatui::Terminal;
-use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
 use ratatui::widgets::Widget;
 
+use crate::backend::NunBackend;
 use crate::lifecycle::{Capabilities, CrosstermControl, TerminalGuard};
+use crate::underline::Underlines;
 
 /// Owns the terminal for as long as the editor is running.
 ///
@@ -15,7 +16,7 @@ use crate::lifecycle::{Capabilities, CrosstermControl, TerminalGuard};
 /// the guard inside does both.
 #[derive(Debug)]
 pub struct Screen {
-    terminal: Terminal<CrosstermBackend<Stdout>>,
+    terminal: Terminal<NunBackend<Stdout>>,
     guard: TerminalGuard<CrosstermControl>,
     capabilities: Capabilities,
     /// Whether the caller wants any-motion tracking, kept so a resume from
@@ -24,14 +25,15 @@ pub struct Screen {
 }
 
 impl Screen {
-    /// Enter the terminal and prepare to draw.
+    /// Enter the terminal and prepare to draw, with the underlines it said
+    /// it can draw.
     ///
     /// # Errors
     ///
     /// If the terminal cannot be entered, or the backend cannot be created.
-    pub fn open(capabilities: Capabilities) -> io::Result<Self> {
+    pub fn open(capabilities: Capabilities, underlines: Underlines) -> io::Result<Self> {
         let guard = TerminalGuard::enter(CrosstermControl, capabilities)?;
-        let terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
+        let terminal = Terminal::new(NunBackend::new(io::stdout(), underlines))?;
         Ok(Self { terminal, guard, capabilities, motion_wanted: false })
     }
 

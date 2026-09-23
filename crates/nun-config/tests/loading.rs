@@ -57,6 +57,7 @@ fn every_setting_can_be_overridden() {
         mouse = false
         alternate_screen = false
         keyboard_enhancement = false
+        undercurl = "on"
         "##,
     );
 
@@ -66,6 +67,7 @@ fn every_setting_can_be_overridden() {
     assert!(!loaded.config.mouse);
     assert!(!loaded.config.alternate_screen);
     assert!(!loaded.config.keyboard_enhancement);
+    assert_eq!(loaded.config.undercurl, nun_config::Undercurl::On);
     assert!(loaded.problems.is_empty());
 }
 
@@ -146,7 +148,9 @@ fn describe_annotates_only_what_came_from_a_file() {
 #[test]
 fn describe_covers_every_setting() {
     let described = Loaded::defaults().describe();
-    for key in ["tab_width", "polarity", "mouse", "alternate_screen", "keyboard_enhancement"] {
+    for key in
+        ["tab_width", "polarity", "mouse", "alternate_screen", "keyboard_enhancement", "undercurl"]
+    {
         assert!(described.contains(key), "{key} missing from `nun config`");
     }
 }

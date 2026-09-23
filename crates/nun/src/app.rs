@@ -23,6 +23,8 @@ use ratatui::widgets::Widget;
 
 use crate::commands::Command;
 
+mod card;
+mod diagnostics;
 mod folds;
 mod format;
 mod lsp;
@@ -146,9 +148,34 @@ pub enum Target {
     MenuItem(usize),
     /// Everywhere outside the open menu, which a click there closes.
     MenuOutside,
+    /// A pane's diagnostic rail, away from its marks.
+    Rail(usize),
+    /// A row of a pane's rail with marks on it.
+    RailMark(usize, u16),
+    /// An underlined diagnostic in a pane: which pane, and which of its
+    /// document's diagnostics. Pressed, it is the text under it.
+    Diagnostic(usize, usize),
+    /// The card, away from its buttons.
+    Card,
+    /// One of the card's buttons.
+    CardButton(usize),
+    /// The diagnostic counts in the status line.
+    StatusProblems,
 }
 
 impl Target {
+    /// What a press on this lands on: an underline is the text beneath it.
+    const fn pressed(self) -> Self {
+        match self {
+            Self::Diagnostic(..) => Self::Text,
+            target => target,
+        }
+    }
+
+    const fn in_diagnostics(self) -> bool {
+        matches!(self, Self::Rail(_) | Self::RailMark(..) | Self::StatusProblems)
+    }
+
     const fn in_tabs(self) -> bool {
         matches!(self, Self::Tab(..) | Self::TabClose(..) | Self::TabStrip)
     }
@@ -300,6 +327,10 @@ pub struct App {
     formatting: format::Formatting,
     /// Definitions, references, and the way back from them.
     navigation: navigation::Navigation,
+    /// What the servers have said is wrong, and where.
+    diagnostics: diagnostics::Diagnostics,
+    /// The card on screen.
+    card: Option<card::Card>,
 }
 
 impl App {
@@ -370,6 +401,8 @@ impl App {
             lsp: None,
             formatting: format::Formatting::default(),
             navigation: navigation::Navigation::default(),
+            diagnostics: diagnostics::Diagnostics::default(),
+            card: None,
         };
         app.relayout();
         app
@@ -480,6 +513,8 @@ impl App {
         self.layout_search(&mut hits);
         self.layout_references(&mut hits);
         self.layout_panes(&mut hits);
+        self.layout_diagnostics(&mut hits);
+        self.layout_card(&mut hits);
         self.layout_palette(&mut hits);
 
         let parts = self.status_parts(status);
@@ -503,6 +538,9 @@ impl App {
             // Not a hover target either, for the same reason: it is on screen
             // whenever a server is running, which is most of the time.
             hits.push(cells(lsp), Target::StatusLsp, false);
+        }
+        if let Some(problems) = parts.problems {
+            hits.push(cells(problems), Target::StatusProblems, true);
         }
         if let Some(prompt) = &self.prompt {
             for (index, area) in prompt.button_areas(status).into_iter().enumerate() {
@@ -534,6 +572,7 @@ impl App {
                 undo: None,
                 close: None,
                 lsp: None,
+                problems: None,
                 text: status.x,
             };
         }
@@ -565,7 +604,8 @@ impl App {
             let used = text + u16::try_from(left.chars().count() + 1).ok()?;
             (x > undo.map_or(used, Rect::right)).then(|| Rect::new(x, status.y, width, 1))
         });
-        StatusParts { files, search, undo, close, lsp, text }
+        let problems = self.problems_part(status, text, undo, close, lsp);
+        StatusParts { files, search, undo, close, lsp, problems, text }
     }
 
     /// Whether anything on screen reacts to the pointer merely passing over it.
@@ -615,10 +655,9 @@ impl App {
             }
         }
 
-        // Nothing reacts to a dwell yet; the first hover card is milestone 4.
-        // Taking it keeps the deadline from firing again.
+        // Taking the dwell keeps the deadline from firing again.
         let dwell = match self.hover.dwell(now) {
-            Some(_) => Outcome::Redraw,
+            Some(target) => self.dwelt(target),
             None => Outcome::Continue,
         };
 
@@ -680,7 +719,7 @@ impl App {
     fn dispatch(&mut self, event: Event, now: Instant) -> Outcome {
         match event {
             Event::Key(key) => self.handle_key(key, now),
-            Event::Mouse(mouse) => self.handle_mouse(mouse, now),
+            Event::Mouse(mouse) => self.handle_mouse(mouse, now).and(self.card_follow_pointer()),
             Event::Paste(text) if self.prompt.is_some() => {
                 self.prompt_paste(&text);
                 Outcome::Redraw
@@ -734,6 +773,9 @@ impl App {
         }
         if self.finder.is_some() {
             return self.palette_key(&event);
+        }
+        if let Some(outcome) = self.card_key(&event) {
+            return outcome;
         }
         if self.menu.take().is_some() && event.code == KeyCode::Esc {
             return Outcome::Redraw;
@@ -903,6 +945,8 @@ impl App {
             Command::GoForward => return self.jump_forward(),
             Command::NextReference => return self.step_reference(1),
             Command::PreviousReference => return self.step_reference(-1),
+            Command::NextDiagnostic => return self.step_diagnostic(true),
+            Command::PreviousDiagnostic => return self.step_diagnostic(false),
             Command::ShrinkSelection => return self.shrink_selection(),
             Command::SplitIntoLines => {
                 if !self.doc_mut().buffer.split_into_lines() {
@@ -989,8 +1033,13 @@ impl App {
         let hovered = if crossing.is_none() { Outcome::Continue } else { Outcome::Redraw };
         let hovered = hovered.and(self.link_pointer(mouse, now));
 
-        let target = hit.map(|hit| hit.target);
+        let target = hit.map(|hit| hit.target.pressed());
         match mouse.kind {
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+                if matches!(target, Some(Target::Card | Target::CardButton(_))) =>
+            {
+                self.card_scroll(mouse.kind == MouseEventKind::ScrollDown)
+            }
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown if self.finder.is_some() => {
                 self.palette_scroll(mouse.kind == MouseEventKind::ScrollDown)
             }
@@ -1099,6 +1148,9 @@ impl App {
             // Clicking elsewhere does not answer the question; it stays up.
             return Outcome::Continue;
         }
+        if let Some(outcome) = self.card_click(target) {
+            return outcome;
+        }
 
         if self.finder.is_some() {
             let split = mouse.modifiers.contains(KeyModifiers::ALT)
@@ -1126,6 +1178,10 @@ impl App {
             Target::StatusLsp => {
                 self.acknowledge();
                 self.lsp_restart()
+            }
+            target if target.in_diagnostics() => {
+                self.acknowledge();
+                self.diagnostics_press(target, mouse.row)
             }
             Target::StatusUndo if self.last_undone => self.redo_file_op(),
             Target::StatusUndo => self.undo_file_op(),
@@ -1322,6 +1378,7 @@ impl App {
         self.render_sidebar(cells);
         self.render_search(cells);
         self.render_references(cells);
+        self.render_card(cells);
 
         if status.height > 0 {
             self.render_status(status, cells);
@@ -1425,6 +1482,9 @@ impl App {
         if let Some(lsp) = parts.lsp {
             self.render_lsp(lsp, cells);
         }
+        if let Some(problems) = parts.problems {
+            self.render_problems(problems, cells);
+        }
 
         let width = u16::try_from(right.chars().count()).unwrap_or(0);
         // Dropped entirely rather than overlapping when the two halves would
@@ -1488,6 +1548,8 @@ struct StatusParts {
     close: Option<Rect>,
     /// The name of the file's language server, which restarts it.
     lsp: Option<Rect>,
+    /// The diagnostic counts, which go to the next one.
+    problems: Option<Rect>,
     /// Where the text starts.
     text: u16,
 }

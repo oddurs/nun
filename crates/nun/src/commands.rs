@@ -108,6 +108,10 @@ pub enum Command {
     NextReference,
     /// Go to the reference before in the list.
     PreviousReference,
+    /// Go to the next diagnostic after the caret, and say what it is.
+    NextDiagnostic,
+    /// Go to the diagnostic before the caret, and say what it is.
+    PreviousDiagnostic,
 }
 
 impl Command {
@@ -158,6 +162,8 @@ impl Command {
         Self::GoForward,
         Self::NextReference,
         Self::PreviousReference,
+        Self::NextDiagnostic,
+        Self::PreviousDiagnostic,
     ];
 
     /// The name used in `[keys]` in `nun.toml`.
@@ -209,6 +215,8 @@ impl Command {
             Self::GoForward => "nav.forward",
             Self::NextReference => "nav.next_reference",
             Self::PreviousReference => "nav.previous_reference",
+            Self::NextDiagnostic => "diagnostics.next",
+            Self::PreviousDiagnostic => "diagnostics.previous",
         }
     }
 
@@ -261,6 +269,8 @@ impl Command {
             Self::GoForward => "Go forward",
             Self::NextReference => "Next reference",
             Self::PreviousReference => "Previous reference",
+            Self::NextDiagnostic => "Go to the next problem",
+            Self::PreviousDiagnostic => "Go to the previous problem",
         }
     }
 
@@ -359,6 +369,9 @@ const BASIC: &[(&str, Command)] = &[
     ("alt+right", Command::GoForward),
     ("f4", Command::NextReference),
     ("shift+f4", Command::PreviousReference),
+    // VS Code's.
+    ("f8", Command::NextDiagnostic),
+    ("shift+f8", Command::PreviousDiagnostic),
 ];
 
 /// Bindings that need the Kitty keyboard protocol, added over [`BASIC`].

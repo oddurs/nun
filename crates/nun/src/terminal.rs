@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use nun_input::{KEYBOARD_QUERY, KeyboardProbe};
 use nun_theme::{Probe, ProbeSession};
-use nun_ui::{Capabilities, CrosstermControl, TerminalGuard};
+use nun_ui::{Capabilities, CrosstermControl, TerminalGuard, UNDERLINE_QUERY, UnderlineProbe};
 
 /// How long to wait for a terminal that may never answer.
 ///
@@ -29,6 +29,8 @@ pub struct Startup {
     /// rely on keys only the protocol reports, but they are different things to
     /// tell the user.
     pub kitty_keyboard: Option<bool>,
+    /// What it said about underlines, and its name if it gave one.
+    pub underlines: UnderlineProbe,
 }
 
 /// Ask the terminal for its palette and its keyboard protocol in one round
@@ -41,10 +43,16 @@ pub struct Startup {
 /// including on the error paths.
 pub fn probe(timeout: Duration) -> Startup {
     let fallback = fallback_probe();
-    let nothing = Startup { palette: fallback.clone(), kitty_keyboard: None };
+    let nothing = Startup {
+        palette: fallback.clone(),
+        kitty_keyboard: None,
+        underlines: UnderlineProbe::new(),
+    };
 
-    // A probe needs a terminal on stdin to answer it; piped input has none.
-    if !rustix::termios::isatty(std::io::stdin()) {
+    // A probe needs a terminal on stdin to answer it, and one on stdout to
+    // ask: piped input has no one to answer, and redirected output would
+    // write the questions into a file.
+    if !rustix::termios::isatty(std::io::stdin()) || !rustix::termios::isatty(std::io::stdout()) {
         return nothing;
     }
     // Without raw mode the reply is line-buffered and echoed, so it would both
@@ -60,13 +68,15 @@ pub fn probe(timeout: Duration) -> Startup {
 
 fn probe_in_raw_mode(timeout: Duration, fallback: &Probe) -> Option<Startup> {
     let mut colours = ProbeSession::new();
+    let mut underlines = UnderlineProbe::new();
     let mut keyboard = KeyboardProbe::new();
 
-    // One write, in this order: the colour queries, the keyboard query, and
-    // last the device-attributes sentinel. Replies come back in the order
-    // asked, so the sentinel's reply means every other reply is in.
+    // One write, in this order: the colour queries, the underline queries,
+    // the keyboard query, and last the device-attributes sentinel. Replies
+    // come back in the order asked, so the sentinel's reply means every other
+    // reply is in.
     let mut stdout = std::io::stdout();
-    let request = format!("{}{KEYBOARD_QUERY}", colours.request());
+    let request = format!("{}{UNDERLINE_QUERY}{KEYBOARD_QUERY}", colours.request());
     stdout.write_all(request.as_bytes()).ok()?;
     stdout.flush().ok()?;
 
@@ -90,11 +100,18 @@ fn probe_in_raw_mode(timeout: Duration, fallback: &Probe) -> Option<Startup> {
         // the editor's input reader starts, so a keystroke landing inside this
         // window is dropped: a real if small cost, and the window closes as
         // soon as the terminal has answered.
+        // Each parser takes its own replies and hands the rest along: OSC
+        // for the colours, DCS for the underlines, CSI for the keyboard.
         let rest = colours.feed(&buffer[..count]);
+        let rest = underlines.feed(&rest);
         let _ = keyboard.feed(&rest);
     }
 
-    Some(Startup { palette: colours.finish(fallback), kitty_keyboard: keyboard.supported() })
+    Some(Startup {
+        palette: colours.finish(fallback),
+        kitty_keyboard: keyboard.supported(),
+        underlines,
+    })
 }
 
 /// Wait up to `timeout` for `stdin` to have something to read.
