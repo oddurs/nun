@@ -27,6 +27,9 @@
 //! - [`Rewrite`] writes whole files whose new text was worked out elsewhere —
 //!   a language server's rename — and only while each still holds what it was
 //!   read as. It is a [`Job`] too, and its undo is the same job the other way.
+//! - [`project_name`] says what to call the project: its GitHub repository,
+//!   read from git's own config files, or else its folder. It reads files, so
+//!   the editor asks for it as a [`Job`].
 //! - [`Watcher`] watches the expanded directories and reports, coalesced per
 //!   directory, that something in one of them changed. It never touches the
 //!   tree itself: the editor state has one owner on the main thread, so the
@@ -40,6 +43,7 @@ pub mod jobs;
 pub mod labels;
 pub mod ops;
 mod order;
+pub mod project;
 pub mod replace;
 pub mod rewrite;
 pub mod search;
@@ -51,6 +55,7 @@ pub use jobs::{Done, Job, Jobs, trash_or_temp};
 pub use labels::{UNNAMED, tab_labels};
 pub use ops::{Change, FsHistory, OpError, Operation, default_trash_dir};
 pub use order::compare_names;
+pub use project::{folder_name, project_name};
 pub use replace::{Outcome, Recorded, Replacer, Report, Skipped, preview};
 pub use rewrite::{Rewrite, Written};
 pub use search::{MOST_FILES, Match, list_files, search};

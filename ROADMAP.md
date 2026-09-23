@@ -115,7 +115,7 @@
 
 ## m6 — Polish until it is boring
 
-`##········` 17% · 1 of 6 done · due 2026-12-17
+`###·······` 29% · 2 of 7 done · due 2026-12-17
 
 ### backlog
 
@@ -128,4 +128,5 @@
 ### done
 
 - [x] [`0054`](https://github.com/oddurs/nun/blob/main/cairn/items/0054-install-nun-from-the-working-copy-with-one-command.md) Install nun from the working copy with one command <sup>chore · p2</sup>
+- [x] [`0083`](https://github.com/oddurs/nun/blob/main/cairn/items/0083-show-the-github-repository-as-the-file-tree-s-title.md) Show the GitHub repository as the file tree's title <sup>feature · p2</sup>
 
