@@ -581,6 +581,18 @@ impl Lsp {
         Some(self.encoding(doc)?.char_index(text, position))
     }
 
+    /// A server's edits to a document's `text` as buffer edits, ready for
+    /// `Buffer::apply_batch`. See [`Encoding::edits`].
+    #[must_use]
+    pub fn edits(
+        &self,
+        doc: DocId,
+        text: &Rope,
+        edits: &[lsp_types::TextEdit],
+    ) -> Option<Vec<Edit>> {
+        Some(self.encoding(doc)?.edits(text, edits))
+    }
+
     /// The document and a place in it, the parameters most requests start
     /// from: hover, completion, definition, references, rename.
     #[must_use]

@@ -279,3 +279,28 @@ fn describe_lists_the_language_servers_and_stays_valid_toml() {
         panic!("`nun config` printed invalid TOML: {error}\n\n{described}")
     });
 }
+
+#[test]
+fn format_on_save_is_on_only_where_one_formatter_is_the_standard() {
+    let config = Config::default();
+    let on: Vec<&str> = config
+        .lsp
+        .iter()
+        .filter(|(_, server)| server.format_on_save)
+        .map(|(language, _)| language.as_str())
+        .collect();
+    assert_eq!(on, ["go", "rust"], "rustfmt and gofmt; every other formatter is a choice");
+}
+
+#[test]
+fn format_on_save_is_set_per_language_and_keeps_the_server() {
+    let (loaded, _) =
+        load_text("[lsp.rust]\nformat_on_save = false\n\n[lsp.python]\nformat_on_save = true\n");
+    assert!(loaded.problems.is_empty(), "{:?}", loaded.problems);
+    assert!(!loaded.config.lsp["rust"].format_on_save);
+    assert_eq!(loaded.config.lsp["rust"].command, "rust-analyzer");
+    assert!(loaded.config.lsp["python"].format_on_save);
+    assert!(loaded.config.lsp["go"].format_on_save, "a language not mentioned keeps its default");
+    assert!(loaded.describe().contains("[lsp.python]"), "and it says so");
+    assert!(loaded.describe().contains("format_on_save = true"));
+}

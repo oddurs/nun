@@ -159,7 +159,13 @@ impl App {
             (Purpose::NewFolder(dir), _) => self.create(&dir, name, true),
             (Purpose::Rename(path), _) => self.rename(&path, name),
             (Purpose::UnsavedThenClose(pane, index), Answer::Confirm) => {
-                self.save();
+                // Formatted first if the language asks for that, in which case
+                // the tab closes once the save has happened.
+                let id = self.doc().id;
+                if self.format_then_save(id, true) {
+                    return Outcome::Redraw;
+                }
+                self.message = Some(self.write(id).unwrap_or_else(|failed| failed));
                 // A save that failed leaves the changes unsaved; the tab stays
                 // open rather than taking them away with it.
                 if !self.doc().buffer.is_modified() {

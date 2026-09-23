@@ -58,3 +58,4 @@ This file is generated from the source by `nun keys`. Do not edit it by hand.
 | Fold everything | `fold.fold_all` | `Ctrl+K 0` | `Ctrl+K 0` |
 | Unfold everything | `fold.unfold_all` | `Ctrl+K J` | `Ctrl+K J` |
 | Restart the language server | `lsp.restart` | `Ctrl+K Shift+R` | `Ctrl+K Shift+R` |
+| Format document | `lsp.format` | `Alt+Shift+F`, `Ctrl+K Shift+F` | `Ctrl+K Shift+F` |

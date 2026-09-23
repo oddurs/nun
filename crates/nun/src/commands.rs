@@ -92,6 +92,8 @@ pub enum Command {
     UnfoldAll,
     /// Stop and start again the language server of the file being edited.
     RestartLanguageServer,
+    /// Have the language server format the file being edited.
+    FormatDocument,
 }
 
 impl Command {
@@ -134,6 +136,7 @@ impl Command {
         Self::FoldAll,
         Self::UnfoldAll,
         Self::RestartLanguageServer,
+        Self::FormatDocument,
     ];
 
     /// The name used in `[keys]` in `nun.toml`.
@@ -177,6 +180,7 @@ impl Command {
             Self::FoldAll => "fold.fold_all",
             Self::UnfoldAll => "fold.unfold_all",
             Self::RestartLanguageServer => "lsp.restart",
+            Self::FormatDocument => "lsp.format",
         }
     }
 
@@ -221,6 +225,7 @@ impl Command {
             Self::FoldAll => "Fold everything",
             Self::UnfoldAll => "Unfold everything",
             Self::RestartLanguageServer => "Restart the language server",
+            Self::FormatDocument => "Format document",
         }
     }
 
@@ -243,6 +248,7 @@ impl Command {
                 | Self::Unfold
                 | Self::FoldAll
                 | Self::UnfoldAll
+                | Self::FormatDocument
         )
     }
 
@@ -309,6 +315,7 @@ const BASIC: &[(&str, Command)] = &[
     ("ctrl+k 0", Command::FoldAll),
     ("ctrl+k j", Command::UnfoldAll),
     ("ctrl+k shift+r", Command::RestartLanguageServer),
+    ("ctrl+k shift+f", Command::FormatDocument),
 ];
 
 /// Bindings that need the Kitty keyboard protocol, added over [`BASIC`].
@@ -341,6 +348,8 @@ const FULL: &[(&str, Command)] = &[
     // dropped from a character that is not a letter, which is Escape.
     ("cmd+alt+[", Command::Fold),
     ("cmd+alt+]", Command::Unfold),
+    // VS Code's.
+    ("alt+shift+f", Command::FormatDocument),
 ];
 
 /// The default bindings for `set`.

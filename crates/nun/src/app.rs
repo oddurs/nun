@@ -24,6 +24,7 @@ use ratatui::widgets::Widget;
 use crate::commands::Command;
 
 mod folds;
+mod format;
 mod lsp;
 mod palette;
 mod panes;
@@ -281,6 +282,8 @@ pub struct App {
     session: crate::session::Session,
     /// The language servers, once there is somewhere to post their news.
     lsp: Option<nun_lsp::Lsp>,
+    /// Formatting asked of them, and where it happens on save.
+    formatting: format::Formatting,
 }
 
 impl App {
@@ -349,6 +352,7 @@ impl App {
             search_deadline: None,
             session: crate::session::Session::default(),
             lsp: None,
+            formatting: format::Formatting::default(),
         };
         app.relayout();
         app
@@ -562,6 +566,7 @@ impl App {
             autoscroll,
             self.syntax_deadline(),
             self.search_deadline(),
+            self.formatting.deadline(),
         ]
         .into_iter()
         .flatten()
@@ -600,7 +605,8 @@ impl App {
             .and(dwell)
             .and(self.autoscroll_tick(now))
             .and(self.syntax_tick(now))
-            .and(self.search_tick(now));
+            .and(self.search_tick(now))
+            .and(self.format_tick(now));
         if outcome == Outcome::Redraw {
             self.relayout();
         }
@@ -858,6 +864,7 @@ impl App {
             Command::UnfoldAll => return self.unfold_all(),
             Command::GrowSelection => return self.grow_selection(),
             Command::RestartLanguageServer => return self.lsp_restart(),
+            Command::FormatDocument => return self.format_document(),
             Command::ShrinkSelection => return self.shrink_selection(),
             Command::SplitIntoLines => {
                 if !self.doc_mut().buffer.split_into_lines() {
@@ -1153,6 +1160,7 @@ impl App {
     }
 
     fn request_quit(&mut self) -> Outcome {
+        self.save_before_quitting();
         let unsaved = self.docs.iter().filter(|doc| doc.buffer.is_modified()).count();
         if unsaved > 0 && !self.quit_confirmed {
             self.quit_confirmed = true;
@@ -1172,27 +1180,38 @@ impl App {
     }
 
     fn save(&mut self) -> Outcome {
-        if self.doc().buffer.is_lossy() {
-            self.message = Some(
-                "Refusing to save: this file was not valid UTF-8 and would be damaged.".into(),
-            );
-            return Outcome::Redraw;
+        let id = self.doc().id;
+        // Formatting first, when the file's language asks for it, puts the
+        // save off until the server has answered.
+        if !self.format_then_save(id, false) {
+            self.message = Some(self.write(id).unwrap_or_else(|failed| failed));
         }
-        self.message = Some(match self.doc_mut().buffer.save() {
-            Ok(()) => {
-                self.lsp_saved();
-                format!("Saved {}", display_path(self.doc().buffer.path()))
-            }
-            Err(SaveError::NoPath) => "No path to save to.".into(),
-            Err(SaveError::ChangedOnDisk { path }) => {
-                format!(
-                    "{} changed on disk. Reopen it to see what changed.",
-                    display_path(Some(&path))
-                )
-            }
-            Err(error) => format!("Could not save: {error}"),
-        });
         Outcome::Redraw
+    }
+
+    /// Write a document to disk, and say how that went.
+    fn write(&mut self, id: panes::DocId) -> Result<String, String> {
+        let Some(document) = self.docs.iter_mut().find(|document| document.id == id) else {
+            return Err("That file is no longer open.".into());
+        };
+        if document.buffer.is_lossy() {
+            return Err(
+                "Refusing to save: this file was not valid UTF-8 and would be damaged.".into()
+            );
+        }
+        match document.buffer.save() {
+            Ok(()) => {
+                let saved = format!("Saved {}", display_path(document.buffer.path()));
+                self.lsp_saved(id);
+                Ok(saved)
+            }
+            Err(SaveError::NoPath) => Err("No path to save to.".into()),
+            Err(SaveError::ChangedOnDisk { path }) => Err(format!(
+                "{} changed on disk. Reopen it to see what changed.",
+                display_path(Some(&path))
+            )),
+            Err(error) => Err(format!("Could not save: {error}")),
+        }
     }
 
     /// What the button beside a file-operation message offers: undoing it, or
