@@ -18,7 +18,9 @@ nun-lsp = { version = "0.1.0", path = "../nun-lsp" }
 nun-syntax = { version = "0.1.0", path = "../nun-syntax" }
 nun-theme = { version = "0.1.0", path = "../nun-theme" }
 nun-workspace = { version = "0.1.0", path = "../nun-workspace" }
+pulldown-cmark = { version = "0.13.4", default-features = false }
 ratatui = "0.30.2"
+ropey = { version = "1.6.1", default-features = false, features = ["simd"] }
 signal-hook = "0.4.4"
 unicode-segmentation = "1.13.3"
 unicode-width = "0.2.2"

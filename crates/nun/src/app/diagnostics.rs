@@ -471,6 +471,10 @@ impl App {
     /// The pointer rested on `target`.
     pub(super) fn dwelt(&mut self, target: Target) -> Outcome {
         match target {
+            // The symbol's card already says what is wrong with it.
+            Target::Diagnostic(..) if self.card.as_ref().is_some_and(Card::is_held) => {
+                Outcome::Continue
+            }
             Target::Diagnostic(pane, index) => self.mark_card(pane, index),
             Target::RailMark(pane, row) => self.rail_card(pane, row),
             _ => Outcome::Redraw,
@@ -533,7 +537,7 @@ impl App {
 
     /// What a card about mark `index` of `doc` says: that one, and every
     /// other on text it overlaps, most serious first.
-    fn card_body(&self, doc: DocId, index: usize) -> Vec<Paragraph> {
+    pub(super) fn card_body(&self, doc: DocId, index: usize) -> Vec<Paragraph> {
         let marks = self.diagnostics.marks(doc);
         let notes = self.diagnostics.notes(doc);
         let Some(target) = marks.get(index) else { return Vec::new() };

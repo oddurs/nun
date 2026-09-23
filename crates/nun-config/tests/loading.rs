@@ -308,3 +308,15 @@ fn format_on_save_is_set_per_language_and_keeps_the_server() {
     assert!(loaded.describe().contains("[lsp.python]"), "and it says so");
     assert!(loaded.describe().contains("format_on_save = true"));
 }
+
+#[test]
+fn the_hover_delay_can_be_set_within_reason_and_links_left_unmarked() {
+    let (loaded, _) = load_text("[ui]\nhover_delay_ms = 250\nhyperlinks = false\n");
+    assert_eq!(loaded.config.hover_delay_ms, 250);
+    assert!(!loaded.config.hyperlinks);
+    assert!(loaded.describe().contains("hover_delay_ms = 250"));
+
+    let (loaded, _) = load_text("[ui]\nhover_delay_ms = 5\n");
+    assert_eq!(loaded.config.hover_delay_ms, 400, "keeps the default");
+    assert!(loaded.problems.iter().any(|problem| problem.message.contains("hover_delay_ms")));
+}
