@@ -114,6 +114,9 @@ impl App {
             Handled::Response(response) if self.rename.asked(response.id) => {
                 self.rename_answer(&response)
             }
+            Handled::Response(response) if self.hovering.asked(response.id) => {
+                self.hover_answered(&response)
+            }
             Handled::Nothing => Outcome::Continue,
             Handled::Response(response) => {
                 self.navigation_answered(&response).unwrap_or(Outcome::Continue)

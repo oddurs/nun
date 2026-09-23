@@ -146,6 +146,10 @@ fn edit(path: &Path, lsp_log: Option<&Path>) -> io::Result<()> {
     if let Some(ms) = settings.config.double_click_ms {
         app.set_double_click(std::time::Duration::from_millis(ms));
     }
+    app.set_hover(
+        std::time::Duration::from_millis(settings.config.hover_delay_ms),
+        settings.config.hyperlinks,
+    );
     // Only the first is shown: the rest are visible through `nun config`, and a
     // queue of config complaints would bury the editor under them.
     if let Some(warning) = warnings(report, &settings, &problems).into_iter().next() {

@@ -71,3 +71,4 @@ This file is generated from the source by `nun keys`. Do not edit it by hand.
 | Suggest completions | `lsp.complete` | `Ctrl+Space` | `Ctrl+Space` |
 | Rename symbol | `lsp.rename` | `Ctrl+K F2` | `Ctrl+K F2` |
 | Undo rename | `lsp.undo_rename` | `Ctrl+K Z` | `Ctrl+K Z` |
+| Show hover | `lsp.hover` | `Ctrl+K H`, `Ctrl+K Ctrl+I` | `Ctrl+K H` |

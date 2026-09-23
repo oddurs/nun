@@ -53,19 +53,20 @@
 
 ## m4 — Language servers
 
-`#######···` 70% · 7 of 10 done · due 2026-11-19
+`########··` 73% · 8 of 11 done · due 2026-11-19
 
 ### backlog
 
-- [ ] [`0034`](https://github.com/oddurs/nun/blob/main/cairn/items/0034-hover-cards.md) Hover cards <sup>feature · p1</sup>
 - [ ] [`0037`](https://github.com/oddurs/nun/blob/main/cairn/items/0037-format-on-save.md) Format on save <sup>feature · p1</sup>
 - [ ] [`0077`](https://github.com/oddurs/nun/blob/main/cairn/items/0077-code-actions-and-quick-fixes.md) Code actions and quick fixes <sup>feature · p1</sup>
+- [ ] [`0079`](https://github.com/oddurs/nun/blob/main/cairn/items/0079-scroll-a-keyboard-opened-card-from-the-keyboard.md) Scroll a keyboard-opened card from the keyboard <sup>feature · p2</sup>
 
 ### done
 
 - [x] [`0031`](https://github.com/oddurs/nun/blob/main/cairn/items/0031-async-lsp-client-and-server-lifecycle.md) Async LSP client and server lifecycle <sup>feature · p0</sup>
 - [x] [`0032`](https://github.com/oddurs/nun/blob/main/cairn/items/0032-diagnostics-and-the-mark-rail.md) Diagnostics and the mark rail <sup>feature · p0</sup>
 - [x] [`0033`](https://github.com/oddurs/nun/blob/main/cairn/items/0033-completion.md) Completion <sup>feature · p0</sup>
+- [x] [`0034`](https://github.com/oddurs/nun/blob/main/cairn/items/0034-hover-cards.md) Hover cards <sup>feature · p1</sup>
 - [x] [`0035`](https://github.com/oddurs/nun/blob/main/cairn/items/0035-go-to-definition-and-find-references.md) Go to definition and find references <sup>feature · p0</sup>
 - [x] [`0036`](https://github.com/oddurs/nun/blob/main/cairn/items/0036-rename.md) Rename <sup>feature · p1</sup>
 - [x] [`0074`](https://github.com/oddurs/nun/blob/main/cairn/items/0074-pasted-text-can-put-a-bare-carriage-return-in-the-buffer.md) Pasted text can put a bare carriage return in the buffer <sup>bug · p1</sup>

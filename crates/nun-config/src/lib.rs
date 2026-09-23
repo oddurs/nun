@@ -138,6 +138,9 @@ fn default_servers() -> BTreeMap<String, LspServer> {
 
 /// The effective configuration.
 #[derive(Debug, Clone, PartialEq, Eq)]
+// A configuration is a list of switches, each one a setting a person turns
+// on or off by name; folding them into enums would only rename `true`.
+#[allow(clippy::struct_excessive_bools)]
 pub struct Config {
     /// Columns a tab advances to.
     pub tab_width: usize,
@@ -156,6 +159,12 @@ pub struct Config {
     /// Longest gap between presses that still makes a double or triple click,
     /// in milliseconds. `None` uses the platform's usual value.
     pub double_click_ms: Option<u64>,
+    /// How long the pointer rests on a symbol before its hover card is asked
+    /// for, in milliseconds.
+    pub hover_delay_ms: u64,
+    /// Mark links in cards with OSC 8 as well as drawing them as links, so a
+    /// terminal that knows it can show or copy where they go.
+    pub hyperlinks: bool,
     /// Key bindings added over the defaults: key sequence to command id.
     ///
     /// Kept as text here. Which sequences and commands exist is the binary's
@@ -179,6 +188,8 @@ impl Default for Config {
             keyboard_enhancement: true,
             undercurl: Undercurl::Auto,
             double_click_ms: None,
+            hover_delay_ms: 400,
+            hyperlinks: true,
             keys: BTreeMap::new(),
             lsp: default_servers(),
         }
@@ -241,6 +252,7 @@ impl Loaded {
             ("mouse", c.mouse),
             ("alternate_screen", c.alternate_screen),
             ("keyboard_enhancement", c.keyboard_enhancement),
+            ("hyperlinks", c.hyperlinks),
         ] {
             let _ = writeln!(out, "{key} = {value}{}", self.note(key));
         }
@@ -250,6 +262,8 @@ impl Loaded {
             format!("{:?}", c.undercurl).to_lowercase(),
             self.note("undercurl")
         );
+        let _ =
+            writeln!(out, "hover_delay_ms = {}{}", c.hover_delay_ms, self.note("hover_delay_ms"));
         match c.double_click_ms {
             Some(ms) => {
                 let _ = writeln!(out, "double_click_ms = {ms}{}", self.note("double_click_ms"));
@@ -391,10 +405,71 @@ struct RawUi {
     keyboard_enhancement: Option<bool>,
     undercurl: Option<Undercurl>,
     double_click_ms: Option<u64>,
+    hover_delay_ms: Option<u64>,
+    hyperlinks: Option<bool>,
+}
+
+impl RawUi {
+    fn apply(self, loaded: &mut Loaded, path: &Path) {
+        let mut set = |key: &str| {
+            loaded.origins.insert(key.to_string(), Origin::File(path.to_path_buf()));
+        };
+
+        if let Some(value) = self.mouse {
+            loaded.config.mouse = value;
+            set("mouse");
+        }
+        if let Some(value) = self.alternate_screen {
+            loaded.config.alternate_screen = value;
+            set("alternate_screen");
+        }
+        if let Some(value) = self.keyboard_enhancement {
+            loaded.config.keyboard_enhancement = value;
+            set("keyboard_enhancement");
+        }
+        if let Some(value) = self.undercurl {
+            loaded.config.undercurl = value;
+            set("undercurl");
+        }
+        if let Some(value) = self.hyperlinks {
+            loaded.config.hyperlinks = value;
+            set("hyperlinks");
+        }
+        if let Some(ms) = self.hover_delay_ms {
+            // Much under 100 ms and every symbol the pointer crosses on
+            // its way somewhere asks its server; much over a few seconds
+            // and nobody waits for it.
+            if (100..=5000).contains(&ms) {
+                loaded.config.hover_delay_ms = ms;
+                set("hover_delay_ms");
+            } else {
+                loaded.problems.push(Problem {
+                    path: path.to_path_buf(),
+                    message: format!("self.hover_delay_ms must be between 100 and 5000, not {ms}"),
+                });
+            }
+        }
+        if let Some(ms) = self.double_click_ms {
+            // Below 100 ms nobody can double-click; above 2 s two separate
+            // clicks start turning into one.
+            if (100..=2000).contains(&ms) {
+                loaded.config.double_click_ms = Some(ms);
+                set("double_click_ms");
+            } else {
+                loaded.problems.push(Problem {
+                    path: path.to_path_buf(),
+                    message: format!("self.double_click_ms must be between 100 and 2000, not {ms}"),
+                });
+            }
+        }
+    }
 }
 
 impl RawConfig {
-    fn apply(self, loaded: &mut Loaded, path: &Path) {
+    fn apply(mut self, loaded: &mut Loaded, path: &Path) {
+        if let Some(ui) = self.ui.take() {
+            ui.apply(loaded, path);
+        }
         let mut set = |key: &str| {
             loaded.origins.insert(key.to_string(), Origin::File(path.to_path_buf()));
         };
@@ -421,40 +496,6 @@ impl RawConfig {
             if let Some(roles) = theme.roles {
                 loaded.config.roles = roles;
                 set("roles");
-            }
-        }
-
-        if let Some(ui) = self.ui {
-            if let Some(value) = ui.mouse {
-                loaded.config.mouse = value;
-                set("mouse");
-            }
-            if let Some(value) = ui.alternate_screen {
-                loaded.config.alternate_screen = value;
-                set("alternate_screen");
-            }
-            if let Some(value) = ui.keyboard_enhancement {
-                loaded.config.keyboard_enhancement = value;
-                set("keyboard_enhancement");
-            }
-            if let Some(value) = ui.undercurl {
-                loaded.config.undercurl = value;
-                set("undercurl");
-            }
-            if let Some(ms) = ui.double_click_ms {
-                // Below 100 ms nobody can double-click; above 2 s two separate
-                // clicks start turning into one.
-                if (100..=2000).contains(&ms) {
-                    loaded.config.double_click_ms = Some(ms);
-                    set("double_click_ms");
-                } else {
-                    loaded.problems.push(Problem {
-                        path: path.to_path_buf(),
-                        message: format!(
-                            "ui.double_click_ms must be between 100 and 2000, not {ms}"
-                        ),
-                    });
-                }
             }
         }
 

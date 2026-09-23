@@ -352,7 +352,7 @@ impl App {
     }
 
     /// Why a feature needing a server is not there, in the status line's words.
-    fn no_server(&self, what: &str) -> String {
+    pub(super) fn no_server(&self, what: &str) -> String {
         let id = self.doc().id;
         match self.lsp.as_ref().and_then(|lsp| lsp.indicator(id)) {
             Some(indicator) if self.lsp.as_ref().and_then(|lsp| lsp.capabilities(id)).is_some() => {

@@ -16,6 +16,7 @@ mod events;
 mod harness;
 mod layout;
 mod lifecycle;
+mod markdown;
 mod marks;
 mod menu;
 mod palette;
@@ -39,6 +40,7 @@ pub use layout::{Dir, Divider, Edge, Layout, Side};
 pub use lifecycle::{
     Capabilities, CrosstermControl, TerminalControl, TerminalGuard, install_panic_hook,
 };
+pub use markdown::{CodeBudget, Markdown};
 pub use marks::{Bucket, Mark, Rail, Severity, Tally};
 pub use menu::{Menu, MenuItem};
 pub use palette::{Entry as PaletteEntry, MOST_ROWS, PaletteView};

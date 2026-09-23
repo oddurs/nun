@@ -119,6 +119,8 @@ pub enum Command {
     RenameSymbol,
     /// Take back the last rename, in every file it touched.
     UndoRename,
+    /// Say what the symbol at the caret is, in a card beside it.
+    ShowHover,
 }
 
 impl Command {
@@ -174,6 +176,7 @@ impl Command {
         Self::Complete,
         Self::RenameSymbol,
         Self::UndoRename,
+        Self::ShowHover,
     ];
 
     /// The name used in `[keys]` in `nun.toml`.
@@ -230,6 +233,7 @@ impl Command {
             Self::Complete => "lsp.complete",
             Self::RenameSymbol => "lsp.rename",
             Self::UndoRename => "lsp.undo_rename",
+            Self::ShowHover => "lsp.hover",
         }
     }
 
@@ -287,6 +291,7 @@ impl Command {
             Self::Complete => "Suggest completions",
             Self::RenameSymbol => "Rename symbol",
             Self::UndoRename => "Undo rename",
+            Self::ShowHover => "Show hover",
         }
     }
 
@@ -397,6 +402,8 @@ const BASIC: &[(&str, Command)] = &[
     // key after the chord prefix every other file-wide operation shares.
     ("ctrl+k f2", Command::RenameSymbol),
     ("ctrl+k z", Command::UndoRename),
+    // VS Code's is Ctrl+K Ctrl+I, and Ctrl+I is Tab to a legacy terminal.
+    ("ctrl+k h", Command::ShowHover),
 ];
 
 /// Bindings that need the Kitty keyboard protocol, added over [`BASIC`].
@@ -431,6 +438,7 @@ const FULL: &[(&str, Command)] = &[
     ("cmd+alt+]", Command::Unfold),
     // VS Code's.
     ("alt+shift+f", Command::FormatDocument),
+    ("ctrl+k ctrl+i", Command::ShowHover),
 ];
 
 /// The default bindings for `set`.

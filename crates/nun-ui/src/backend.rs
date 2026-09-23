@@ -81,6 +81,22 @@ impl<W: Write> NunBackend<W> {
     }
 }
 
+/// What ends an OSC 8 link.
+const LINK_CLOSE: &str = "\x1b]8;;\x1b\\";
+
+/// A cell's symbol that is one grapheme wrapped in its own OSC 8 link, split
+/// into the sequence that opens the link and the grapheme. `None` for any
+/// other symbol, which is written as it is.
+fn split_link(symbol: &str) -> Option<(&str, &str)> {
+    if !symbol.starts_with("\x1b]8;") {
+        return None;
+    }
+    let end = symbol.find("\x1b\\")? + 2;
+    let (open, rest) = symbol.split_at(end);
+    let text = rest.strip_suffix(LINK_CLOSE)?;
+    (!text.contains('\x1b')).then_some((open, text))
+}
+
 impl<W: Write> Write for NunBackend<W> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.writer.write(buf)
@@ -107,10 +123,18 @@ impl<W: Write> Backend for NunBackend<W> {
         let mut modifier = Modifier::empty();
         let mut line = Line::None;
         let mut last: Option<Position> = None;
+        // The OSC 8 link the terminal is inside, if any. Each link cell
+        // carries its own open and close, so a partial redraw can never leave
+        // a link open; cells of one link written one after another are sent
+        // as one link, which is shorter and which every terminal groups.
+        let mut linked: Option<&str> = None;
 
         for (x, y, cell) in content {
             // Only move when this cell is not the one after the last.
             if !matches!(last, Some(at) if x == at.x + 1 && y == at.y) {
+                if linked.take().is_some() {
+                    self.writer.write_all(LINK_CLOSE.as_bytes())?;
+                }
                 queue!(self.writer, MoveTo(x, y))?;
             }
             last = Some(Position { x, y });
@@ -146,7 +170,24 @@ impl<W: Write> Backend for NunBackend<W> {
                 underline_colour = wanted_colour;
             }
 
-            queue!(self.writer, Print(cell.symbol()))?;
+            if let Some((open, text)) = split_link(cell.symbol()) {
+                if linked != Some(open) {
+                    if linked.is_some() {
+                        self.writer.write_all(LINK_CLOSE.as_bytes())?;
+                    }
+                    self.writer.write_all(open.as_bytes())?;
+                    linked = Some(open);
+                }
+                queue!(self.writer, Print(text))?;
+            } else {
+                if linked.take().is_some() {
+                    self.writer.write_all(LINK_CLOSE.as_bytes())?;
+                }
+                queue!(self.writer, Print(cell.symbol()))?;
+            }
+        }
+        if linked.is_some() {
+            self.writer.write_all(LINK_CLOSE.as_bytes())?;
         }
 
         queue!(
@@ -330,6 +371,56 @@ mod tests {
             cells[(x, 0)].set_style(style);
         }
         cells
+    }
+
+    #[test]
+    fn a_link_in_a_card_reaches_the_terminal_one_closed_cell_at_a_time() {
+        use ratatui::widgets::Widget as _;
+
+        use crate::popover::{Popover, Run};
+
+        let palette = Palette::new(derive(&Probe::builtin_dark()));
+        let mut link = Run::new("ab", Role::Accent);
+        link.link = Some(0);
+        let body = vec![vec![Run::new("x ", Role::Text), link, Run::new(" y", Role::Text)]];
+        let links = vec!["https://e.x/".to_string()];
+        let area = Rect::new(0, 0, 10, 1);
+        let before = Cells::empty(area);
+        let mut after = Cells::empty(area);
+        Popover::new(&body, &palette).links(&links).hyperlinks(true).render(area, &mut after);
+
+        let mut backend = NunBackend::new(Vec::new(), Underlines::PLAIN);
+        backend.draw(before.diff(&after).into_iter()).unwrap();
+        let out = String::from_utf8(backend.writer().clone()).unwrap();
+        let open = "\x1b]8;id=nun-0;https://e.x/\x1b\\";
+        let close = "\x1b]8;;\x1b\\";
+        assert!(out.contains(&format!("{open}ab")), "one link for the run: {out:?}");
+        assert_eq!(out.matches(open).count(), 1, "{out:?}");
+        assert_eq!(out.matches(close).count(), 1, "{out:?}");
+        assert!(out.find(close) < out.find(" y"), "closed before the text after: {out:?}");
+        // The text after the link follows straight on: the terminal's cursor
+        // moved one column per cell, escapes and all.
+        let after_link = out.rfind(close).unwrap() + close.len();
+        assert!(!out[after_link..].contains("\x1b[1;"), "no jump needed: {out:?}");
+        assert!(out[after_link..].contains(" y"), "{out:?}");
+    }
+
+    #[test]
+    fn a_link_is_closed_before_the_cursor_jumps_away() {
+        let mut cells = Cells::empty(Rect::new(0, 0, 4, 2));
+        let open = "\x1b]8;id=nun-0;https://e.x/\x1b\\";
+        // The width said outright, as the card does: measured, the escapes
+        // would count as text.
+        let one = ratatui::buffer::CellDiffOption::ForcedWidth(std::num::NonZeroU16::MIN);
+        cells[(3, 0)].set_symbol(&format!("{open}a{LINK_CLOSE}")).set_diff_option(one);
+        cells[(0, 1)].set_symbol(&format!("{open}b{LINK_CLOSE}")).set_diff_option(one);
+        let before = Cells::empty(cells.area);
+        let mut backend = NunBackend::new(Vec::new(), Underlines::PLAIN);
+        backend.draw(before.diff(&cells).into_iter()).unwrap();
+        let out = String::from_utf8(backend.writer().clone()).unwrap();
+        let jump = out.find("\x1b[2;1H").unwrap_or_else(|| panic!("no jump: {out:?}"));
+        assert!(out[..jump].ends_with(LINK_CLOSE), "{out:?}");
+        assert!(out.ends_with(&format!("b{LINK_CLOSE}\x1b[39m\x1b[49m\x1b[0m")), "{out:?}");
     }
 
     #[test]

@@ -28,6 +28,7 @@ mod completion;
 mod diagnostics;
 mod folds;
 mod format;
+mod hover;
 mod lsp;
 mod navigation;
 mod palette;
@@ -161,6 +162,8 @@ pub enum Target {
     Card,
     /// One of the card's buttons.
     CardButton(usize),
+    /// A link in the card, by its index in the card's links.
+    CardLink(usize),
     /// The diagnostic counts in the status line.
     StatusProblems,
     /// The completion popup, and the documentation beside it.
@@ -178,6 +181,10 @@ impl Target {
             Self::Diagnostic(..) => Self::Text,
             target => target,
         }
+    }
+
+    const fn in_card(self) -> bool {
+        matches!(self, Self::Card | Self::CardButton(_) | Self::CardLink(_))
     }
 
     const fn in_diagnostics(self) -> bool {
@@ -363,6 +370,8 @@ pub struct App {
     completion: completion::Completion,
     /// A symbol being renamed, its preview, and the last rename applied.
     rename: rename::Renaming,
+    /// Resting on a symbol to see what it is.
+    hovering: hover::Hovering,
 }
 
 impl App {
@@ -438,6 +447,7 @@ impl App {
             card: None,
             completion: completion::Completion::default(),
             rename: rename::Renaming::default(),
+            hovering: hover::Hovering::default(),
         };
         app.relayout();
         app
@@ -671,7 +681,7 @@ impl App {
     /// That includes any time a language server could say a Ctrl-hovered
     /// symbol has a definition: nothing but motion reports carry the Ctrl.
     pub fn wants_motion(&self) -> bool {
-        self.hits.has_hover_targets() || self.wants_link_motion()
+        self.hits.has_hover_targets() || self.wants_link_motion() || self.wants_hover_motion()
     }
 
     /// When the editor next needs waking with no input, if ever.
@@ -685,6 +695,7 @@ impl App {
             self.search_deadline(),
             self.formatting.deadline(),
             self.link_deadline(),
+            self.hover_deadline(),
         ]
         .into_iter()
         .flatten()
@@ -724,7 +735,8 @@ impl App {
             .and(self.syntax_tick(now))
             .and(self.search_tick(now))
             .and(self.format_tick(now))
-            .and(self.link_tick(now));
+            .and(self.link_tick(now))
+            .and(self.hover_tick(now));
         if outcome == Outcome::Redraw {
             self.relayout();
         }
@@ -745,6 +757,7 @@ impl App {
     /// Handle one event that arrived at `now`.
     pub fn handle_at(&mut self, event: Event, now: Instant) -> Outcome {
         let before = (self.doc().buffer.len_chars(), self.doc().scroll, self.doc().id);
+        self.hover_before(&event);
         // Whatever Ctrl-hover underlined is stale once anything but the
         // pointer or a server has had a say.
         let unlinked = if matches!(event, Event::Key(_) | Event::Paste(_) | Event::Focus(false)) {
@@ -778,7 +791,10 @@ impl App {
     fn dispatch(&mut self, event: Event, now: Instant) -> Outcome {
         match event {
             Event::Key(key) => self.handle_key(key, now),
-            Event::Mouse(mouse) => self.handle_mouse(mouse, now).and(self.card_follow_pointer()),
+            Event::Mouse(mouse) => self
+                .handle_mouse(mouse, now)
+                .and(self.hover_pointer(mouse, now))
+                .and(self.card_follow_pointer(mouse.column, mouse.row)),
             Event::Paste(text) if self.prompt.is_some() => {
                 self.prompt_paste(&text);
                 Outcome::Redraw
@@ -1017,6 +1033,7 @@ impl App {
             Command::Complete => return self.complete_here(),
             Command::RenameSymbol => return self.start_rename(),
             Command::UndoRename => return self.undo_rename(),
+            Command::ShowHover => return self.show_hover(),
             Command::ShrinkSelection => return self.shrink_selection(),
             Command::SplitIntoLines => {
                 if !self.doc_mut().buffer.split_into_lines() {
@@ -1106,7 +1123,7 @@ impl App {
         let target = hit.map(|hit| hit.target.pressed());
         match mouse.kind {
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
-                if matches!(target, Some(Target::Card | Target::CardButton(_))) =>
+                if target.is_some_and(Target::in_card) =>
             {
                 self.card_scroll(mouse.kind == MouseEventKind::ScrollDown)
             }

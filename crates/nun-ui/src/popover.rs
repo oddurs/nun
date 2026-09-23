@@ -17,8 +17,10 @@
 //! boundaries. Buttons, if any, sit on the last row and are always visible;
 //! the body scrolls above them.
 
+use std::num::NonZeroU16;
+
 use nun_theme::Role;
-use ratatui::buffer::Buffer as Cells;
+use ratatui::buffer::{Buffer as Cells, CellDiffOption};
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
 use ratatui::widgets::Widget;
@@ -46,19 +48,24 @@ pub struct Run {
     pub role: Role,
     /// Whether it is bold.
     pub bold: bool,
+    /// Whether it is italic.
+    pub italic: bool,
+    /// The link it is the text of, as an index into the card's links. Drawn
+    /// underlined, and clickable.
+    pub link: Option<usize>,
 }
 
 impl Run {
     /// Text in `role`.
     #[must_use]
     pub fn new(text: impl Into<String>, role: Role) -> Self {
-        Self { text: text.into(), role, bold: false }
+        Self { text: text.into(), role, bold: false, italic: false, link: None }
     }
 
     /// Text in `role`, bold.
     #[must_use]
     pub fn bold(text: impl Into<String>, role: Role) -> Self {
-        Self { text: text.into(), role, bold: true }
+        Self { bold: true, ..Self::new(text, role) }
     }
 }
 
@@ -73,6 +80,11 @@ pub struct Popover<'a> {
     palette: &'a Palette,
     scroll: usize,
     hovered: Option<usize>,
+    /// Where each link goes, by the index a run's `link` names.
+    links: &'a [String],
+    /// Whether to tell the terminal, with OSC 8, which cells are links.
+    hyperlinks: bool,
+    hovered_link: Option<usize>,
 }
 
 /// One row of wrapped body: pieces of runs, each with the run it came from.
@@ -82,7 +94,40 @@ impl<'a> Popover<'a> {
     /// A card holding `body`.
     #[must_use]
     pub const fn new(body: &'a [Paragraph], palette: &'a Palette) -> Self {
-        Self { body, buttons: &[], palette, scroll: 0, hovered: None }
+        Self {
+            body,
+            buttons: &[],
+            palette,
+            scroll: 0,
+            hovered: None,
+            links: &[],
+            hyperlinks: false,
+            hovered_link: None,
+        }
+    }
+
+    /// Where the body's links go, by the index each run's `link` names.
+    #[must_use]
+    pub const fn links(mut self, links: &'a [String]) -> Self {
+        self.links = links;
+        self
+    }
+
+    /// Also mark each link's cells with OSC 8, so a terminal that knows it
+    /// can show where the link goes, or copy it. Nothing depends on it: the
+    /// link is drawn as a link and clicked through [`Popover::link_areas`]
+    /// either way, and a terminal that does not know OSC 8 swallows it.
+    #[must_use]
+    pub const fn hyperlinks(mut self, on: bool) -> Self {
+        self.hyperlinks = on;
+        self
+    }
+
+    /// The link under the pointer.
+    #[must_use]
+    pub const fn hovered_link(mut self, link: Option<usize>) -> Self {
+        self.hovered_link = link;
+        self
     }
 
     /// Buttons along the bottom row, in order.
@@ -179,6 +224,48 @@ impl<'a> Popover<'a> {
             .collect()
     }
 
+    /// Where each link's text is, in a card at `area`: one rectangle per row
+    /// of it in view, with the index of the link.
+    #[must_use]
+    pub fn link_areas(&self, area: Rect) -> Vec<(usize, Rect)> {
+        let mut areas: Vec<(usize, Rect)> = Vec::new();
+        self.lay_out(area, |x, y, _, width, run| {
+            let Some(link) = run.link else { return };
+            match areas.last_mut() {
+                Some((last, rect)) if *last == link && rect.y == y && rect.right() == x => {
+                    rect.width += width;
+                }
+                _ => areas.push((link, Rect::new(x, y, width, 1))),
+            }
+        });
+        areas
+    }
+
+    /// Every grapheme of the body in view in a card at `area`, where it is
+    /// drawn: its column and row, the grapheme, its width, and its run. The
+    /// one place the drawing and the link areas both come from.
+    fn lay_out(&self, area: Rect, mut put: impl FnMut(u16, u16, &'a str, u16, &'a Run)) {
+        let rows = self.wrap(area.width);
+        let height = usize::from(self.body_height(area));
+        let scroll = self.scroll.min(rows.len().saturating_sub(height));
+        let right = area.right().saturating_sub(PADDING);
+        for (offset, row) in rows.into_iter().skip(scroll).take(height).enumerate() {
+            let Ok(offset) = u16::try_from(offset) else { break };
+            let y = area.top() + offset;
+            let mut x = area.left() + PADDING;
+            for (piece, run) in row {
+                for grapheme in piece.graphemes(true) {
+                    let width = u16::try_from(grapheme.width()).unwrap_or(1);
+                    if width == 0 || x + width > right {
+                        continue;
+                    }
+                    put(x, y, grapheme, width, run);
+                    x += width;
+                }
+            }
+        }
+    }
+
     /// Rows of body that fit in a card at `area`, after the buttons.
     fn body_height(&self, area: Rect) -> u16 {
         area.height.saturating_sub(u16::from(!self.buttons.is_empty()))
@@ -262,6 +349,52 @@ impl<'a> Popover<'a> {
     }
 }
 
+impl Popover<'_> {
+    /// `grapheme` wrapped in OSC 8 for link `link`, when that is wanted and
+    /// the link can be said safely.
+    fn hyperlink(&self, link: usize, grapheme: &str) -> Option<String> {
+        if !self.hyperlinks {
+            return None;
+        }
+        let uri = osc8_uri(self.links.get(link)?)?;
+        Some(format!("\x1b]8;id=nun-{link};{uri}\x1b\\{grapheme}\x1b]8;;\x1b\\"))
+    }
+}
+
+/// The longest URI said in OSC 8. Terminals cap it, some at about two
+/// thousand bytes; a longer link is still drawn and still clicks.
+const MOST_OSC8_URI: usize = 2000;
+
+/// `uri` made safe to put inside an OSC 8 sequence, or `None` if it cannot
+/// be.
+///
+/// The URI comes from a language server, so it is untrusted: an ESC, a BEL
+/// or a C1 byte in it would end the sequence early and whatever followed
+/// would reach the terminal as commands. Every byte outside printable ASCII
+/// is percent-encoded, which is what a URI does with them anyway.
+///
+/// A URI with a `;` in it is not said at all. Alacritty splits the sequence
+/// at every `;` and keeps a fixed number of pieces, so a terminal-side click
+/// could open a URI cut short; encoding it would make it a different URI.
+/// nun's own link still works.
+fn osc8_uri(uri: &str) -> Option<String> {
+    use std::fmt::Write as _;
+
+    if uri.contains(';') {
+        return None;
+    }
+
+    let mut safe = String::with_capacity(uri.len());
+    for byte in uri.bytes() {
+        if (0x21..=0x7e).contains(&byte) {
+            safe.push(char::from(byte));
+        } else {
+            let _ = write!(safe, "%{byte:02X}");
+        }
+    }
+    (!safe.is_empty() && safe.len() <= MOST_OSC8_URI).then_some(safe)
+}
+
 /// Split `text` after as many graphemes as fit in `room` columns — at least
 /// one, so a single character wider than the card still makes progress.
 fn split_at_width(text: &str, room: usize) -> (&str, &str) {
@@ -290,29 +423,43 @@ impl Widget for Popover<'_> {
             }
         }
 
-        let rows = self.wrap(area.width);
+        let rows = self.body_rows(area.width);
         let height = usize::from(self.body_height(area));
-        let scroll = self.scroll.min(rows.len().saturating_sub(height));
-        let right = area.right().saturating_sub(PADDING);
-        for (offset, row) in rows.iter().skip(scroll).take(height).enumerate() {
-            let Ok(offset) = u16::try_from(offset) else { break };
-            let y = area.top() + offset;
-            let mut x = area.left() + PADDING;
-            for (piece, run) in row {
-                let mut style = self.palette.on(Role::Overlay, run.role);
-                if run.bold {
-                    style = style.add_modifier(Modifier::BOLD);
-                }
-                for grapheme in piece.graphemes(true) {
-                    let width = u16::try_from(grapheme.width()).unwrap_or(1);
-                    if width == 0 || x + width > right {
-                        continue;
+        let scroll = self.scroll.min(rows.saturating_sub(height));
+        self.lay_out(area, |x, y, grapheme, width, run| {
+            let hovered = run.link.is_some() && run.link == self.hovered_link;
+            let mut style = if hovered {
+                self.palette.on(Role::Accent, Role::OnAccent)
+            } else {
+                self.palette.on(Role::Overlay, run.role)
+            };
+            if run.bold {
+                style = style.add_modifier(Modifier::BOLD);
+            }
+            if run.italic {
+                style = style.add_modifier(Modifier::ITALIC);
+            }
+            if run.link.is_some() {
+                style = style.add_modifier(Modifier::UNDERLINED);
+            }
+            let cell = &mut cells[(x, y)];
+            cell.set_style(style);
+            match run.link.and_then(|link| self.hyperlink(link, grapheme)) {
+                Some(marked) => {
+                    // The escape travels inside the cell and is not text:
+                    // the width is the grapheme's, said outright, and the
+                    // cell opens and closes its own link so a partial
+                    // redraw can never leave one open across a jump.
+                    cell.set_symbol(&marked);
+                    if let Some(width) = NonZeroU16::new(width) {
+                        cell.set_diff_option(CellDiffOption::ForcedWidth(width));
                     }
-                    cells[(x, y)].set_symbol(grapheme).set_style(style);
-                    x += width;
+                }
+                None => {
+                    cell.set_symbol(grapheme);
                 }
             }
-        }
+        });
 
         // More above or below is said in the padding column, where it takes
         // nothing from the text.
@@ -321,7 +468,7 @@ impl Widget for Popover<'_> {
         if scroll > 0 {
             cells[(edge, area.top())].set_char('▴').set_style(hint);
         }
-        if scroll + height < rows.len() && height > 0 {
+        if scroll + height < rows && height > 0 {
             let Ok(last) = u16::try_from(height - 1) else { return };
             cells[(edge, area.top() + last)].set_char('▾').set_style(hint);
         }
@@ -442,7 +589,84 @@ mod tests {
         assert!(row.contains('中'));
     }
 
+    fn linked() -> (Vec<Paragraph>, Vec<String>) {
+        let mut link = Run::new("the docs", Role::Accent);
+        link.link = Some(0);
+        (
+            vec![vec![Run::new("See ", Role::Text), link, Run::new(".", Role::Text)]],
+            vec!["https://example.com/a\x1b]8\x07b c".to_string()],
+        )
+    }
+
+    #[test]
+    fn a_link_is_drawn_underlined_where_the_layout_says_it_is() {
+        let palette = palette();
+        let (body, links) = linked();
+        let popover = Popover::new(&body, &palette).links(&links);
+        let card = popover.place(Rect::new(0, 0, 1, 1), SCREEN).unwrap();
+        let areas = popover.link_areas(card);
+        assert_eq!(areas, [(0, Rect::new(card.x + 1 + 4, card.y, 8, 1))]);
+
+        let mut cells = Cells::empty(SCREEN);
+        popover.render(card, &mut cells);
+        let (_, at) = areas[0];
+        let drawn: String = (at.x..at.right()).map(|x| cells[(x, at.y)].symbol()).collect();
+        assert_eq!(drawn, "the docs", "no escapes unless asked for");
+        assert!(cells[(at.x, at.y)].modifier.contains(Modifier::UNDERLINED));
+        assert!(!cells[(at.x - 1, at.y)].modifier.contains(Modifier::UNDERLINED));
+    }
+
+    #[test]
+    fn a_link_wrapped_over_two_rows_has_an_area_on_each() {
+        let palette = palette();
+        let mut link = Run::new("one two three four five six seven", Role::Accent);
+        link.link = Some(0);
+        let body = vec![vec![link]];
+        let popover = Popover::new(&body, &palette);
+        let card = Rect::new(0, 0, 16, 5);
+        let areas = popover.link_areas(card);
+        assert!(areas.len() >= 2, "{areas:?}");
+        assert!(areas.iter().all(|(link, _)| *link == 0));
+    }
+
+    #[test]
+    fn osc8_marks_each_cell_on_its_own_with_a_clean_uri() {
+        let palette = palette();
+        let (body, links) = linked();
+        let popover = Popover::new(&body, &palette).links(&links).hyperlinks(true);
+        let card = popover.place(Rect::new(0, 0, 1, 1), SCREEN).unwrap();
+        let (_, at) = popover.link_areas(card)[0];
+        let mut cells = Cells::empty(SCREEN);
+        popover.render(card, &mut cells);
+        let cell = &cells[(at.x, at.y)];
+        assert_eq!(
+            cell.symbol(),
+            "\x1b]8;id=nun-0;https://example.com/a%1B]8%07b%20c\x1b\\t\x1b]8;;\x1b\\",
+            "opened and closed in the one cell, nothing in the URI able to end it"
+        );
+        assert_eq!(cell.diff_option, CellDiffOption::ForcedWidth(NonZeroU16::new(1).unwrap()));
+        assert_eq!(cells[(at.x - 1, at.y)].symbol(), " ", "only the link's cells");
+    }
+
+    #[test]
+    fn a_uri_is_made_printable_or_refused() {
+        assert_eq!(osc8_uri("https://a.b/c?d=e"), Some("https://a.b/c?d=e".into()));
+        assert_eq!(osc8_uri("x\u{9c}y\u{7}"), Some("x%C2%9Cy%07".into()));
+        assert_eq!(osc8_uri(""), None);
+        assert_eq!(osc8_uri("https://a.b/c;d"), None);
+        assert_eq!(osc8_uri(&"a".repeat(MOST_OSC8_URI + 1)), None);
+    }
+
     proptest! {
+        /// Whatever a server puts in a link, the URI said in OSC 8 is only
+        /// printable ASCII, so it cannot end the sequence it is in.
+        #[test]
+        fn a_uri_never_carries_a_control_byte(uri in any::<String>()) {
+            if let Some(safe) = osc8_uri(&uri) {
+                prop_assert!(safe.bytes().all(|byte| (0x21..=0x7e).contains(&byte)));
+            }
+        }
+
         /// Wherever the anchor is and whatever the card holds, the card is on
         /// screen and does not overlap the anchor.
         #[test]

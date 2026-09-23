@@ -10,6 +10,11 @@
 //! resting on something stays while the pointer is over that thing or over
 //! the card, and goes when it leaves both. One the keyboard opened stays
 //! until the next key or a click somewhere else. Either goes with Escape.
+//! A hover card is a pointer card whose opener is the text it is about
+//! rather than a hover target, so it stays while the pointer is on that text.
+//!
+//! A card's links are drawn as links and followed with a click, whatever the
+//! terminal; OSC 8 is added on top where it is wanted.
 
 use crossterm::event::{KeyCode, KeyEvent};
 use nun_ui::{Paragraph, Popover};
@@ -43,6 +48,13 @@ pub(super) struct Card {
     /// The hover target that opened it, which it stays open over. `None`
     /// for a card the keyboard opened.
     opener: Option<Target>,
+    /// Whether the pointer opened it by resting on its anchor, which it
+    /// stays open over.
+    held: bool,
+    /// Where the body's links go.
+    links: Vec<String>,
+    /// Whether to mark the links with OSC 8 as well.
+    hyperlinks: bool,
 }
 
 impl Card {
@@ -56,11 +68,49 @@ impl Card {
         opener: Option<Target>,
     ) -> Self {
         let labels = buttons.iter().map(|(label, _)| label.clone()).collect();
-        Self { anchor, body, buttons, labels, scroll: 0, opener }
+        Self {
+            anchor,
+            body,
+            buttons,
+            labels,
+            scroll: 0,
+            opener,
+            held: false,
+            links: Vec::new(),
+            hyperlinks: false,
+        }
+    }
+
+    /// A card the pointer opened by resting on the text of its anchor: it
+    /// stays while the pointer is over that text or over the card.
+    pub(super) const fn held_over_anchor(mut self) -> Self {
+        self.held = true;
+        self
+    }
+
+    /// Where the body's links go, and whether to tell the terminal too.
+    pub(super) fn with_links(mut self, links: Vec<String>, hyperlinks: bool) -> Self {
+        self.links = links;
+        self.hyperlinks = hyperlinks;
+        self
+    }
+
+    /// Whether it is a card the pointer opened on its anchor.
+    pub(super) const fn is_held(&self) -> bool {
+        self.held
+    }
+
+    /// Where link `index` goes.
+    pub(super) fn link(&self, index: usize) -> Option<&str> {
+        self.links.get(index).map(String::as_str)
     }
 
     fn popover<'a>(&'a self, palette: &'a nun_ui::Palette) -> Popover<'a> {
-        Popover::new(&self.body, palette).buttons(&self.labels).scrolled_to(self.scroll)
+        Popover::new(&self.body, palette)
+            .buttons(&self.labels)
+            .scrolled_to(self.scroll)
+            .links(&self.links)
+            .hyperlinks(self.hyperlinks)
     }
 }
 
@@ -115,14 +165,17 @@ impl App {
 
     /// Put the card into the hit map, over everything but a menu.
     pub(super) fn layout_card(&self, hits: &mut nun_input::HitMap<Target>) {
-        let Some(area) = self.card_area() else { return };
-        // Hover targets both, so moving from the anchor into the card, and
+        let (Some(card), Some(area)) = (self.card.as_ref(), self.card_area()) else { return };
+        // Hover targets all, so moving from the anchor into the card, and
         // about inside it, keeps it open.
         hits.push(super::cells(area), Target::Card, true);
         for (index, button) in self.card_buttons().into_iter().enumerate() {
             if button.width > 0 {
                 hits.push(super::cells(button), Target::CardButton(index), true);
             }
+        }
+        for (index, link) in card.popover(&self.palette).link_areas(area) {
+            hits.push(super::cells(link), Target::CardLink(index), true);
         }
     }
 
@@ -131,11 +184,12 @@ impl App {
         use ratatui::widgets::Widget as _;
 
         let (Some(card), Some(area)) = (self.card.as_ref(), self.card_area()) else { return };
-        let hovered = match self.hover.current() {
-            Some(Target::CardButton(index)) => Some(index),
-            _ => None,
+        let (hovered, link) = match self.hover.current() {
+            Some(Target::CardButton(index)) => (Some(index), None),
+            Some(Target::CardLink(index)) => (None, Some(index)),
+            _ => (None, None),
         };
-        card.popover(&self.palette).hovered(hovered).render(area, cells);
+        card.popover(&self.palette).hovered(hovered).hovered_link(link).render(area, cells);
     }
 
     /// The wheel turned over the card.
@@ -165,6 +219,11 @@ impl App {
                 self.close_card();
                 Some(command.map_or(Outcome::Redraw, |command| self.run(command)))
             }
+            Target::CardLink(index) => {
+                let link = card.link(index).map(str::to_string);
+                self.close_card();
+                Some(link.map_or(Outcome::Redraw, |link| self.follow_link(&link)))
+            }
             _ => {
                 self.close_card();
                 None
@@ -182,15 +241,23 @@ impl App {
         (event.code == KeyCode::Esc).then_some(Outcome::Redraw)
     }
 
-    /// The pointer moved. A card it opened goes once it is over neither the
-    /// card nor what opened it.
-    pub(super) fn card_follow_pointer(&mut self) -> Outcome {
-        let Some(opener) = self.card.as_ref().and_then(|card| card.opener) else {
-            return Outcome::Continue;
+    /// The pointer moved to `column`, `row`. A card it opened goes once it
+    /// is over neither the card nor what opened it.
+    pub(super) fn card_follow_pointer(&mut self, column: u16, row: u16) -> Outcome {
+        let Some(card) = self.card.as_ref() else { return Outcome::Continue };
+        let opener = match (card.opener, card.held) {
+            (Some(opener), _) => Some(opener),
+            (None, true) => None,
+            (None, false) => return Outcome::Continue,
+        };
+        let on_anchor = || {
+            self.card_anchor(card.anchor)
+                .is_some_and(|anchor| anchor.contains(ratatui::layout::Position::new(column, row)))
         };
         match self.hover.current() {
-            Some(Target::Card | Target::CardButton(_)) => Outcome::Continue,
-            Some(target) if target == opener => Outcome::Continue,
+            Some(target) if target.in_card() => Outcome::Continue,
+            Some(target) if Some(target) == opener => Outcome::Continue,
+            _ if card.held && on_anchor() => Outcome::Continue,
             _ => {
                 self.close_card();
                 Outcome::Redraw
