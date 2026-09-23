@@ -174,12 +174,24 @@ impl Encoding {
     }
 }
 
-/// The char index just past the last char of `line`, before its `\n`.
+/// The char index just past the last char of `line`, before its `\n` or its
+/// `\r\n`.
+///
+/// A buffer never holds `\r\n`, but the text of a file nobody has open is
+/// converted as it is on disk, and there the `\r` belongs to the line ending:
+/// a server's "past the end of the line" must not land between it and the
+/// `\n`.
 fn line_end(text: &Rope, line: usize) -> usize {
     let start = text.line_to_char(line);
     let slice = text.line(line);
-    let len = slice.len_chars();
-    if len > 0 && slice.char(len - 1) == '\n' { start + len - 1 } else { start + len }
+    let mut len = slice.len_chars();
+    if len > 0 && slice.char(len - 1) == '\n' {
+        len -= 1;
+        if len > 0 && slice.char(len - 1) == '\r' {
+            len -= 1;
+        }
+    }
+    start + len
 }
 
 /// A count as the protocol's unsigned integer. Nothing in a buffer nun can hold
@@ -272,6 +284,15 @@ mod tests {
         let text = Rope::from_str("ab\ncd");
         for encoding in ALL {
             assert_eq!(encoding.char_index(&text, at(0, 99)), 2, "{encoding:?}: not onto line 2");
+        }
+    }
+
+    #[test]
+    fn past_the_end_of_a_crlf_line_is_before_its_carriage_return() {
+        let text = Rope::from_str("ab\r\ncd");
+        for encoding in ALL {
+            assert_eq!(encoding.char_index(&text, at(0, 99)), 2, "{encoding:?}");
+            assert_eq!(encoding.char_index(&text, at(0, 2)), 2, "{encoding:?}");
         }
     }
 

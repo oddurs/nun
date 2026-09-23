@@ -27,6 +27,8 @@ pub(super) enum Purpose {
     NewFolder(PathBuf),
     /// Rename this entry to the typed name.
     Rename(PathBuf),
+    /// Rename the symbol the rename in progress is about to the typed name.
+    RenameSymbol,
     /// Unsaved changes are about to be left; then close this tab of this pane.
     UnsavedThenClose(usize, usize),
 }
@@ -50,13 +52,16 @@ pub(super) struct Prompt {
     /// The text being typed, when the prompt asks for a name.
     pub(super) field: Option<String>,
     pub(super) buttons: Vec<(&'static str, Answer)>,
+    /// A char index in the document being edited to draw the prompt beside,
+    /// rather than in the status line: a new name is asked for at the name.
+    pub(super) anchor: Option<usize>,
 }
 
 impl Prompt {
     /// Ask for a name, with `initial` already typed.
     pub(super) fn name(purpose: Purpose, message: String, initial: &str) -> Self {
         let confirm = match purpose {
-            Purpose::Rename(_) => "Rename",
+            Purpose::Rename(_) | Purpose::RenameSymbol => "Rename",
             _ => "Create",
         };
         Self {
@@ -64,7 +69,15 @@ impl Prompt {
             message,
             field: Some(initial.to_string()),
             buttons: vec![(confirm, Answer::Confirm), ("Cancel", Answer::Cancel)],
+            anchor: None,
         }
+    }
+
+    /// The same prompt, drawn beside char `anchor` of the document being
+    /// edited when that is on screen.
+    pub(super) const fn at(mut self, anchor: Option<usize>) -> Self {
+        self.anchor = anchor;
+        self
     }
 
     /// Ask what to do with unsaved changes before going on.
@@ -78,6 +91,7 @@ impl Prompt {
                 ("Don't save", Answer::Discard),
                 ("Cancel", Answer::Cancel),
             ],
+            anchor: None,
         }
     }
 
@@ -113,6 +127,44 @@ impl Prompt {
 }
 
 impl App {
+    /// Where the prompt is drawn: beside its anchor, when it has one on
+    /// screen, and in the status line otherwise.
+    ///
+    /// Beside means the row under the anchor's line, or the one over it when
+    /// the line is the last on screen, starting at the anchor's column and
+    /// pulled left as far as it has to be to fit. It is as wide as its text
+    /// and buttons with room to type, and never wider than the text.
+    pub(super) fn prompt_area(&self, status: Rect) -> Rect {
+        self.prompt
+            .as_ref()
+            .and_then(|prompt| Some((prompt, prompt.anchor?)))
+            .and_then(|(prompt, at)| self.beside(prompt, at))
+            .unwrap_or(status)
+    }
+
+    fn beside(&self, prompt: &Prompt, at: usize) -> Option<Rect> {
+        let (text, _) = self.areas();
+        if text.height < 2 {
+            return None;
+        }
+        // Where the renderer itself put that char, so a wide character or a
+        // tab before it cannot push the prompt somewhere else.
+        let (x, y) = nun_ui::EditorView::new(&self.doc().buffer, &self.palette)
+            .scrolled_to(self.doc().scroll)
+            .cell_of(text, at)?;
+        let y = if y + 1 < text.bottom() { y + 1 } else { y - 1 };
+
+        let buttons: usize = prompt.buttons.iter().map(|(label, _)| label.width() + 3).sum();
+        let typed = prompt.field.as_deref().map_or(0, UnicodeWidthStr::width);
+        // Room to type a name longer than the one there, and a column for the
+        // caret.
+        let room = typed.max(16) - typed + 2;
+        let wanted = prompt.text().width() + room + buttons + 1;
+        let width = u16::try_from(wanted).unwrap_or(u16::MAX).min(text.width);
+        let x = x.min(text.right().saturating_sub(width)).max(text.x);
+        Some(Rect::new(x, y, width, 1))
+    }
+
     /// A key while a prompt is up. Always handled: nothing reaches the text
     /// behind a question until it is answered.
     pub(super) fn prompt_key(&mut self, key: &KeyEvent) -> Outcome {
@@ -154,6 +206,9 @@ impl App {
         let name = name.trim();
 
         match (prompt.purpose, answer) {
+            (Purpose::RenameSymbol, answer) => {
+                return self.rename_named(answer == Answer::Confirm, name);
+            }
             (_, Answer::Cancel) => {}
             (Purpose::NewFile(dir), _) => self.create(&dir, name, false),
             (Purpose::NewFolder(dir), _) => self.create(&dir, name, true),

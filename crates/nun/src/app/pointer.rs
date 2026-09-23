@@ -211,6 +211,7 @@ impl App {
         if folded {
             commands.push(Command::Unfold);
         }
+        commands.push(Command::RenameSymbol);
         commands.push(Command::GrowSelection);
         if self.can_shrink() {
             commands.push(Command::ShrinkSelection);

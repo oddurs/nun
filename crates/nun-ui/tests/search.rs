@@ -46,10 +46,10 @@ fn palette() -> Palette {
 
 fn rows<'a>() -> Vec<SearchRow<'a>> {
     vec![
-        SearchRow::File { path: "src/main.rs", hits: 2, collapsed: false },
+        SearchRow::File { path: "src/main.rs", hits: 2, collapsed: false, state: HitState::Plain },
         SearchRow::Hit { line: 7, text: "fn main() {", matched: &[], state: HitState::Plain },
         SearchRow::Hit { line: 91, text: "    render();", matched: &[], state: HitState::Plain },
-        SearchRow::File { path: "README.md", hits: 1, collapsed: true },
+        SearchRow::File { path: "README.md", hits: 1, collapsed: true, state: HitState::Plain },
     ]
 }
 
@@ -301,7 +301,8 @@ fn a_collapsed_file_points_its_disclosure_the_other_way() {
 
 #[test]
 fn a_file_row_right_aligns_its_hit_count() {
-    let rows = vec![SearchRow::File { path: "a.rs", hits: 128, collapsed: false }];
+    let rows =
+        vec![SearchRow::File { path: "a.rs", hits: 128, collapsed: false, state: HitState::Plain }];
     let palette = palette();
     let mut harness = Harness::new(24, 7);
     harness.draw(SearchView::new("x", &rows, &palette));
@@ -439,7 +440,7 @@ fn an_empty_query_shows_a_placeholder_until_it_is_typed_into() {
 /// included one is followed by.
 fn diff_rows<'a>() -> Vec<SearchRow<'a>> {
     vec![
-        SearchRow::File { path: "a.rs", hits: 3, collapsed: false },
+        SearchRow::File { path: "a.rs", hits: 3, collapsed: false, state: HitState::Plain },
         SearchRow::Hit { line: 1, text: "let old = 1;", matched: &[], state: HitState::Included },
         SearchRow::After { line: 1, text: "let new = 1;" },
         SearchRow::Hit { line: 2, text: "let old = 2;", matched: &[], state: HitState::Excluded },
@@ -913,4 +914,54 @@ fn every_cell_is_painted() {
             assert_ne!(cells[(x, y)].bg, Color::Reset, "({x}, {y})");
         }
     }
+}
+
+#[test]
+fn a_preview_with_actions_draws_them_where_the_toggles_go_and_says_where_they_are() {
+    let palette = palette();
+    let area = Rect::new(0, 0, 30, 8);
+    let actions = ["Rename", "Cancel"];
+    let mut harness = Harness::new(30, 8);
+    harness.draw(SearchView::new("cat", &[], &palette).title("RENAME").actions(&actions));
+    let text = harness.to_text();
+    assert!(text.lines().next().unwrap_or_default().contains("RENAME"), "{text}");
+    let toggles = text.lines().nth(3).unwrap_or_default();
+    assert_eq!(toggles, "  Rename   Cancel", "trailing blanks are trimmed");
+    for glyph in SearchButton::ALL.map(SearchButton::glyph) {
+        assert!(!toggles.contains(glyph), "no toggles: {toggles:?}");
+    }
+
+    let rename = SearchView::action_area(area, &actions, 0).unwrap();
+    let cancel = SearchView::action_area(area, &actions, 1).unwrap();
+    assert_eq!((rename.x, rename.y, rename.width), (1, 3, 8));
+    assert_eq!(cancel.x, rename.right() + 1);
+    assert_eq!(SearchView::action_area(area, &actions, 2), None);
+    assert_eq!(
+        SearchView::action_area(Rect::new(0, 0, 12, 8), &actions, 1),
+        None,
+        "one that does not fit is not there"
+    );
+}
+
+#[test]
+fn a_file_that_is_in_or_out_has_a_mark_at_the_edge_that_can_be_clicked() {
+    let rows = vec![
+        SearchRow::File { path: "a.rs", hits: 1, collapsed: false, state: HitState::Included },
+        SearchRow::File { path: "b.rs", hits: 1, collapsed: false, state: HitState::Excluded },
+        SearchRow::File { path: "c.rs", hits: 1, collapsed: false, state: HitState::Plain },
+    ];
+    let palette = palette();
+    let area = Rect::new(0, 0, 24, 9);
+    let mut harness = Harness::new(24, 9);
+    harness.draw(SearchView::new("x", &rows, &palette));
+    let lines: Vec<String> = harness.to_text().lines().map(str::to_string).collect();
+    let first = usize::from(FIRST);
+    assert!(lines[first].starts_with("✓▾ a.rs"), "{:?}", lines[first]);
+    assert!(lines[first + 1].starts_with("·▾ b.rs"), "{:?}", lines[first + 1]);
+    assert!(lines[first + 2].starts_with(" ▾ c.rs"), "{:?}", lines[first + 2]);
+
+    let mark = SearchView::marker_area(area, &rows, 0, 0).unwrap();
+    assert_eq!((mark.x, mark.y), (0, FIRST));
+    assert!(SearchView::marker_area(area, &rows, 1, 0).is_some());
+    assert_eq!(SearchView::marker_area(area, &rows, 2, 0), None, "a plain file has none");
 }

@@ -205,6 +205,7 @@ impl Listing {
                         path: &group.label,
                         hits: group.hits.len(),
                         collapsed: self.collapsed.contains(&at),
+                        state: HitState::Plain,
                     }
                 }
                 Line::Hit(group, hit) => {

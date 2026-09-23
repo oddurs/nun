@@ -15,6 +15,7 @@ use std::thread;
 
 use crate::ops::{Change, FsHistory};
 use crate::replace::{Recorded, Replacer, Report};
+use crate::rewrite::{self, Rewrite, Written};
 use crate::search::{self, Match};
 use crate::tree::{Entry, list_dir};
 
@@ -78,6 +79,24 @@ pub enum Job {
         /// why it is an early-out in front of the line check rather than the
         /// thing being relied on.
         searched_at: std::time::SystemTime,
+    },
+    /// Read files as text, for a caller that will work out what to write
+    /// into them. `tag` comes back with the answer.
+    Read {
+        /// Which request this is, so its answer can be recognised.
+        tag: u64,
+        /// The files, by full path.
+        paths: Vec<PathBuf>,
+    },
+    /// Write whole files, provided each still holds what it was read as —
+    /// see [`rewrite::rewrite`]. Not recorded in the undo history: the caller
+    /// takes it back by sending the same files the other way round, which
+    /// gets the same check.
+    Rewrite {
+        /// Which request this is, so its answer can be recognised.
+        tag: u64,
+        /// The files, in the order to write them.
+        files: Vec<Rewrite>,
     },
     /// Undo the last operation.
     Undo,
@@ -154,6 +173,20 @@ pub enum Done {
         /// line endings. A file that could not be read is left out, and so is
         /// a line past its end.
         lines: Vec<(PathBuf, Vec<(u32, String)>)>,
+    },
+    /// Files were read, or could not be.
+    Read {
+        /// The tag the job was sent with.
+        tag: u64,
+        /// Each file beside its text, or why it could not be read as text.
+        files: Vec<(PathBuf, Result<String, String>)>,
+    },
+    /// A rewrite ran, as far as it got.
+    Rewritten {
+        /// The tag the job was sent with.
+        tag: u64,
+        /// Each file beside what became of it, in the order they were given.
+        files: Vec<(PathBuf, Written)>,
     },
     /// The marker from [`Job::Echo`], and with it the news that everything
     /// asked for before it has been done.
@@ -266,6 +299,12 @@ impl Worker {
                     })
                     .collect();
                 return Done::Lines { generation, lines };
+            }
+            Job::Read { tag, paths } => {
+                return Done::Read { tag, files: rewrite::read_texts(&paths) };
+            }
+            Job::Rewrite { tag, files } => {
+                return Done::Rewritten { tag, files: rewrite::rewrite(&files) };
             }
             Job::Replace { root, options, replacement, chosen, searched_at } => {
                 let replacer = match Replacer::new(&options, &replacement) {
@@ -765,5 +804,33 @@ mod search_tests {
         for name in ["a", "b", "c"] {
             assert!(dir.path().join(name).exists());
         }
+    }
+}
+
+#[cfg(test)]
+mod rewrite_tests {
+    use super::tests_support::*;
+    use super::*;
+
+    #[test]
+    fn files_are_read_and_rewritten_on_the_worker() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.rs");
+        std::fs::write(&path, "cat").unwrap();
+        let (jobs, receiver) = worker(&dir.path().join(".trash"));
+
+        jobs.send(Job::Read { tag: 7, paths: vec![path.clone()] });
+        assert_eq!(
+            next(&receiver),
+            Done::Read { tag: 7, files: vec![(path.clone(), Ok("cat".to_string()))] }
+        );
+
+        let files = vec![Rewrite { path: path.clone(), expect: "cat".into(), text: "dog".into() }];
+        jobs.send(Job::Rewrite { tag: 8, files });
+        assert_eq!(
+            next(&receiver),
+            Done::Rewritten { tag: 8, files: vec![(path.clone(), Written::Written)] }
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "dog");
     }
 }

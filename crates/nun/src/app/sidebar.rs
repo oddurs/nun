@@ -553,6 +553,8 @@ impl App {
                 Outcome::Redraw
             }
             Done::Replaced { report, change } => self.replace_done(&report, change.as_ref()),
+            Done::Read { tag, files } => self.rename_read(tag, files),
+            Done::Rewritten { tag, files } => self.rename_rewritten(tag, &files),
             Done::Failed(error) => {
                 self.message = Some(error);
                 self.undo_offer = false;

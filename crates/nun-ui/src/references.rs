@@ -185,7 +185,12 @@ mod tests {
         let palette = Palette::new(derive(&Probe::builtin_dark()));
         let matched = [std::ops::Range { start: 4, end: 9 }];
         let rows = [
-            SearchRow::File { path: "src/lib.rs", hits: 1, collapsed: false },
+            SearchRow::File {
+                path: "src/lib.rs",
+                hits: 1,
+                collapsed: false,
+                state: HitState::Plain,
+            },
             SearchRow::Hit {
                 line: 12,
                 text: "let value = 1;",

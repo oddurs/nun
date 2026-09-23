@@ -11,6 +11,12 @@
 //! written across the repository is on screen before it happens rather than
 //! summarised afterwards. Any hit can be struck out of the batch on its own.
 //!
+//! The same panel previews a rename. A rename is a replace worked out by a
+//! language server rather than by a query, so it is drawn the same way — the
+//! old name, the new one, and every line it changes, before and after — with
+//! a title of its own, a row of text buttons where the toggles would be, and
+//! a mark on each file saying whether it is in.
+//!
 //! Nothing here runs the search, and nothing here writes a file. The panel is
 //! handed rows and draws them, which is what keeps a slow walk of a large
 //! repository off the render path.
@@ -86,6 +92,10 @@ const REPLACE_PLACEHOLDER: &str = "Replace with";
 /// The column a hit's include marker sits in: the margin left of the indent,
 /// where a version-control gutter would be, so it never moves with the text.
 const MARKER_COL: u16 = 1;
+
+/// The column a file's include mark sits in: the very edge, since the column a
+/// hit's marker takes is where a file row draws its disclosure triangle.
+const FILE_MARKER_COL: u16 = 0;
 
 /// Rows above the results: the header, the query, the replacement, the
 /// toggles, the summary.
@@ -221,6 +231,12 @@ pub enum SearchRow<'a> {
         hits: usize,
         /// Whether its hits are hidden.
         collapsed: bool,
+        /// Whether the file as a whole is in what is about to be written.
+        /// [`HitState::Plain`] when files are not included or left out one
+        /// at a time, which is the search panel's case; the others draw a
+        /// mark in the gutter column that [`SearchView::marker_area`] makes
+        /// clickable.
+        state: HitState,
     },
     /// A matching line as it stands.
     Hit {
@@ -259,6 +275,9 @@ pub enum SearchRow<'a> {
 /// answer for itself.
 #[derive(Debug)]
 pub struct SearchView<'a> {
+    title: &'a str,
+    actions: &'a [&'a str],
+    hovered_action: Option<usize>,
     query: &'a str,
     replacement: &'a str,
     rows: &'a [SearchRow<'a>],
@@ -282,6 +301,9 @@ impl<'a> SearchView<'a> {
     #[must_use]
     pub const fn new(query: &'a str, rows: &'a [SearchRow<'a>], palette: &'a Palette) -> Self {
         Self {
+            title: TITLE,
+            actions: &[],
+            hovered_action: None,
             query,
             replacement: "",
             rows,
@@ -398,6 +420,60 @@ impl<'a> SearchView<'a> {
         self
     }
 
+    /// Head the panel with `title` instead of the search's own.
+    #[must_use]
+    pub const fn title(mut self, title: &'a str) -> Self {
+        self.title = title;
+        self
+    }
+
+    /// Put text buttons labelled `actions` where the toggles go, instead of
+    /// the toggles.
+    ///
+    /// For a panel whose query is not something typed — a rename's is the
+    /// symbol's name — and so has nothing for the toggles to change, but has
+    /// a decision to offer with the mouse. [`SearchView::action_area`] says
+    /// where each one is.
+    #[must_use]
+    pub const fn actions(mut self, actions: &'a [&'a str]) -> Self {
+        self.actions = actions;
+        self
+    }
+
+    /// Mark the action at this index as under the pointer.
+    #[must_use]
+    pub const fn hovered_action(mut self, action: Option<usize>) -> Self {
+        self.hovered_action = action;
+        self
+    }
+
+    /// Where the action at `index` of `actions` is drawn, if it fits.
+    ///
+    /// Laid out from the left of the toggles row, each label with a space
+    /// either side and a column between them, so the first — the one that
+    /// does the thing — is where the eye starts. One that does not fit is not
+    /// drawn and has no area, and neither does any after it.
+    #[must_use]
+    pub fn action_area(area: Rect, actions: &[&str], index: usize) -> Option<Rect> {
+        let row = Self::toggles_area(area);
+        if row.height == 0 {
+            return None;
+        }
+        let mut x = row.x.checked_add(1)?;
+        for (at, label) in actions.iter().enumerate() {
+            let width = u16::try_from(label.width() + 2).ok()?;
+            let right = x.checked_add(width)?;
+            if right > row.right() {
+                return None;
+            }
+            if at == index {
+                return Some(Rect::new(x, row.y, width, 1));
+            }
+            x = right.checked_add(1)?;
+        }
+        None
+    }
+
     /// What the replace row's button does, for the status line on hover.
     ///
     /// It names the scope as well as the action: with hits struck out, what
@@ -465,10 +541,11 @@ impl<'a> SearchView<'a> {
 
     /// The cell that toggles whether a row is included, when the row has one.
     ///
-    /// `None` for a file row and for an `After` row, which are not things to
-    /// include or exclude; for a `Plain` hit, where nothing is being replaced
-    /// and so there is nothing to strike out; for a row that is not on screen;
-    /// and when the panel cannot spare the cell.
+    /// `None` for an `After` row, which is not a thing to include or exclude;
+    /// for a `Plain` hit or file, where nothing is being chosen and so there is
+    /// nothing to strike out; for a row that is not on screen; and when the
+    /// panel cannot spare the cell. A file's mark is at the very edge, left of
+    /// its disclosure triangle; a hit's is one column in.
     ///
     /// `rows` is the slice the panel was given, and `scroll` the scroll it was
     /// given with it, so this answers from the same two things `render` draws
@@ -480,18 +557,21 @@ impl<'a> SearchView<'a> {
         row: usize,
         scroll: usize,
     ) -> Option<Rect> {
-        match rows.get(row)? {
-            SearchRow::Hit { state: HitState::Included | HitState::Excluded, .. } => {}
+        let column = match rows.get(row)? {
+            SearchRow::Hit { state: HitState::Included | HitState::Excluded, .. } => MARKER_COL,
+            SearchRow::File { state: HitState::Included | HitState::Excluded, .. } => {
+                FILE_MARKER_COL
+            }
             SearchRow::Hit { .. } | SearchRow::File { .. } | SearchRow::After { .. } => {
                 return None;
             }
-        }
+        };
         let rows_area = Self::rows_area(area);
         let offset = u16::try_from(row.checked_sub(scroll)?).ok()?;
         if offset >= rows_area.height {
             return None;
         }
-        let x = rows_area.x.checked_add(MARKER_COL)?;
+        let x = rows_area.x.checked_add(column)?;
         (x < rows_area.right()).then(|| Rect::new(x, rows_area.y + offset, 1, 1))
     }
 
@@ -630,7 +710,7 @@ impl SearchView<'_> {
         let role = if self.focused { Role::Accent } else { Role::Dim };
         let style = self.palette.on(Role::Raised, role).add_modifier(Modifier::BOLD);
         let x = area.x.saturating_add(1);
-        put(cells, x, area.y, area.width.saturating_sub(4), TITLE, style);
+        put(cells, x, area.y, area.width.saturating_sub(4), self.title, style);
 
         let Some(cell) = Self::back_area(area) else { return };
         let style = if self.hovered_back {
@@ -724,6 +804,10 @@ impl SearchView<'_> {
     }
 
     fn draw_toggles(&self, cells: &mut Cells, area: Rect) {
+        if !self.actions.is_empty() {
+            self.draw_actions(cells, area);
+            return;
+        }
         for button in SearchButton::ALL {
             let Some(cell) = Self::button_area(area, button) else { continue };
             let lit = self.toggles.on(button);
@@ -742,6 +826,20 @@ impl SearchView<'_> {
                 };
             }
             put(cells, cell.x, cell.y, 1, button.glyph(), style);
+        }
+    }
+
+    fn draw_actions(&self, cells: &mut Cells, area: Rect) {
+        for (index, label) in self.actions.iter().enumerate() {
+            let Some(cell) = Self::action_area(area, self.actions, index) else { break };
+            // Drawn the way the status line's prompt buttons are, since they
+            // are the same kind of thing: a decision, one click away.
+            let style = if self.hovered_action == Some(index) {
+                self.palette.on(Role::Accent, Role::OnAccent)
+            } else {
+                self.palette.on(Role::Overlay, Role::Text)
+            };
+            put(cells, cell.x, cell.y, cell.width, &format!(" {label} "), style);
         }
     }
 
@@ -787,8 +885,8 @@ impl SearchView<'_> {
         fill(cells, line, style);
 
         match self.rows[index] {
-            SearchRow::File { path, hits, collapsed } => {
-                self.draw_file(cells, line, style, path, hits, collapsed);
+            SearchRow::File { path, hits, collapsed, state } => {
+                self.draw_file(cells, line, style, path, hits, collapsed, state);
             }
             SearchRow::Hit { line: number, text, matched, state } => {
                 self.draw_hit(cells, line, style, gutter, number, text, matched, state);
@@ -814,6 +912,8 @@ impl SearchView<'_> {
         }
     }
 
+    // Each one is a separate thing to draw, as in the palette's own row.
+    #[allow(clippy::too_many_arguments)]
     fn draw_file(
         &self,
         cells: &mut Cells,
@@ -822,7 +922,24 @@ impl SearchView<'_> {
         path: &str,
         hits: usize,
         collapsed: bool,
+        state: HitState,
     ) {
+        // A file that is in gets a tick where its hits get their `-`, and one
+        // that is out is dimmed as a whole, the way a struck-out hit is.
+        let (mark, style) = match state {
+            HitState::Plain => (None, style),
+            HitState::Included => (Some(("✓", style.patch(self.palette.ink(Role::Added)))), style),
+            HitState::Excluded => {
+                let faint = style.patch(self.palette.ink(Role::Faint));
+                (Some(("·", faint)), faint)
+            }
+        };
+        if let Some((mark, ink)) = mark
+            && let Some(x) = line.x.checked_add(FILE_MARKER_COL)
+            && x < line.right()
+        {
+            put(cells, x, line.y, 1, mark, ink);
+        }
         let x = line.x.saturating_add(1);
         let disclosure = if collapsed { "▸ " } else { "▾ " };
         let room = line.right().saturating_sub(x);

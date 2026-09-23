@@ -114,6 +114,11 @@ pub enum Command {
     PreviousDiagnostic,
     /// Ask the language server what could go at the caret.
     Complete,
+    /// Rename the symbol at the caret across the project, through the
+    /// language server, after previewing every edit.
+    RenameSymbol,
+    /// Take back the last rename, in every file it touched.
+    UndoRename,
 }
 
 impl Command {
@@ -167,6 +172,8 @@ impl Command {
         Self::NextDiagnostic,
         Self::PreviousDiagnostic,
         Self::Complete,
+        Self::RenameSymbol,
+        Self::UndoRename,
     ];
 
     /// The name used in `[keys]` in `nun.toml`.
@@ -221,6 +228,8 @@ impl Command {
             Self::NextDiagnostic => "diagnostics.next",
             Self::PreviousDiagnostic => "diagnostics.previous",
             Self::Complete => "lsp.complete",
+            Self::RenameSymbol => "lsp.rename",
+            Self::UndoRename => "lsp.undo_rename",
         }
     }
 
@@ -276,6 +285,8 @@ impl Command {
             Self::NextDiagnostic => "Go to the next problem",
             Self::PreviousDiagnostic => "Go to the previous problem",
             Self::Complete => "Suggest completions",
+            Self::RenameSymbol => "Rename symbol",
+            Self::UndoRename => "Undo rename",
         }
     }
 
@@ -300,6 +311,7 @@ impl Command {
                 | Self::UnfoldAll
                 | Self::FormatDocument
                 | Self::Complete
+                | Self::RenameSymbol
         )
     }
 
@@ -381,6 +393,10 @@ const BASIC: &[(&str, Command)] = &[
     // A legacy terminal sends Ctrl+Space as NUL, which crossterm reports as
     // exactly this.
     ("ctrl+space", Command::Complete),
+    // F2 renames the file, as it does in the tree, so the symbol is the same
+    // key after the chord prefix every other file-wide operation shares.
+    ("ctrl+k f2", Command::RenameSymbol),
+    ("ctrl+k z", Command::UndoRename),
 ];
 
 /// Bindings that need the Kitty keyboard protocol, added over [`BASIC`].
