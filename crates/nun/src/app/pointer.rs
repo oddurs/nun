@@ -219,6 +219,9 @@ impl App {
         // Where a symbol goes and comes from, when a server can say, and the
         // way back: the mouse path for all of it, beside Ctrl-click.
         commands.extend(self.navigation_offers());
+        if self.can_complete() {
+            commands.push(Command::Complete);
+        }
 
         let items: Vec<MenuItem> = commands
             .iter()

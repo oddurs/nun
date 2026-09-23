@@ -24,6 +24,7 @@ use ratatui::widgets::Widget;
 use crate::commands::Command;
 
 mod card;
+mod completion;
 mod diagnostics;
 mod folds;
 mod format;
@@ -161,6 +162,10 @@ pub enum Target {
     CardButton(usize),
     /// The diagnostic counts in the status line.
     StatusProblems,
+    /// The completion popup, and the documentation beside it.
+    Completion,
+    /// One of its rows, by its place in the list.
+    CompletionRow(usize),
 }
 
 impl Target {
@@ -178,6 +183,10 @@ impl Target {
 
     const fn in_tabs(self) -> bool {
         matches!(self, Self::Tab(..) | Self::TabClose(..) | Self::TabStrip)
+    }
+
+    const fn in_completion(self) -> bool {
+        matches!(self, Self::Completion | Self::CompletionRow(_))
     }
 
     const fn in_sidebar(self) -> bool {
@@ -331,6 +340,8 @@ pub struct App {
     diagnostics: diagnostics::Diagnostics,
     /// The card on screen.
     card: Option<card::Card>,
+    /// The completion popup, and the tab-stops of a snippet it inserted.
+    completion: completion::Completion,
 }
 
 impl App {
@@ -403,6 +414,7 @@ impl App {
             navigation: navigation::Navigation::default(),
             diagnostics: diagnostics::Diagnostics::default(),
             card: None,
+            completion: completion::Completion::default(),
         };
         app.relayout();
         app
@@ -515,6 +527,7 @@ impl App {
         self.layout_panes(&mut hits);
         self.layout_diagnostics(&mut hits);
         self.layout_card(&mut hits);
+        self.layout_completion(&mut hits);
         self.layout_palette(&mut hits);
 
         let parts = self.status_parts(status);
@@ -697,8 +710,10 @@ impl App {
         };
         let outcome = self.dispatch(event, now).and(unlinked);
         // Whatever the event did to the text goes to the language servers
-        // now, in the order it was done.
+        // now, in the order it was done, and only then is anything asked
+        // about it.
         self.lsp_flush();
+        let outcome = outcome.and(self.completion_follow());
         // Anything that changed the text or moved the view changes what the
         // parser should be looking at.
         let after = (self.doc().buffer.len_chars(), self.doc().scroll, self.doc().id);
@@ -779,6 +794,9 @@ impl App {
         }
         if self.menu.take().is_some() && event.code == KeyCode::Esc {
             return Outcome::Redraw;
+        }
+        if let Some(outcome) = self.completion_key(&event) {
+            return outcome;
         }
         let Some(key) = to_key(&event) else { return Outcome::Continue };
 
@@ -947,6 +965,7 @@ impl App {
             Command::PreviousReference => return self.step_reference(-1),
             Command::NextDiagnostic => return self.step_diagnostic(true),
             Command::PreviousDiagnostic => return self.step_diagnostic(false),
+            Command::Complete => return self.complete_here(),
             Command::ShrinkSelection => return self.shrink_selection(),
             Command::SplitIntoLines => {
                 if !self.doc_mut().buffer.split_into_lines() {
@@ -1042,6 +1061,11 @@ impl App {
             }
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown if self.finder.is_some() => {
                 self.palette_scroll(mouse.kind == MouseEventKind::ScrollDown)
+            }
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+                if target.is_some_and(Target::in_completion) =>
+            {
+                self.completion_scroll(mouse.kind == MouseEventKind::ScrollDown)
             }
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
                 if target.is_some_and(Target::in_search) =>
@@ -1166,6 +1190,9 @@ impl App {
         }
 
         match target {
+            target if target.in_completion() => {
+                self.completion_click(target, mouse.modifiers.contains(KeyModifiers::SHIFT))
+            }
             Target::StatusSearch => {
                 self.acknowledge();
                 self.open_palette("")
@@ -1379,6 +1406,7 @@ impl App {
         self.render_search(cells);
         self.render_references(cells);
         self.render_card(cells);
+        self.render_completion(cells);
 
         if status.height > 0 {
             self.render_status(status, cells);

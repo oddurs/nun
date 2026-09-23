@@ -469,3 +469,27 @@ fn a_click_below_a_fold_maps_to_the_line_drawn_there() {
     assert_eq!(view.position_at(area, 3, 1), Some(buffer.line_start(3)));
     assert_eq!(view.line_at_row(1), Some(3));
 }
+
+#[test]
+fn a_position_is_drawn_in_the_cell_that_maps_back_to_it() {
+    // Wide, combining, tab and plain, on a line below a fold.
+    let mut buffer = Buffer::from_text("fn a() {\n    one();\n}\n日e\u{301}\tx\n");
+    buffer.set_selections(Selections::single(Range::caret(0)));
+    buffer.fold(0, 2);
+    let palette = palette();
+    let view = EditorView::new(&buffer, &palette);
+    let area = ratatui::layout::Rect::new(0, 0, 20, 4);
+    let start = buffer.line_start(3);
+    let gutter = view.gutter_width();
+    // `日` at 0, `é` (two chars) at 2, the tab at 3, `x` at 4 after the tab.
+    for (offset, column) in [(0, 0), (1, 2), (3, 3), (4, 4), (5, 5)] {
+        let cell = view.cell_of(area, start + offset);
+        assert_eq!(cell, Some((gutter + column, 1)), "char {offset}");
+        if offset < 5 {
+            assert_eq!(view.position_at(area, gutter + column, 1), Some(start + offset));
+        }
+    }
+    assert_eq!(view.cell_of(area, buffer.line_start(1)), None, "folded away");
+    let narrow = ratatui::layout::Rect::new(0, 0, gutter + 2, 4);
+    assert_eq!(view.cell_of(narrow, start + 4), None, "past the right edge");
+}

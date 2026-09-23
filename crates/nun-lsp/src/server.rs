@@ -1005,10 +1005,19 @@ fn initialize_params(root: &Path) -> Value {
                 "completion": {
                     "contextSupport": true,
                     "completionItem": {
-                        "snippetSupport": false,
+                        "snippetSupport": true,
                         "documentationFormat": markup,
                         "labelDetailsSupport": true,
                         "deprecatedSupport": true,
+                        "tagSupport": { "valueSet": [1] },
+                        "preselectSupport": true,
+                        "insertReplaceSupport": true,
+                        "insertTextModeSupport": { "valueSet": [1, 2] },
+                        // Documentation and detail are asked for when an item
+                        // is selected, so a long list costs the server less to
+                        // send. The edits are not: an import added late would
+                        // arrive after the item had been accepted.
+                        "resolveSupport": { "properties": ["documentation", "detail"] },
                     },
                 },
                 "definition": { "linkSupport": false },
@@ -1118,6 +1127,15 @@ mod tests {
         );
         assert_eq!(params["rootUri"], json!("file:///tmp/project"));
         assert_eq!(params["workspaceFolders"][0]["name"], json!("project"));
+    }
+
+    #[test]
+    fn completion_asks_for_snippets_and_both_ranges() {
+        let params = initialize_params(Path::new("/tmp/project"));
+        let item = &params["capabilities"]["textDocument"]["completion"]["completionItem"];
+        assert_eq!(item["snippetSupport"], json!(true));
+        assert_eq!(item["insertReplaceSupport"], json!(true));
+        assert_eq!(item["resolveSupport"]["properties"], json!(["documentation", "detail"]));
     }
 
     #[test]
