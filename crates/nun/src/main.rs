@@ -2,6 +2,7 @@
 
 mod app;
 mod commands;
+mod hints;
 mod session;
 mod terminal;
 
@@ -128,6 +129,7 @@ fn edit(path: &Path, lsp_log: Option<&Path>) -> io::Result<()> {
     let (keymap, key_problems) = commands::keymap(set, &settings.config.keys);
     let (servers, server_problems) = language_servers(&settings);
     let problems = [role_problems, key_problems, server_problems].concat();
+    let ctrl_click = ctrl_click_hint(&settings, &startup, &keymap);
 
     let mut app = App::new(buffer, palette, keymap);
     app.set_format_on_save(
@@ -151,6 +153,9 @@ fn edit(path: &Path, lsp_log: Option<&Path>) -> io::Result<()> {
     }
     if let Some(notice) = key_set_notice(&settings, startup.kitty_keyboard) {
         app.warn(notice);
+    }
+    if let Some(hint) = &ctrl_click {
+        app.hint(hint.message());
     }
 
     let underlines = underlines(&settings, &startup.underlines);
@@ -238,6 +243,13 @@ fn edit(path: &Path, lsp_log: Option<&Path>) -> io::Result<()> {
     }
 
     screen.close();
+    wind_down(&mut app, ctrl_click);
+    Ok(())
+}
+
+/// Everything after the terminal is back: saving what was waiting, keeping
+/// what is remembered between sessions, and stopping the language servers.
+fn wind_down(app: &mut App, ctrl_click: Option<hints::Unseen>) {
     // A save still waiting on a formatter is made now, unformatted, however
     // the loop ended — a signal as much as a quit.
     app.save_before_quitting();
@@ -246,10 +258,12 @@ fn edit(path: &Path, lsp_log: Option<&Path>) -> io::Result<()> {
     if let Err(error) = app.save_session() {
         eprintln!("nun: could not remember this session's folds: {error}");
     }
+    if let Some(hint) = ctrl_click.filter(|_| app.hint_seen()) {
+        let _ = hint.remember();
+    }
     // Last, and bounded: a server that will not exit is killed at the
     // deadline rather than waited for.
     app.shutdown_lsp();
-    Ok(())
 }
 
 /// Start the language server runtime, posting to `events`.
@@ -381,6 +395,26 @@ fn key_set_notice(settings: &Loaded, kitty_keyboard: Option<bool>) -> Option<Str
     Some(format!("{why}, so nun is using the basic key set. `nun keys` lists it (docs/keys.md)."))
 }
 
+/// What to say about Ctrl-click, where the terminal is known to keep it for
+/// itself, and it has not been said before. Nothing with the mouse turned
+/// off: no click reaches nun anyway.
+fn ctrl_click_hint(
+    settings: &Loaded,
+    startup: &terminal::Startup,
+    keymap: &nun_input::Keymap<commands::Command>,
+) -> Option<hints::Unseen> {
+    if !settings.config.mouse {
+        return None;
+    }
+    let key = keymap.sequences_for(&commands::Command::GoToDefinition).first().map_or_else(
+        || "\"Go to definition\" in the palette".to_string(),
+        |keys| nun_input::Sequence(keys).to_string(),
+    );
+    hints::CtrlClick::detect(startup.underlines.version(), startup.kitty_keyboard)
+        .hint(&key)
+        .and_then(hints::Unseen::of)
+}
+
 /// Which terminal features to turn on.
 ///
 /// The keyboard flags are pushed only when the terminal said it understands
@@ -450,6 +484,8 @@ fn capabilities_report(settings: &Loaded, startup: &terminal::Startup) -> String
         Undercurl::Off => "undercurl = \"off\" in the config",
     };
     let _ = writeln!(out, "diagnostics: {drawn} ({why})");
+    let ctrl_click = hints::CtrlClick::detect(probe.version(), startup.kitty_keyboard);
+    let _ = writeln!(out, "ctrl-click: {}", ctrl_click.describe());
     out
 }
 
