@@ -2,10 +2,12 @@
 id: 76
 title: Say where Ctrl-click is taken by the terminal
 type: feature
-status: backlog
+status: done
 milestone: m4
+assignee: Oddur Sigurdsson
 created: 2026-09-22
 updated: 2026-09-22
+closed_at: 2026-09-22
 priority: p2
 effort: s
 area: lsp
@@ -28,6 +30,6 @@ terminal in the matrix without it), name F12 in the hint instead.
 
 ## Acceptance criteria
 
-- [ ] iTerm2 users are told once how to let Ctrl-click through
-- [ ] Terminals known to take Ctrl-click get the F12 hint instead
-- [ ] The probe honours a timeout and says nothing when it gets no answer
+- [x] iTerm2 users are told once how to let Ctrl-click through
+- [x] Terminals known to take Ctrl-click get the F12 hint instead
+- [x] The probe honours a timeout and says nothing when it gets no answer

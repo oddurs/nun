@@ -261,6 +261,15 @@ pub struct Document {
     syntax: syntax::Highlighting,
 }
 
+/// Where the one-time hint is: see [`App::hint`].
+#[derive(Debug, Default, PartialEq, Eq)]
+enum Hint {
+    #[default]
+    Absent,
+    Waiting(String),
+    Seen,
+}
+
 /// The running editor.
 #[derive(Debug)]
 pub struct App {
@@ -277,6 +286,9 @@ pub struct App {
     message: Option<String>,
     /// Things worth saying once, shown one at a time after `message`.
     notices: VecDeque<String>,
+    /// A notice worth saying only once ever, followed until it has been seen
+    /// so it can be remembered as said.
+    hint: Hint,
     quit_confirmed: bool,
     keymap: Keymap<Command>,
     chords: Chords,
@@ -381,6 +393,7 @@ impl App {
             viewport,
             message: None,
             notices: VecDeque::new(),
+            hint: Hint::Absent,
             quit_confirmed: false,
             keymap,
             chords: Chords::new(CHORD_TIMEOUT),
@@ -471,6 +484,21 @@ impl App {
         self.notices.push_back(message.into());
     }
 
+    /// Say something that need never be said again: a notice like any other,
+    /// except that once it has been seen — dismissed by a key or a click —
+    /// [`App::hint_seen`] says so, for the caller to remember.
+    pub fn hint(&mut self, message: impl Into<String>) {
+        let message = message.into();
+        self.notices.push_back(message.clone());
+        self.hint = Hint::Waiting(message);
+    }
+
+    /// Whether the hint has been seen and dismissed.
+    #[must_use]
+    pub fn hint_seen(&self) -> bool {
+        self.hint == Hint::Seen
+    }
+
     /// The message the status line is showing, if any.
     fn shown_message(&self) -> Option<&str> {
         self.message.as_deref().or_else(|| self.notices.front().map(String::as_str))
@@ -480,7 +508,11 @@ impl App {
     fn acknowledge(&mut self) {
         self.undo_offer = false;
         if self.message.take().is_none() {
-            self.notices.pop_front();
+            let dismissed = self.notices.pop_front();
+            if matches!((&self.hint, dismissed), (Hint::Waiting(hint), Some(gone)) if *hint == gone)
+            {
+                self.hint = Hint::Seen;
+            }
         }
     }
 
@@ -1864,6 +1896,20 @@ mod tests {
         assert_eq!(app.message(), Some("second"));
         app.handle(key(KeyCode::Right));
         assert_eq!(app.message(), None);
+    }
+
+    #[test]
+    fn a_hint_is_seen_once_a_click_dismisses_it() {
+        let mut app = app_over("abc");
+        app.set_viewport(Rect::new(0, 0, 40, 10));
+        app.warn("first");
+        app.hint("once");
+        app.handle(click(5, 1));
+        assert_eq!(app.message(), Some("once"));
+        assert!(!app.hint_seen(), "only the notice in front of it was dismissed");
+        app.handle(click(5, 1));
+        assert_eq!(app.message(), None);
+        assert!(app.hint_seen());
     }
 
     #[test]
