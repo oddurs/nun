@@ -42,7 +42,7 @@ fn the_tree_draws_a_header_and_indented_rows() {
 
     assert_eq!(
         harness.to_text(),
-        " NUN            + ▪ ○ ⌕\n\
+        " nun            + ▪ ○ ⌕\n\
          \u{20}▾ src\n\
          \u{20}  ▸ main.rs\n\
          \u{20}    日本語.rs\n\

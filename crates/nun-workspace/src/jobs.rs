@@ -14,6 +14,7 @@ use std::sync::mpsc::{self, Sender};
 use std::thread;
 
 use crate::ops::{Change, FsHistory};
+use crate::project;
 use crate::replace::{Recorded, Replacer, Report};
 use crate::rewrite::{self, Rewrite, Written};
 use crate::search::{self, Match};
@@ -121,6 +122,10 @@ pub enum Job {
         /// Each file, and the lines of it wanted, counting from zero.
         wanted: Vec<(PathBuf, Vec<u32>)>,
     },
+    /// Work out what to call the project rooted here — see
+    /// [`project::project_name`]. Reads git's files, so it is done here
+    /// rather than wherever the name is drawn.
+    ProjectName(PathBuf),
     /// Nothing: a marker that comes back once everything queued before it is
     /// done. Jobs are done in order, so this is how a caller waits for the
     /// worker to catch up without guessing at a delay.
@@ -187,6 +192,14 @@ pub enum Done {
         tag: u64,
         /// Each file beside what became of it, in the order they were given.
         files: Vec<(PathBuf, Written)>,
+    },
+    /// What to call the project, from [`Job::ProjectName`].
+    ProjectName {
+        /// The root it was asked for, so an answer for a folder no longer
+        /// open can be recognised.
+        root: PathBuf,
+        /// `owner/repo`, or the folder's name.
+        name: String,
     },
     /// The marker from [`Job::Echo`], and with it the news that everything
     /// asked for before it has been done.
@@ -290,6 +303,10 @@ impl Worker {
                 return Done::Found { query, generation, results };
             }
             Job::Echo(marker) => return Done::Echo(marker),
+            Job::ProjectName(root) => {
+                let name = project::project_name(&root);
+                return Done::ProjectName { root, name };
+            }
             Job::Lines { generation, wanted } => {
                 let lines = wanted
                     .into_iter()
@@ -441,6 +458,22 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn the_project_name_comes_back_as_a_message() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("nun");
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        std::fs::write(
+            root.join(".git/config"),
+            "[remote \"origin\"]\n\turl = git@github.com:oddurs/nun\n",
+        )
+        .unwrap();
+        let (jobs, receiver) = worker(&dir.path().join(".trash"));
+
+        jobs.send(Job::ProjectName(root.clone()));
+        assert_eq!(next(&receiver), Done::ProjectName { root, name: "oddurs/nun".into() });
     }
 
     #[test]

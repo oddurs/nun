@@ -220,13 +220,12 @@ impl TreeView<'_> {
         // is selected.
         let role = if self.focused { Role::Accent } else { Role::Dim };
         let style = self.palette.on(Role::Raised, role).add_modifier(Modifier::BOLD);
-        let title = self.title.to_uppercase();
         // Room for the buttons on the right, which sit two columns apart
         // starting one in from the edge, plus a column between them and the
         // title so a long project name never runs into them.
         let buttons = u16::try_from(TreeButton::ALL.len()).unwrap_or(u16::MAX);
         let limit = area.width.saturating_sub(buttons.saturating_mul(2).saturating_add(2));
-        put(cells, area.x + 1, area.y, limit, &title, style);
+        put(cells, area.x + 1, area.y, limit, self.title, style);
 
         for button in TreeButton::ALL {
             let Some(cell) = Self::button_area(area, button) else { continue };

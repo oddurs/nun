@@ -1537,16 +1537,12 @@ impl App {
         if self.sidebar_view != SidebarView::Files {
             return;
         }
-        let title = sidebar.tree.root().file_name().map_or_else(
-            || sidebar.tree.root().display().to_string(),
-            |name| name.to_string_lossy().into_owned(),
-        );
         let (hovered, button) = match self.hover.current() {
             Some(Target::TreeRow(row)) => (Some(row), None),
             Some(Target::TreeButton(button)) => (None, Some(button)),
             _ => (None, None),
         };
-        TreeView::new(&title, sidebar.tree.rows(), &self.palette)
+        TreeView::new(&sidebar.title, sidebar.tree.rows(), &self.palette)
             .scrolled_to(sidebar.scroll)
             .selected(sidebar.selected)
             .hovered(hovered)

@@ -25,6 +25,9 @@ const MIN_WIDTH: u16 = 12;
 #[derive(Debug)]
 pub(super) struct Sidebar {
     pub(super) tree: FileTree,
+    /// What the header calls the project: the folder's name until the worker
+    /// has read whether it is a GitHub checkout, and then `owner/repo` if so.
+    pub(super) title: String,
     /// The worker that does the reading and the writing. Nothing here touches
     /// the filesystem itself: a listing or a move can take as long as the disk
     /// likes, and the editor has frames to draw.
@@ -71,9 +74,12 @@ impl Sidebar {
         visible: bool,
         report: Box<dyn Fn(Done) + Send + 'static>,
     ) -> Self {
+        let jobs = Jobs::new(trash, report);
+        jobs.send(Job::ProjectName(root.clone()));
         Self {
+            title: nun_workspace::folder_name(&root),
             tree: FileTree::open(root),
-            jobs: Jobs::new(trash, report),
+            jobs,
             requested: BTreeSet::new(),
             reveal_after: None,
             watcher: None,
@@ -543,6 +549,14 @@ impl App {
             // Only ever asked for by a caller waiting for the worker to catch
             // up; there is nothing to do when it comes back.
             Done::Echo(_) => Outcome::Continue,
+            Done::ProjectName { root, name } => {
+                let Some(sidebar) = self.sidebar.as_mut() else { return Outcome::Continue };
+                if sidebar.tree.root() != root {
+                    return Outcome::Continue;
+                }
+                sidebar.title = name;
+                Outcome::Redraw
+            }
             Done::Lines { generation, lines } => self.reference_lines(generation, lines),
             Done::Files { count } => self.palette_listed(count),
             Done::Found { query, generation, results } => {
@@ -897,9 +911,46 @@ mod tests {
             // The header takes the first row of the sidebar.
             u16::try_from(index).unwrap() + 1
         }
+
+        /// The sidebar's header row, as drawn.
+        fn header(&self) -> String {
+            let area = self.app.viewport;
+            let mut cells = ratatui::buffer::Buffer::empty(area);
+            self.app.render(area, &mut cells);
+            let width = self.app.sidebar.as_ref().map_or(0, |sidebar| sidebar.width);
+            (0..width).map(|x| cells[(x, 0)].symbol()).collect::<String>().trim().to_string()
+        }
     }
 
     // ── showing the tree ────────────────────────────────────────────────────
+
+    #[test]
+    fn a_github_checkout_is_headed_with_its_repository() {
+        let dir = project();
+        fs::write(
+            dir.path().join(".git/config"),
+            "[remote \"origin\"]\n\turl = git@github.com:oddurs/nun.git\n",
+        )
+        .unwrap();
+        let t = Tester::new(&dir);
+        assert!(t.header().starts_with("oddurs/nun "), "{}", t.header());
+    }
+
+    #[test]
+    fn any_other_folder_is_headed_with_its_name_as_it_is_on_disk() {
+        let dir = project();
+        let name = nun_workspace::folder_name(dir.path());
+        let mut t = Tester::new(&dir);
+        assert!(t.header().starts_with(&format!("{name} ")), "{}", t.header());
+
+        // Until the worker answers, the folder name is what shows.
+        t.app.sidebar.as_mut().unwrap().title = "stale".into();
+        t.app.handle(Event::Workspace(Done::ProjectName {
+            root: dir.path().join("elsewhere"),
+            name: "someone/else".into(),
+        }));
+        assert!(t.header().starts_with("stale "), "an answer for another root is ignored");
+    }
 
     #[test]
     fn a_folder_opens_with_its_entries_and_hides_what_is_ignored() {
