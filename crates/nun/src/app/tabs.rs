@@ -187,10 +187,17 @@ impl App {
         pane.scroll = TabStrip::scroll_to(&tabs, strip, pane.active, pane.scroll);
     }
 
-    /// Open `path` in the focused pane.
+    /// Open `path` in the focused pane, or go to it if it is already open.
     pub(super) fn open_in_tab(&mut self, path: &Path) {
-        if let Some(id) =
-            self.docs.iter().find(|doc| doc.buffer.path() == Some(path)).map(|doc| doc.id)
+        // Compared as the files the paths name, not as they are spelled:
+        // relative from the command line, in full from the tree, or through
+        // a symlink, one file is one buffer. Two would each save over the
+        // other's edits.
+        if let Some(id) = self
+            .docs
+            .iter()
+            .find(|doc| doc.buffer.path().is_some_and(|open| super::same_file(open, path)))
+            .map(|doc| doc.id)
             && let Some((pane, index)) = self.panes.find(id)
         {
             self.panes.set_focus(pane);
@@ -805,6 +812,20 @@ mod tests {
         // Closing it leaves an untitled buffer, which has nothing to label.
         app.run(Command::CloseTab);
         assert!(app.strip_area(app.panes.focus()).is_none(), "the row goes back to the text");
+    }
+
+    #[test]
+    fn a_file_already_open_under_another_spelling_is_gone_to_not_opened_again() {
+        // `nun src/main.rs` spells it relative and the tree spells it in
+        // full; a symlinked folder spells it a third way. Two tabs on one
+        // file are two buffers, and saving either throws the other away.
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app_with(&dir, &["a.rs"]);
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(dir.path(), &link).unwrap();
+        app.open_in_tab(&link.join("a.rs"));
+        assert_eq!(labels(&app), ["a.rs"], "{:?}", app.open_paths());
+        assert_eq!(app.docs.len(), 1);
     }
 
     #[test]

@@ -574,7 +574,7 @@ impl App {
         for file in flatten(edit)? {
             let label = self.label(&file.path);
             let Some(document) = self.docs.iter().find(|document| {
-                document.buffer.path() == Some(file.path.as_path())
+                document.buffer.path().is_some_and(|open| super::same_file(open, &file.path))
                     || lsp
                         .identifier(document.id)
                         .and_then(|id| nun_lsp::uri::to_path(&id.uri))
@@ -1280,7 +1280,7 @@ impl App {
                 let path = preview.files[at].path.clone();
                 let line = preview.files[at].changes[index].line;
                 self.open_file(&path);
-                if self.doc().buffer.path() == Some(path.as_path()) {
+                if self.doc().buffer.path().is_some_and(|open| super::same_file(open, &path)) {
                     let buffer = &self.doc().buffer;
                     let line = usize::try_from(line).unwrap_or(1).saturating_sub(1);
                     let at = buffer.line_start(line.min(buffer.len_lines().saturating_sub(1)));

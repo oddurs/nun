@@ -524,8 +524,11 @@ impl App {
     /// and a second copy of it would race the first to save.
     fn open_beside(&mut self, path: &Path) {
         let origin = self.panes.focus();
-        let existing =
-            self.docs.iter().find(|doc| doc.buffer.path() == Some(path)).map(|doc| doc.id);
+        let existing = self
+            .docs
+            .iter()
+            .find(|doc| doc.buffer.path().is_some_and(|open| super::same_file(open, path)))
+            .map(|doc| doc.id);
         if let Some(id) = existing
             && let Some((pane, index)) = self.panes.find(id)
             && (pane != origin || self.panes.focused().current() == Some(id))
@@ -925,7 +928,9 @@ impl App {
         for at in 0..self.navigation.listing.groups.len() {
             let path = self.navigation.listing.groups[at].path.clone();
             let open = self.open_doc_of(&path).and_then(|open| {
-                self.docs.iter().find(|doc| doc.buffer.path() == Some(open.as_path()))
+                self.docs
+                    .iter()
+                    .find(|doc| doc.buffer.path().is_some_and(|path| super::same_file(path, &open)))
             });
             if let Some(doc) = open {
                 let lines: Vec<(u32, String)> = self.navigation.listing.groups[at]

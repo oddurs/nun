@@ -705,7 +705,7 @@ impl App {
             // Moving the caret then would move it in whatever was already
             // open, which is someone else's file and someone else's place
             // in it.
-            if self.doc().buffer.path() == Some(path.as_path()) {
+            if self.doc().buffer.path().is_some_and(|open| super::same_file(open, &path)) {
                 self.place_caret_at(line, column);
             }
             // The panel keeps the keyboard: finding one hit usually means
@@ -963,11 +963,9 @@ impl App {
     pub(super) fn reload_written(&mut self, written: &[PathBuf]) -> Vec<String> {
         let mut untaken: Vec<String> = Vec::new();
         for full in written {
-            let Some(document) = self
-                .docs
-                .iter_mut()
-                .find(|document| document.buffer.path() == Some(full.as_path()))
-            else {
+            let Some(document) = self.docs.iter_mut().find(|document| {
+                document.buffer.path().is_some_and(|open| super::same_file(open, full))
+            }) else {
                 continue;
             };
             if document.buffer.is_modified() {
@@ -2099,6 +2097,27 @@ mod tests {
             at,
             "the caret stayed where it was"
         );
+    }
+
+    #[test]
+    fn a_file_open_under_another_spelling_still_takes_the_replace() {
+        // Open through a symlink, found by the search under the tree's own
+        // spelling. Left unreloaded, the buffer would save the old text back
+        // over the replace.
+        let dir = project(&[("a.rs", "one\nalpha\n")]);
+        let elsewhere = tempfile::tempdir().unwrap();
+        let link = elsewhere.path().join("link");
+        std::os::unix::fs::symlink(dir.path(), &link).unwrap();
+        let mut t = Tester::new(&dir);
+        t.app.open_file(&link.join("a.rs"));
+        t.settle_jobs();
+
+        t.search("alpha");
+        t.replace_with("omega");
+        t.apply();
+
+        assert_eq!(t.app.doc().buffer.text().to_string(), "one\nomega\n");
+        assert!(!t.app.doc().buffer.is_modified());
     }
 
     #[test]
