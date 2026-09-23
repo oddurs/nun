@@ -5,6 +5,7 @@ mod commands;
 mod session;
 mod terminal;
 
+use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -22,7 +23,14 @@ use ratatui::widgets::Widget;
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn main() {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    let lsp_log = match take_value(&mut args, "--lsp-log") {
+        Ok(path) => path.map(PathBuf::from),
+        Err(problem) => {
+            eprint!("nun: {problem}\n\n{}", usage());
+            std::process::exit(2);
+        }
+    };
 
     match args.first().map(String::as_str) {
         Some("--version" | "-V") => println!("nun {VERSION}"),
@@ -35,7 +43,7 @@ fn main() {
             std::process::exit(2);
         }
         Some(path) => {
-            if let Err(error) = edit(Path::new(path)) {
+            if let Err(error) = edit(Path::new(path), lsp_log.as_deref()) {
                 eprintln!("nun: {error}");
                 std::process::exit(1);
             }
@@ -43,8 +51,54 @@ fn main() {
     }
 }
 
+/// Take `--name <value>` or `--name=<value>` out of the arguments, wherever it
+/// is, so the rest can be read positionally as they always were.
+fn take_value(args: &mut Vec<String>, name: &str) -> Result<Option<String>, String> {
+    let joined = format!("{name}=");
+    let Some(at) = args.iter().position(|arg| arg == name || arg.starts_with(&joined)) else {
+        return Ok(None);
+    };
+    let arg = args.remove(at);
+    if let Some(value) = arg.strip_prefix(&joined) {
+        return Ok(Some(value.to_string()));
+    }
+    if at < args.len() && !args[at].starts_with('-') {
+        return Ok(Some(args.remove(at)));
+    }
+    Err(format!("`{name}` needs a path after it"))
+}
+
+/// The language servers the configuration asks for, by language, and
+/// anything in `[lsp]` that names a language nun does not know.
+fn language_servers(settings: &Loaded) -> (BTreeMap<String, nun_lsp::ServerSpec>, Vec<String>) {
+    let mut servers = BTreeMap::new();
+    let mut problems = Vec::new();
+    for (language, server) in &settings.config.lsp {
+        if !nun_lsp::languages().contains(&language.as_str()) {
+            problems.push(format!(
+                "lsp.{language}: nun has no language called `{language}`; it knows {}",
+                nun_lsp::languages().join(", ")
+            ));
+            continue;
+        }
+        if !server.enabled {
+            continue;
+        }
+        // A default is quiet when it is not installed; one somebody wrote
+        // into their config is worth saying is missing.
+        let optional = settings.origin(&format!("lsp.{language}")) == nun_config::Origin::Default;
+        let spec = nun_lsp::ServerSpec {
+            command: server.command.clone(),
+            args: server.args.clone(),
+            optional,
+        };
+        servers.insert(language.clone(), spec);
+    }
+    (servers, problems)
+}
+
 /// Open a file and run the editor over it.
-fn edit(path: &Path) -> io::Result<()> {
+fn edit(path: &Path, lsp_log: Option<&Path>) -> io::Result<()> {
     let settings = nun_config::load();
 
     // Installed before anything touches the terminal, the probe included, so a
@@ -66,7 +120,8 @@ fn edit(path: &Path) -> io::Result<()> {
 
     let set = key_set(&settings, startup.kitty_keyboard);
     let (keymap, key_problems) = commands::keymap(set, &settings.config.keys);
-    let problems = [role_problems, key_problems].concat();
+    let (servers, server_problems) = language_servers(&settings);
+    let problems = [role_problems, key_problems, server_problems].concat();
 
     let mut app = App::new(buffer, palette, keymap);
     if let Some(path) = session::Session::default_path() {
@@ -119,6 +174,11 @@ fn edit(path: &Path) -> io::Result<()> {
         let _ = sender.send(nun_ui::Event::Found(found));
     })));
 
+    // Language servers run on a runtime of their own, and everything they say
+    // comes back through the same channel. None starts until a file in its
+    // language is opened.
+    start_language_servers(&mut app, &events, servers, lsp_log);
+
     let sender = events.sender();
     match nun_workspace::Watcher::new(Box::new(move |change| {
         let _ = sender.send(nun_ui::Event::Files { dir: change.dir, error: change.watch_error });
@@ -168,7 +228,37 @@ fn edit(path: &Path) -> io::Result<()> {
     if let Err(error) = app.save_session() {
         eprintln!("nun: could not remember this session's folds: {error}");
     }
+    // Last, and bounded: a server that will not exit is killed at the
+    // deadline rather than waited for.
+    app.shutdown_lsp();
     Ok(())
+}
+
+/// Start the language server runtime, posting to `events`.
+fn start_language_servers(
+    app: &mut App,
+    events: &Events,
+    servers: BTreeMap<String, nun_lsp::ServerSpec>,
+    log: Option<&Path>,
+) {
+    let report = |sender: std::sync::mpsc::Sender<nun_ui::Event>| -> Box<dyn Fn(nun_lsp::Event) + Send + Sync> {
+        Box::new(move |event| {
+            let _ = sender.send(nun_ui::Event::Lsp(event));
+        })
+    };
+    match nun_lsp::Lsp::start(servers.clone(), log, report(events.sender())) {
+        Ok(lsp) => app.attach_lsp(lsp),
+        Err(error) => {
+            // Most likely the log could not be created. The servers are worth
+            // more than the log, so they start without it.
+            let shown = log.map_or_else(String::new, |path| format!(" to {}", path.display()));
+            app.warn(format!("Could not log the language servers{shown}: {error}"));
+            match nun_lsp::Lsp::start(servers, None, report(events.sender())) {
+                Ok(lsp) => app.attach_lsp(lsp),
+                Err(error) => app.warn(format!("Language servers are off: {error}")),
+            }
+        }
+    }
 }
 
 /// Open the path, or say clearly why not.
@@ -347,10 +437,11 @@ fn usage() -> String {
     format!(
         "nun {VERSION}\n\
          A mouse-first terminal code editor.\n\n\
-         Usage: nun <file>\n       nun <folder>\n       nun config\n       nun keys\n       nun theme dump\n\n\
+         Usage: nun [--lsp-log <path>] <file>\n       nun [--lsp-log <path>] <folder>\n       nun config\n       nun keys\n       nun theme dump\n\n\
          Options:\n  \
-           -h, --help     Print help\n  \
-           -V, --version  Print version\n\n\
+           -h, --help         Print help\n  \
+           -V, --version      Print version\n  \
+           --lsp-log <path>   Write every message to and from the language servers to <path>\n\n\
          Commands:\n  \
            config         Print the effective configuration and where it came from\n  \
            keys           List every command and the keys bound to it\n  \
@@ -527,6 +618,52 @@ mod tests {
     #[test]
     fn a_clean_load_with_no_config_warns_about_nothing() {
         assert!(warnings(LoadReport::default(), &Loaded::defaults(), &[]).is_empty());
+    }
+
+    #[test]
+    fn the_lsp_log_is_taken_out_wherever_it_is() {
+        let strings = |args: &[&str]| args.iter().map(|arg| (*arg).to_string()).collect::<Vec<_>>();
+        for (given, log, rest) in [
+            (&["--lsp-log", "a.log", "x.rs"][..], Some("a.log"), &["x.rs"][..]),
+            (&["x.rs", "--lsp-log", "a.log"], Some("a.log"), &["x.rs"]),
+            (&["--lsp-log=a.log", "x.rs"], Some("a.log"), &["x.rs"]),
+            (&["x.rs"], None, &["x.rs"]),
+        ] {
+            let mut args = strings(given);
+            assert_eq!(
+                take_value(&mut args, "--lsp-log"),
+                Ok(log.map(str::to_string)),
+                "{given:?}"
+            );
+            assert_eq!(args, strings(rest), "{given:?}");
+        }
+        for given in [&["--lsp-log"][..], &["--lsp-log", "--help"]] {
+            let error = take_value(&mut strings(given), "--lsp-log").unwrap_err();
+            assert!(error.contains("needs a path"), "{error}");
+        }
+    }
+
+    #[test]
+    fn language_servers_come_from_the_config_and_unknown_languages_are_reported() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nun.toml");
+        std::fs::write(&path, "[lsp.python]\nenabled = false\n\n[lsp.go]\nargs = [\"serve\"]\n\n[lsp.zig]\ncommand = \"zls\"\n").unwrap();
+        let mut settings = Loaded::defaults();
+        nun_config::apply_file(&mut settings, &path);
+
+        let (servers, problems) = language_servers(&settings);
+        assert_eq!(servers["rust"].command, "rust-analyzer");
+        assert!(servers["rust"].optional, "a default is quiet when it is missing");
+        assert!(!servers["go"].optional, "one set up by hand is not");
+        assert_eq!(servers["go"].args, ["serve"]);
+        assert!(!servers.contains_key("python"), "turned off");
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert!(problems[0].contains("no language called `zig`"), "{problems:?}");
+    }
+
+    #[test]
+    fn usage_documents_the_lsp_log() {
+        assert!(usage().contains("--lsp-log <path>"));
     }
 
     #[test]

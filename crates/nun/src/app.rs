@@ -24,6 +24,7 @@ use ratatui::widgets::Widget;
 use crate::commands::Command;
 
 mod folds;
+mod lsp;
 mod palette;
 mod panes;
 mod pointer;
@@ -90,6 +91,9 @@ pub enum Target {
     StatusFiles,
     /// The button at the left of the status line that opens the palette.
     StatusSearch,
+    /// The name of the file's language server in the status line, which
+    /// restarts it.
+    StatusLsp,
     /// The palette itself.
     Palette,
     /// One of its rows.
@@ -275,6 +279,8 @@ pub struct App {
     search_deadline: Option<Instant>,
     /// What is remembered from one session to the next.
     session: crate::session::Session,
+    /// The language servers, once there is somewhere to post their news.
+    lsp: Option<nun_lsp::Lsp>,
 }
 
 impl App {
@@ -342,6 +348,7 @@ impl App {
             sidebar_view: SidebarView::Files,
             search_deadline: None,
             session: crate::session::Session::default(),
+            lsp: None,
         };
         app.relayout();
         app
@@ -470,6 +477,11 @@ impl App {
             // to have the terminal report every pointer movement all session.
             hits.push(cells(close), Target::StatusClose, false);
         }
+        if let Some(lsp) = parts.lsp {
+            // Not a hover target either, for the same reason: it is on screen
+            // whenever a server is running, which is most of the time.
+            hits.push(cells(lsp), Target::StatusLsp, false);
+        }
         if let Some(prompt) = &self.prompt {
             for (index, area) in prompt.button_areas(status).into_iter().enumerate() {
                 if area.width > 0 {
@@ -499,6 +511,7 @@ impl App {
                 search: None,
                 undo: None,
                 close: None,
+                lsp: None,
                 text: status.x,
             };
         }
@@ -519,7 +532,18 @@ impl App {
         // one, this is how the open file is closed with the mouse.
         let close = (self.strip_area(self.panes.focus()).is_none() && status.width > 10)
             .then(|| Rect::new(status.right() - 3, status.y, 3, 1));
-        StatusParts { files, search, undo, close, text }
+        // The server's name sits just left of the caret's position, where the
+        // file's language is named. Left out when there is no room for it
+        // beside what the left half says.
+        let lsp = self.lsp_label().and_then(|(label, _)| {
+            let (left, right) = self.status();
+            let width = u16::try_from(label.chars().count()).ok()?;
+            let edge = close.map_or(status.right(), |close| close.x);
+            let x = edge.checked_sub(u16::try_from(right.chars().count() + 1).ok()? + width)?;
+            let used = text + u16::try_from(left.chars().count() + 1).ok()?;
+            (x > undo.map_or(used, Rect::right)).then(|| Rect::new(x, status.y, width, 1))
+        });
+        StatusParts { files, search, undo, close, lsp, text }
     }
 
     /// Whether anything on screen reacts to the pointer merely passing over it.
@@ -558,6 +582,7 @@ impl App {
         // A chord that ran a command got here without going through `handle`,
         // so the parser has not been told about anything it did.
         if chord == Outcome::Redraw {
+            self.lsp_flush();
             self.syntax_changed(now);
             if before != (self.doc().scroll, self.doc().id) {
                 self.syntax_scrolled(now);
@@ -597,6 +622,9 @@ impl App {
     pub fn handle_at(&mut self, event: Event, now: Instant) -> Outcome {
         let before = (self.doc().buffer.len_chars(), self.doc().scroll, self.doc().id);
         let outcome = self.dispatch(event, now);
+        // Whatever the event did to the text goes to the language servers
+        // now, in the order it was done.
+        self.lsp_flush();
         // Anything that changed the text or moved the view changes what the
         // parser should be looking at.
         let after = (self.doc().buffer.len_chars(), self.doc().scroll, self.doc().id);
@@ -649,6 +677,7 @@ impl App {
             Event::Workspace(done) => self.job_done(done),
             Event::Syntax(reply) => self.syntax_reply(reply),
             Event::Found(found) => self.search_found(found),
+            Event::Lsp(event) => self.lsp_event(event),
             Event::Focus(true) => Outcome::Continue,
             // The pointer may be anywhere by the time focus comes back.
             Event::Focus(false) => {
@@ -828,6 +857,7 @@ impl App {
             Command::FoldAll => return self.fold_all(),
             Command::UnfoldAll => return self.unfold_all(),
             Command::GrowSelection => return self.grow_selection(),
+            Command::RestartLanguageServer => return self.lsp_restart(),
             Command::ShrinkSelection => return self.shrink_selection(),
             Command::SplitIntoLines => {
                 if !self.doc_mut().buffer.split_into_lines() {
@@ -1042,6 +1072,10 @@ impl App {
                 self.acknowledge();
                 self.close_tab(self.panes.focus(), self.panes.focused().active)
             }
+            Target::StatusLsp => {
+                self.acknowledge();
+                self.lsp_restart()
+            }
             Target::StatusUndo if self.last_undone => self.redo_file_op(),
             Target::StatusUndo => self.undo_file_op(),
             Target::StatusFiles => {
@@ -1145,7 +1179,10 @@ impl App {
             return Outcome::Redraw;
         }
         self.message = Some(match self.doc_mut().buffer.save() {
-            Ok(()) => format!("Saved {}", display_path(self.doc().buffer.path())),
+            Ok(()) => {
+                self.lsp_saved();
+                format!("Saved {}", display_path(self.doc().buffer.path()))
+            }
             Err(SaveError::NoPath) => "No path to save to.".into(),
             Err(SaveError::ChangedOnDisk { path }) => {
                 format!(
@@ -1316,6 +1353,9 @@ impl App {
         if let Some(close) = parts.close {
             write_at(cells, close, close.x, " × ", button(Target::StatusClose));
         }
+        if let Some(lsp) = parts.lsp {
+            self.render_lsp(lsp, cells);
+        }
 
         let width = u16::try_from(right.chars().count()).unwrap_or(0);
         // Dropped entirely rather than overlapping when the two halves would
@@ -1377,6 +1417,8 @@ struct StatusParts {
     /// The cross that closes the open file, when there is no tab strip to
     /// close it from.
     close: Option<Rect>,
+    /// The name of the file's language server, which restarts it.
+    lsp: Option<Rect>,
     /// Where the text starts.
     text: u16,
 }

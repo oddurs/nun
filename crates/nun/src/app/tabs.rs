@@ -207,6 +207,7 @@ impl App {
                     // The scratch buffer nun starts with has no name, and so no
                     // language; the file that has just replaced it does.
                     self.syntax_open(id);
+                    self.lsp_open(id);
                 } else {
                     let id = self.next_doc;
                     self.next_doc += 1;
@@ -218,6 +219,7 @@ impl App {
                     });
                     self.panes.open(id);
                     self.syntax_open(id);
+                    self.lsp_open(id);
                 }
                 self.end_drag();
                 if report.lossy {
@@ -348,6 +350,7 @@ impl App {
         for id in before {
             if !self.docs.iter().any(|document| document.id == *id) {
                 self.syntax_close(*id);
+                self.lsp_close(*id);
             }
         }
     }

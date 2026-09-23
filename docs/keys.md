@@ -57,3 +57,4 @@ This file is generated from the source by `nun keys`. Do not edit it by hand.
 | Unfold | `fold.unfold` | `Cmd+Alt+]`, `Ctrl+K ]` | `Ctrl+K ]` |
 | Fold everything | `fold.fold_all` | `Ctrl+K 0` | `Ctrl+K 0` |
 | Unfold everything | `fold.unfold_all` | `Ctrl+K J` | `Ctrl+K J` |
+| Restart the language server | `lsp.restart` | `Ctrl+K Shift+R` | `Ctrl+K Shift+R` |

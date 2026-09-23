@@ -66,6 +66,49 @@ pub enum Polarity {
     Light,
 }
 
+/// How to start the language server for one language: `[lsp.<language>]`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LspServer {
+    /// The program, found on `PATH` unless it is a path itself.
+    pub command: String,
+    /// Arguments to it.
+    pub args: Vec<String>,
+    /// Whether to start it at all. A default server that is not installed is
+    /// skipped quietly anyway; this is for one that is installed and unwanted.
+    pub enabled: bool,
+}
+
+impl LspServer {
+    fn new(command: &str, args: &[&str]) -> Self {
+        Self {
+            command: command.to_string(),
+            args: args.iter().map(|arg| (*arg).to_string()).collect(),
+            enabled: true,
+        }
+    }
+}
+
+/// The servers nun knows to try, by language.
+///
+/// Each is started only when a file in its language is opened, and one that
+/// is not installed is skipped without a word: listing a server here costs a
+/// person who does not have it nothing.
+fn default_servers() -> BTreeMap<String, LspServer> {
+    let typescript = LspServer::new("typescript-language-server", &["--stdio"]);
+    [
+        ("rust", LspServer::new("rust-analyzer", &[])),
+        ("python", LspServer::new("pyright-langserver", &["--stdio"])),
+        ("typescript", typescript.clone()),
+        ("javascript", typescript),
+        ("go", LspServer::new("gopls", &[])),
+        ("c", LspServer::new("clangd", &[])),
+        ("cpp", LspServer::new("clangd", &[])),
+    ]
+    .into_iter()
+    .map(|(language, server)| (language.to_string(), server))
+    .collect()
+}
+
 /// The effective configuration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
@@ -89,6 +132,11 @@ pub struct Config {
     /// Kept as text here. Which sequences and commands exist is the binary's
     /// business, and it reports anything it cannot use as a problem.
     pub keys: BTreeMap<String, String>,
+    /// Language servers, by language: `[lsp.<language>]`.
+    ///
+    /// Which languages exist is the binary's business, like the commands in
+    /// `keys`; it reports a language it does not know as a problem.
+    pub lsp: BTreeMap<String, LspServer>,
 }
 
 impl Default for Config {
@@ -102,6 +150,7 @@ impl Default for Config {
             keyboard_enhancement: true,
             double_click_ms: None,
             keys: BTreeMap::new(),
+            lsp: default_servers(),
         }
     }
 }
@@ -112,7 +161,7 @@ pub struct Loaded {
     /// The merged result.
     pub config: Config,
     /// Origin per setting key, for `nun config`.
-    pub origins: BTreeMap<&'static str, Origin>,
+    pub origins: BTreeMap<String, Origin>,
     /// Anything wrong with the files that were read.
     pub problems: Vec<Problem>,
 }
@@ -180,6 +229,15 @@ impl Loaded {
             let _ = writeln!(out, "\n[keys]{}", self.note("keys"));
             for (sequence, command) in &c.keys {
                 let _ = writeln!(out, "{sequence:?} = {command:?}");
+            }
+        }
+
+        for (language, server) in &c.lsp {
+            let _ = writeln!(out, "\n[lsp.{language}]{}", self.note(&format!("lsp.{language}")));
+            let _ = writeln!(out, "command = {:?}", server.command);
+            let _ = writeln!(out, "args = {:?}", server.args);
+            if !server.enabled {
+                let _ = writeln!(out, "enabled = false");
             }
         }
 
@@ -263,6 +321,15 @@ struct RawConfig {
     theme: Option<RawTheme>,
     ui: Option<RawUi>,
     keys: Option<BTreeMap<String, String>>,
+    lsp: Option<BTreeMap<String, RawLsp>>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawLsp {
+    command: Option<String>,
+    args: Option<Vec<String>>,
+    enabled: Option<bool>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -289,8 +356,8 @@ struct RawUi {
 
 impl RawConfig {
     fn apply(self, loaded: &mut Loaded, path: &Path) {
-        let mut set = |key: &'static str| {
-            loaded.origins.insert(key, Origin::File(path.to_path_buf()));
+        let mut set = |key: &str| {
+            loaded.origins.insert(key.to_string(), Origin::File(path.to_path_buf()));
         };
 
         if let Some(editor) = self.editor
@@ -353,6 +420,43 @@ impl RawConfig {
             // earlier layer's, the same way both sit over the defaults.
             loaded.config.keys.extend(keys);
             set("keys");
+        }
+
+        for (language, raw) in self.lsp.unwrap_or_default() {
+            // Field by field over what is already there, so `args` alone
+            // changes the arguments and keeps the command.
+            let server = match (loaded.config.lsp.get(&language), raw.command) {
+                (Some(existing), command) => LspServer {
+                    command: command.unwrap_or_else(|| existing.command.clone()),
+                    ..existing.clone()
+                },
+                (None, Some(command)) => LspServer { command, args: Vec::new(), enabled: true },
+                (None, None) => {
+                    loaded.problems.push(Problem {
+                        path: path.to_path_buf(),
+                        message: format!(
+                            "lsp.{language} needs a command: nun has no default server for it"
+                        ),
+                    });
+                    continue;
+                }
+            };
+            let server = LspServer {
+                args: raw.args.unwrap_or(server.args),
+                enabled: raw.enabled.unwrap_or(server.enabled),
+                command: server.command,
+            };
+            if server.command.trim().is_empty() {
+                loaded.problems.push(Problem {
+                    path: path.to_path_buf(),
+                    message: format!(
+                        "lsp.{language}.command is empty; use `enabled = false` to turn it off"
+                    ),
+                });
+                continue;
+            }
+            loaded.config.lsp.insert(language.clone(), server);
+            set(&format!("lsp.{language}"));
         }
     }
 }

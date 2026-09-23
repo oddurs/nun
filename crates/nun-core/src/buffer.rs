@@ -138,6 +138,9 @@ pub struct Buffer {
     change: Changed,
     /// Regions folded out of sight.
     folds: Folds,
+    /// Every edit applied to the rope since it was last taken, in the order
+    /// they were applied, while someone has asked for them.
+    journal: Option<Vec<Edit>>,
 }
 
 impl Default for Buffer {
@@ -163,6 +166,7 @@ impl Buffer {
             tab_width: DEFAULT_TAB_WIDTH,
             change: Changed::Nothing,
             folds: Folds::default(),
+            journal: None,
         }
     }
 
@@ -294,6 +298,27 @@ impl Buffer {
         std::mem::take(&mut self.change)
     }
 
+    /// Start or stop keeping every edit made to the text.
+    ///
+    /// [`Buffer::take_change`] says only whether one edit can be followed.
+    /// Something that mirrors the text elsewhere — a language server — needs
+    /// all of them, however many there were. Off by default, so a buffer
+    /// nobody mirrors keeps nothing. Stopping discards what was kept.
+    pub fn keep_edits(&mut self, keep: bool) {
+        self.journal = keep.then(|| self.journal.take().unwrap_or_default());
+    }
+
+    /// Every edit made since this was last asked, in the order they were
+    /// applied, while [`Buffer::keep_edits`] is on.
+    ///
+    /// Each is in the coordinates of the text as it stood just before it was
+    /// applied — not the text before the first — so replaying them in order
+    /// over a copy of the old text gives exactly the text now. Undo and redo
+    /// come through as the edits they apply.
+    pub fn take_edits(&mut self) -> Vec<Edit> {
+        self.journal.as_mut().map(std::mem::take).unwrap_or_default()
+    }
+
     /// The current selections.
     #[must_use]
     pub const fn selections(&self) -> &Selections {
@@ -388,8 +413,12 @@ impl Buffer {
             self.rope.insert(edit.start, &edit.text);
         }
         // Every change to the text comes through here — typing, undo, redo —
-        // so this is the one place a fold has to be told the text moved.
+        // so this is the one place a fold has to be told the text moved, and
+        // the one place a mirror of the text has to hear about it.
         self.folds.map_through(edit);
+        if let Some(journal) = self.journal.as_mut() {
+            journal.push(edit.clone());
+        }
         Edit::replace(edit.start, edit.end_after(), removed)
     }
 
@@ -1675,5 +1704,76 @@ mod tests {
         assert!(b.is_modified());
         b.undo();
         assert!(!b.is_modified(), "undone back to the saved state is clean again");
+    }
+
+    // ── the edit journal ────────────────────────────────────────────────────
+
+    /// Replay `edits` in order over `text`.
+    fn replay(text: &str, edits: &[Edit]) -> String {
+        let mut rope = Rope::from_str(text);
+        for edit in edits {
+            rope.remove(edit.start..edit.end);
+            rope.insert(edit.start, &edit.text);
+        }
+        rope.to_string()
+    }
+
+    #[test]
+    fn nothing_is_kept_until_asked_for() {
+        let mut b = Buffer::from_text("abc");
+        b.insert("x");
+        assert!(b.take_edits().is_empty());
+        b.keep_edits(true);
+        b.insert("y");
+        assert_eq!(b.take_edits(), vec![Edit::insert(1, "y")], "after the x");
+        assert!(b.take_edits().is_empty(), "taking them empties the journal");
+        b.insert("z");
+        b.keep_edits(false);
+        assert!(b.take_edits().is_empty(), "stopping throws away what was kept");
+    }
+
+    #[test]
+    fn several_carets_undo_and_redo_replay_to_the_same_text() {
+        let mut b = Buffer::from_text("one\ntwo\nthree");
+        b.keep_edits(true);
+        let before = text_of(&b);
+        b.set_selections(Selections::new(
+            vec![Range::caret(0), Range::caret(4), Range::caret(8)],
+            0,
+        ));
+        b.insert("😀\u{301}");
+        b.delete_backward();
+        b.undo();
+        b.redo();
+        b.undo();
+        let edits = b.take_edits();
+        assert_eq!(replay(&before, &edits), text_of(&b));
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn the_journal_replays_to_the_text(
+            ops in proptest::collection::vec((0u8..6, 0usize..40, "[a\n😀é\u{301}]{0,3}"), 1..40),
+        ) {
+            let mut b = Buffer::from_text("héllo\nwörld\n😀");
+            b.keep_edits(true);
+            let before = text_of(&b);
+            for (op, at, text) in ops {
+                let at = at.min(b.len_chars());
+                match op {
+                    0 => b.insert(&text),
+                    1 => b.delete_backward(),
+                    2 => {
+                        b.undo();
+                    }
+                    3 => {
+                        b.redo();
+                    }
+                    4 => b.set_selections(Selections::single(Range::caret(at))),
+                    _ => b.add_caret_vertically(false),
+                }
+            }
+            proptest::prop_assert_eq!(replay(&before, &b.take_edits()), text_of(&b));
+        }
     }
 }

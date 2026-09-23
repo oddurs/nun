@@ -60,6 +60,10 @@ accent = "#e0a44b"       # nudge one role; the rest stay derived
 
 [ui]
 mouse = true
+
+[lsp.rust]
+command = "rust-analyzer"  # the default; any language's server can be changed
+args = []                  # or turned off with `enabled = false`
 ```
 
 A bad value names the line and falls back rather than taking the editor down,
@@ -137,7 +141,17 @@ beside each one; Alt-click folds every sibling at once, so a file's methods go
 away together. A fold moves with edits around it, opens when the caret goes
 into it, and is still folded the next time the file is opened.
 
-Not there yet: language servers and git. Those are milestones 4 and 5.
+Language servers start on their own when a file in their language is opened —
+rust-analyzer for Rust, and pyright, typescript-language-server, gopls and
+clangd where they are installed; one that is not installed is skipped without
+a word. The status line names the server and how it is. One that crashes is
+restarted, and after five crashes in a row nun stops and says so; clicking its
+name starts it again. A server that stops answering costs its answers, never
+the editor's. `nun --lsp-log <path> <file>` writes the whole conversation to a
+file, for a bug report.
+
+Not there yet: what the servers are for — diagnostics, completion, hover, go to
+definition, rename — and git. Those are the rest of milestones 4 and 5.
 
 Do not install this yet.
 

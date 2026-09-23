@@ -664,6 +664,9 @@ impl App {
             {
                 let moved = if rest.as_os_str().is_empty() { to.clone() } else { to.join(rest) };
                 self.doc_mut().buffer.set_path(moved);
+                // The server knows it by its old name, which is now nothing.
+                let id = self.doc().id;
+                self.lsp_open(id);
             }
         }
 

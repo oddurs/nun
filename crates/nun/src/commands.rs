@@ -90,6 +90,8 @@ pub enum Command {
     FoldAll,
     /// Unfold everything.
     UnfoldAll,
+    /// Stop and start again the language server of the file being edited.
+    RestartLanguageServer,
 }
 
 impl Command {
@@ -131,6 +133,7 @@ impl Command {
         Self::Unfold,
         Self::FoldAll,
         Self::UnfoldAll,
+        Self::RestartLanguageServer,
     ];
 
     /// The name used in `[keys]` in `nun.toml`.
@@ -173,6 +176,7 @@ impl Command {
             Self::Unfold => "fold.unfold",
             Self::FoldAll => "fold.fold_all",
             Self::UnfoldAll => "fold.unfold_all",
+            Self::RestartLanguageServer => "lsp.restart",
         }
     }
 
@@ -216,6 +220,7 @@ impl Command {
             Self::Unfold => "Unfold",
             Self::FoldAll => "Fold everything",
             Self::UnfoldAll => "Unfold everything",
+            Self::RestartLanguageServer => "Restart the language server",
         }
     }
 
@@ -303,6 +308,7 @@ const BASIC: &[(&str, Command)] = &[
     ("ctrl+k ]", Command::Unfold),
     ("ctrl+k 0", Command::FoldAll),
     ("ctrl+k j", Command::UnfoldAll),
+    ("ctrl+k shift+r", Command::RestartLanguageServer),
 ];
 
 /// Bindings that need the Kitty keyboard protocol, added over [`BASIC`].

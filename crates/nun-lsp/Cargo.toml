@@ -1,0 +1,24 @@
+[package]
+name = "nun-lsp"
+description = "Language server client for nun: one task per server, never in the render path"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+lsp-types = "0.97.0"
+nun-core = { version = "0.1.0", path = "../nun-core" }
+ropey = { version = "1.6.1", default-features = false, features = ["simd"] }
+serde_json = "1.0.151"
+tokio = { version = "1.53.1", features = ["io-util", "macros", "process", "rt", "sync", "time"] }
+
+[dev-dependencies]
+proptest = "1.11.0"
+tempfile = "3.27.0"
+tokio = { version = "1.53.1", features = ["test-util"] }
