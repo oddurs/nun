@@ -111,6 +111,9 @@ impl App {
             Handled::Response(response) if self.completion_owns(&response) => {
                 self.completion_answer(&response)
             }
+            Handled::Response(response) if self.rename.asked(response.id) => {
+                self.rename_answer(&response)
+            }
             Handled::Nothing => Outcome::Continue,
             Handled::Response(response) => {
                 self.navigation_answered(&response).unwrap_or(Outcome::Continue)

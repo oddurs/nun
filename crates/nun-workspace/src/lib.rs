@@ -24,6 +24,9 @@
 //!   the panel's preview and the bytes that are written, so the two cannot
 //!   disagree. The writing itself is a [`Job`], because it is filesystem work
 //!   and it records into the same undo history everything else does.
+//! - [`Rewrite`] writes whole files whose new text was worked out elsewhere —
+//!   a language server's rename — and only while each still holds what it was
+//!   read as. It is a [`Job`] too, and its undo is the same job the other way.
 //! - [`Watcher`] watches the expanded directories and reports, coalesced per
 //!   directory, that something in one of them changed. It never touches the
 //!   tree itself: the editor state has one owner on the main thread, so the
@@ -38,6 +41,7 @@ pub mod labels;
 pub mod ops;
 mod order;
 pub mod replace;
+pub mod rewrite;
 pub mod search;
 pub mod tree;
 pub mod watch;
@@ -48,6 +52,7 @@ pub use labels::{UNNAMED, tab_labels};
 pub use ops::{Change, FsHistory, OpError, Operation, default_trash_dir};
 pub use order::compare_names;
 pub use replace::{Outcome, Recorded, Replacer, Report, Skipped, preview};
+pub use rewrite::{Rewrite, Written};
 pub use search::{MOST_FILES, Match, list_files, search};
 pub use tree::{Entry, FileTree, Kind, Row, list_dir};
 pub use watch::{FsChange, WatchError, Watcher};

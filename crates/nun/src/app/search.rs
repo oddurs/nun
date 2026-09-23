@@ -145,6 +145,7 @@ impl Search {
                             path: &group.label,
                             hits: group.hits.len(),
                             collapsed: self.collapsed.contains(&group.path),
+                            state: HitState::Plain,
                         }
                     }
                     Line::Hit(group, hit) => {
@@ -347,7 +348,7 @@ impl App {
     /// Swap the sidebar back to the file tree.
     pub(super) fn show_file_tree(&mut self) -> Outcome {
         self.sidebar_view = SidebarView::Files;
-        if self.focus == Focus::Search {
+        if matches!(self.focus, Focus::Search | Focus::Rename) {
             self.focus = Focus::Sidebar;
         }
         // The walk is worth nothing to a panel nobody can see. The deadline

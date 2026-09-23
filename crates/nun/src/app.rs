@@ -34,6 +34,7 @@ mod palette;
 mod panes;
 mod pointer;
 mod prompt;
+mod rename;
 mod search;
 mod sidebar;
 mod syntax;
@@ -166,6 +167,8 @@ pub enum Target {
     Completion,
     /// One of its rows, by its place in the list.
     CompletionRow(usize),
+    /// Somewhere in the rename preview.
+    Rename(rename::Spot),
 }
 
 impl Target {
@@ -233,6 +236,8 @@ pub enum SidebarView {
     Search,
     /// The references to a symbol.
     References,
+    /// The preview of a rename, in the search panel's clothes.
+    Rename,
 }
 
 /// What has the keyboard.
@@ -245,6 +250,8 @@ pub enum Focus {
     Sidebar,
     /// The project search panel, where typing goes to the query.
     Search,
+    /// The rename preview.
+    Rename,
 }
 
 /// One open file: its text, and where the view on it is.
@@ -354,6 +361,8 @@ pub struct App {
     card: Option<card::Card>,
     /// The completion popup, and the tab-stops of a snippet it inserted.
     completion: completion::Completion,
+    /// A symbol being renamed, its preview, and the last rename applied.
+    rename: rename::Renaming,
 }
 
 impl App {
@@ -428,6 +437,7 @@ impl App {
             diagnostics: diagnostics::Diagnostics::default(),
             card: None,
             completion: completion::Completion::default(),
+            rename: rename::Renaming::default(),
         };
         app.relayout();
         app
@@ -556,6 +566,7 @@ impl App {
         self.layout_sidebar(&mut hits);
         self.layout_search(&mut hits);
         self.layout_references(&mut hits);
+        self.layout_rename(&mut hits);
         self.layout_panes(&mut hits);
         self.layout_diagnostics(&mut hits);
         self.layout_card(&mut hits);
@@ -588,7 +599,8 @@ impl App {
             hits.push(cells(problems), Target::StatusProblems, true);
         }
         if let Some(prompt) = &self.prompt {
-            for (index, area) in prompt.button_areas(status).into_iter().enumerate() {
+            let area = self.prompt_area(status);
+            for (index, area) in prompt.button_areas(area).into_iter().enumerate() {
                 if area.width > 0 {
                     hits.push(cells(area), Target::PromptButton(index), true);
                 }
@@ -865,6 +877,7 @@ impl App {
                 match self.focus {
                     Focus::Search => self.search_key(event, Instant::now()),
                     Focus::Sidebar => self.sidebar_key(event),
+                    Focus::Rename => self.rename_key(event),
                     Focus::Editor => Outcome::Continue,
                 }
             }
@@ -878,6 +891,10 @@ impl App {
                 Some(event) if self.focus == Focus::Search => {
                     self.acknowledge();
                     self.search_key(event, Instant::now())
+                }
+                Some(event) if self.focus == Focus::Rename => {
+                    self.acknowledge();
+                    self.rename_key(event)
                 }
                 Some(event) if self.focus == Focus::Sidebar => {
                     self.acknowledge();
@@ -998,6 +1015,8 @@ impl App {
             Command::NextDiagnostic => return self.step_diagnostic(true),
             Command::PreviousDiagnostic => return self.step_diagnostic(false),
             Command::Complete => return self.complete_here(),
+            Command::RenameSymbol => return self.start_rename(),
+            Command::UndoRename => return self.undo_rename(),
             Command::ShrinkSelection => return self.shrink_selection(),
             Command::SplitIntoLines => {
                 if !self.doc_mut().buffer.split_into_lines() {
@@ -1098,6 +1117,11 @@ impl App {
                 if target.is_some_and(Target::in_completion) =>
             {
                 self.completion_scroll(mouse.kind == MouseEventKind::ScrollDown)
+            }
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+                if matches!(target, Some(Target::Rename(_))) =>
+            {
+                self.rename_scroll(mouse.kind == MouseEventKind::ScrollDown)
             }
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
                 if target.is_some_and(Target::in_search) =>
@@ -1242,11 +1266,16 @@ impl App {
                 self.acknowledge();
                 self.diagnostics_press(target, mouse.row)
             }
+            Target::StatusUndo if self.rename_offered() => self.undo_rename(),
             Target::StatusUndo if self.last_undone => self.redo_file_op(),
             Target::StatusUndo => self.undo_file_op(),
             Target::StatusFiles => {
                 self.acknowledge();
                 self.toggle_sidebar()
+            }
+            Target::Rename(spot) => {
+                self.acknowledge();
+                self.rename_press(spot)
             }
             target if target.in_search() => {
                 self.acknowledge();
@@ -1439,9 +1468,18 @@ impl App {
         self.render_references(cells);
         self.render_card(cells);
         self.render_completion(cells);
+        self.render_rename(cells);
 
         if status.height > 0 {
             self.render_status(status, cells);
+        }
+        // A prompt drawn beside what it asks about goes over the text, with
+        // the status line left as it was underneath.
+        if let Some(prompt) = &self.prompt {
+            let area = self.prompt_area(status);
+            if area != status {
+                self.render_prompt(prompt, area, cells);
+            }
         }
 
         self.render_palette(cells);
@@ -1501,7 +1539,9 @@ impl App {
     }
 
     fn render_status(&self, area: Rect, cells: &mut Cells) {
-        if let Some(prompt) = &self.prompt {
+        if let Some(prompt) = &self.prompt
+            && self.prompt_area(area) == area
+        {
             self.render_prompt(prompt, area, cells);
             return;
         }

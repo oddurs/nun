@@ -992,7 +992,20 @@ fn initialize_params(root: &Path) -> Value {
         "capabilities": {
             "general": { "positionEncodings": encodings },
             "window": { "workDoneProgress": true, "showMessage": {} },
-            "workspace": { "configuration": true, "workspaceFolders": true, "applyEdit": false },
+            "workspace": {
+                "configuration": true,
+                "workspaceFolders": true,
+                "applyEdit": false,
+                // Versioned edits, so a rename computed against text that has
+                // moved on is refused rather than applied in the wrong place.
+                // No resource operations: a rename that would create, move or
+                // delete files is refused whole, so servers are told not to.
+                "workspaceEdit": {
+                    "documentChanges": true,
+                    "resourceOperations": [],
+                    "failureHandling": "abort",
+                },
+            },
             "textDocument": {
                 "synchronization": { "didSave": true, "willSave": false, "willSaveWaitUntil": false },
                 "publishDiagnostics": {

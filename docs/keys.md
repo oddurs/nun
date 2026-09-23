@@ -69,3 +69,5 @@ This file is generated from the source by `nun keys`. Do not edit it by hand.
 | Go to the next problem | `diagnostics.next` | `F8` | `F8` |
 | Go to the previous problem | `diagnostics.previous` | `Shift+F8` | `Shift+F8` |
 | Suggest completions | `lsp.complete` | `Ctrl+Space` | `Ctrl+Space` |
+| Rename symbol | `lsp.rename` | `Ctrl+K F2` | `Ctrl+K F2` |
+| Undo rename | `lsp.undo_rename` | `Ctrl+K Z` | `Ctrl+K Z` |
