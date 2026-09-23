@@ -75,6 +75,15 @@ impl App {
         let at = self.pointer_position(column, row);
         let primary = self.doc().buffer.selections().primary();
 
+        // Ctrl-click on a symbol goes to its definition; with Alt as well, in
+        // the pane beside.
+        if target == Target::Text
+            && ctrl
+            && let Some(outcome) = self.definition_click(at, count, alt)
+        {
+            return outcome;
+        }
+
         if target == Target::FoldArrow {
             let (text, _) = self.areas();
             let row = usize::from(row.saturating_sub(text.top()));
@@ -207,6 +216,9 @@ impl App {
             commands.push(Command::ShrinkSelection);
         }
         commands.push(Command::SelectAll);
+        // Where a symbol goes and comes from, when a server can say, and the
+        // way back: the mouse path for all of it, beside Ctrl-click.
+        commands.extend(self.navigation_offers());
 
         let items: Vec<MenuItem> = commands
             .iter()

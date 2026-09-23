@@ -94,6 +94,20 @@ pub enum Command {
     RestartLanguageServer,
     /// Have the language server format the file being edited.
     FormatDocument,
+    /// Go to where the symbol at the caret is defined.
+    GoToDefinition,
+    /// Open where the symbol at the caret is defined in the pane beside.
+    OpenDefinitionBeside,
+    /// List every use of the symbol at the caret, in the sidebar.
+    FindReferences,
+    /// Go back to where the last jump was made from.
+    GoBack,
+    /// Go forward again to where Back came from.
+    GoForward,
+    /// Go to the next reference in the list.
+    NextReference,
+    /// Go to the reference before in the list.
+    PreviousReference,
 }
 
 impl Command {
@@ -137,6 +151,13 @@ impl Command {
         Self::UnfoldAll,
         Self::RestartLanguageServer,
         Self::FormatDocument,
+        Self::GoToDefinition,
+        Self::OpenDefinitionBeside,
+        Self::FindReferences,
+        Self::GoBack,
+        Self::GoForward,
+        Self::NextReference,
+        Self::PreviousReference,
     ];
 
     /// The name used in `[keys]` in `nun.toml`.
@@ -181,6 +202,13 @@ impl Command {
             Self::UnfoldAll => "fold.unfold_all",
             Self::RestartLanguageServer => "lsp.restart",
             Self::FormatDocument => "lsp.format",
+            Self::GoToDefinition => "nav.definition",
+            Self::OpenDefinitionBeside => "nav.definition_beside",
+            Self::FindReferences => "nav.references",
+            Self::GoBack => "nav.back",
+            Self::GoForward => "nav.forward",
+            Self::NextReference => "nav.next_reference",
+            Self::PreviousReference => "nav.previous_reference",
         }
     }
 
@@ -226,6 +254,13 @@ impl Command {
             Self::UnfoldAll => "Unfold everything",
             Self::RestartLanguageServer => "Restart the language server",
             Self::FormatDocument => "Format document",
+            Self::GoToDefinition => "Go to definition",
+            Self::OpenDefinitionBeside => "Open definition beside",
+            Self::FindReferences => "Find references",
+            Self::GoBack => "Go back",
+            Self::GoForward => "Go forward",
+            Self::NextReference => "Next reference",
+            Self::PreviousReference => "Previous reference",
         }
     }
 
@@ -316,6 +351,14 @@ const BASIC: &[(&str, Command)] = &[
     ("ctrl+k j", Command::UnfoldAll),
     ("ctrl+k shift+r", Command::RestartLanguageServer),
     ("ctrl+k shift+f", Command::FormatDocument),
+    // VS Code's keys for these, which every terminal reports.
+    ("f12", Command::GoToDefinition),
+    ("ctrl+k f12", Command::OpenDefinitionBeside),
+    ("shift+f12", Command::FindReferences),
+    ("alt+left", Command::GoBack),
+    ("alt+right", Command::GoForward),
+    ("f4", Command::NextReference),
+    ("shift+f4", Command::PreviousReference),
 ];
 
 /// Bindings that need the Kitty keyboard protocol, added over [`BASIC`].

@@ -15,7 +15,7 @@ use nun_workspace::{Change, Done, FileTree, Job, Jobs, Kind, Watcher};
 use ratatui::layout::Rect;
 
 use super::prompt::{Prompt, Purpose};
-use super::{App, Focus, Outcome, Target};
+use super::{App, Focus, Outcome, SidebarView, Target};
 use crate::commands::Command;
 
 /// Narrowest the sidebar can be dragged to.
@@ -187,7 +187,7 @@ impl App {
         // The edge is the sidebar's, whichever view is in it.
         let edge = Rect { x: area.right().saturating_sub(1), width: 1, ..area };
         hits.push(super::cells(edge), Target::SidebarEdge, false);
-        if self.searching() {
+        if self.sidebar_view != SidebarView::Files {
             return;
         }
 
@@ -216,7 +216,9 @@ impl App {
         }
         // Showing the search panel, this key means the tree rather than no
         // sidebar at all: the file tree is what it is named after.
-        if self.searching() && self.sidebar.as_ref().is_some_and(|sidebar| sidebar.visible) {
+        if self.sidebar_view != SidebarView::Files
+            && self.sidebar.as_ref().is_some_and(|sidebar| sidebar.visible)
+        {
             return self.show_file_tree();
         }
         let Some(sidebar) = self.sidebar.as_mut() else { return Outcome::Continue };
@@ -541,6 +543,7 @@ impl App {
             // Only ever asked for by a caller waiting for the worker to catch
             // up; there is nothing to do when it comes back.
             Done::Echo(_) => Outcome::Continue,
+            Done::Lines { generation, lines } => self.reference_lines(generation, lines),
             Done::Files { count } => self.palette_listed(count),
             Done::Found { query, generation, results } => {
                 self.palette_found(&query, generation, results)

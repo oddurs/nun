@@ -26,6 +26,7 @@ use crate::commands::Command;
 mod folds;
 mod format;
 mod lsp;
+mod navigation;
 mod palette;
 mod panes;
 mod pointer;
@@ -135,6 +136,12 @@ pub enum Target {
     SearchRow(usize),
     /// The panel below its last row.
     SearchEmpty,
+    /// The references panel's button back to the file tree.
+    ReferencesBack,
+    /// A row of the references: a file, or one reference in it.
+    ReferencesRow(usize),
+    /// The rest of the references panel.
+    ReferencesEmpty,
     /// An item of the open menu.
     MenuItem(usize),
     /// Everywhere outside the open menu, which a click there closes.
@@ -172,6 +179,11 @@ impl Target {
                 | Self::SearchEmpty
         )
     }
+
+    /// Whether this is part of the references panel.
+    const fn in_references(self) -> bool {
+        matches!(self, Self::ReferencesBack | Self::ReferencesRow(_) | Self::ReferencesEmpty)
+    }
 }
 
 /// Which view the sidebar is showing. The two share its columns, so only one
@@ -183,6 +195,8 @@ pub enum SidebarView {
     Files,
     /// The project search panel.
     Search,
+    /// The references to a symbol.
+    References,
 }
 
 /// What has the keyboard.
@@ -284,6 +298,8 @@ pub struct App {
     lsp: Option<nun_lsp::Lsp>,
     /// Formatting asked of them, and where it happens on save.
     formatting: format::Formatting,
+    /// Definitions, references, and the way back from them.
+    navigation: navigation::Navigation,
 }
 
 impl App {
@@ -353,6 +369,7 @@ impl App {
             session: crate::session::Session::default(),
             lsp: None,
             formatting: format::Formatting::default(),
+            navigation: navigation::Navigation::default(),
         };
         app.relayout();
         app
@@ -461,6 +478,7 @@ impl App {
         self.refresh_search_previews();
         self.layout_sidebar(&mut hits);
         self.layout_search(&mut hits);
+        self.layout_references(&mut hits);
         self.layout_panes(&mut hits);
         self.layout_palette(&mut hits);
 
@@ -553,8 +571,10 @@ impl App {
     /// Whether anything on screen reacts to the pointer merely passing over it.
     ///
     /// The terminal's any-motion reporting is turned on only while this holds.
-    pub const fn wants_motion(&self) -> bool {
-        self.hits.has_hover_targets()
+    /// That includes any time a language server could say a Ctrl-hovered
+    /// symbol has a definition: nothing but motion reports carry the Ctrl.
+    pub fn wants_motion(&self) -> bool {
+        self.hits.has_hover_targets() || self.wants_link_motion()
     }
 
     /// When the editor next needs waking with no input, if ever.
@@ -567,6 +587,7 @@ impl App {
             self.syntax_deadline(),
             self.search_deadline(),
             self.formatting.deadline(),
+            self.link_deadline(),
         ]
         .into_iter()
         .flatten()
@@ -606,7 +627,8 @@ impl App {
             .and(self.autoscroll_tick(now))
             .and(self.syntax_tick(now))
             .and(self.search_tick(now))
-            .and(self.format_tick(now));
+            .and(self.format_tick(now))
+            .and(self.link_tick(now));
         if outcome == Outcome::Redraw {
             self.relayout();
         }
@@ -627,7 +649,14 @@ impl App {
     /// Handle one event that arrived at `now`.
     pub fn handle_at(&mut self, event: Event, now: Instant) -> Outcome {
         let before = (self.doc().buffer.len_chars(), self.doc().scroll, self.doc().id);
-        let outcome = self.dispatch(event, now);
+        // Whatever Ctrl-hover underlined is stale once anything but the
+        // pointer or a server has had a say.
+        let unlinked = if matches!(event, Event::Key(_) | Event::Paste(_) | Event::Focus(false)) {
+            self.clear_link()
+        } else {
+            Outcome::Continue
+        };
+        let outcome = self.dispatch(event, now).and(unlinked);
         // Whatever the event did to the text goes to the language servers
         // now, in the order it was done.
         self.lsp_flush();
@@ -865,6 +894,15 @@ impl App {
             Command::GrowSelection => return self.grow_selection(),
             Command::RestartLanguageServer => return self.lsp_restart(),
             Command::FormatDocument => return self.format_document(),
+            Command::GoToDefinition => return self.go_to_definition(navigation::Open::Here),
+            Command::OpenDefinitionBeside => {
+                return self.go_to_definition(navigation::Open::Beside);
+            }
+            Command::FindReferences => return self.find_references(),
+            Command::GoBack => return self.jump_back(),
+            Command::GoForward => return self.jump_forward(),
+            Command::NextReference => return self.step_reference(1),
+            Command::PreviousReference => return self.step_reference(-1),
             Command::ShrinkSelection => return self.shrink_selection(),
             Command::SplitIntoLines => {
                 if !self.doc_mut().buffer.split_into_lines() {
@@ -949,6 +987,7 @@ impl App {
         // a target by dragging out of it is still a leave.
         let crossing = self.hover.update(hit.filter(|hit| hit.hover).map(|hit| hit.target), now);
         let hovered = if crossing.is_none() { Outcome::Continue } else { Outcome::Redraw };
+        let hovered = hovered.and(self.link_pointer(mouse, now));
 
         let target = hit.map(|hit| hit.target);
         match mouse.kind {
@@ -959,6 +998,11 @@ impl App {
                 if target.is_some_and(Target::in_search) =>
             {
                 self.search_scroll(mouse.kind == MouseEventKind::ScrollDown)
+            }
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+                if target.is_some_and(Target::in_references) =>
+            {
+                self.references_scroll(mouse.kind == MouseEventKind::ScrollDown)
             }
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
                 if target.is_some_and(Target::in_sidebar) =>
@@ -1092,6 +1136,10 @@ impl App {
             target if target.in_search() => {
                 self.acknowledge();
                 self.search_press(target, mouse.column, now)
+            }
+            target if target.in_references() => {
+                self.acknowledge();
+                self.references_press(target)
             }
             target if target.in_sidebar() => {
                 self.acknowledge();
@@ -1270,8 +1318,10 @@ impl App {
         let status =
             Rect { y: area.bottom().saturating_sub(1), height: area.height.min(1), ..area };
         self.render_panes(area, cells);
+        self.render_link(cells);
         self.render_sidebar(cells);
         self.render_search(cells);
+        self.render_references(cells);
 
         if status.height > 0 {
             self.render_status(status, cells);
@@ -1296,7 +1346,7 @@ impl App {
         // The divider belongs to the sidebar rather than to either view, so it
         // is drawn whichever one is in it.
         self.render_sidebar_edge(area, cells);
-        if self.searching() {
+        if self.sidebar_view != SidebarView::Files {
             return;
         }
         let title = sidebar.tree.root().file_name().map_or_else(

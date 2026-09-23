@@ -90,13 +90,15 @@ impl App {
     pub(super) fn lsp_event(&mut self, event: nun_lsp::Event) -> Outcome {
         let Some(lsp) = self.lsp.as_mut() else { return Outcome::Continue };
         match lsp.handle(event) {
-            // Nothing asks a server anything yet. The features that do —
-            // completion, hover, go to definition, rename — take their answers
-            // from here, matching each by the id `request` returned.
             Handled::Response(response) if self.formatting.asked(response.id) => {
                 self.format_answer(&response)
             }
-            Handled::Nothing | Handled::Response(_) => Outcome::Continue,
+            Handled::Nothing => Outcome::Continue,
+            // Each feature that asks takes its own answers, matching each by
+            // the id `request` returned.
+            Handled::Response(response) => {
+                self.navigation_answered(&response).unwrap_or(Outcome::Continue)
+            }
             Handled::Redraw => Outcome::Redraw,
             Handled::Notice(notice) => {
                 self.warn(notice);

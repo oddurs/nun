@@ -16,6 +16,7 @@ mod layout;
 mod lifecycle;
 mod menu;
 mod palette;
+mod references;
 mod screen;
 mod search;
 mod signals;
@@ -33,6 +34,7 @@ pub use lifecycle::{
 };
 pub use menu::{Menu, MenuItem};
 pub use palette::{Entry as PaletteEntry, MOST_ROWS, PaletteView};
+pub use references::ReferencesView;
 pub use screen::Screen;
 pub use search::{Field, HitState, SearchButton, SearchRow, SearchView, Toggles};
 pub use signals::{Signal, suspend_self, watch as watch_signals};

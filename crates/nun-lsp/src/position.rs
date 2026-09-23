@@ -147,6 +147,31 @@ impl Encoding {
             })
             .collect()
     }
+
+    /// The char offset into `line` of a position's `character`: what
+    /// [`Encoding::char_index`] answers, for a line held on its own rather
+    /// than in a rope — one read from a file nobody has open, say.
+    ///
+    /// `line` is the line without its line ending. As with a rope, an offset
+    /// past the end is the end, and one inside a char is that char's start.
+    #[must_use]
+    pub fn column(self, line: &str, character: u32) -> usize {
+        let target = character as usize;
+        let mut units = 0;
+        let mut count = 0;
+        for ch in line.chars() {
+            units += match self {
+                Self::Utf8 => ch.len_utf8(),
+                Self::Utf16 => ch.len_utf16(),
+                Self::Utf32 => 1,
+            };
+            if units > target {
+                return count;
+            }
+            count += 1;
+        }
+        count
+    }
 }
 
 /// The char index just past the last char of `line`, before its `\n`.
@@ -210,6 +235,21 @@ mod tests {
         assert_eq!(Encoding::Utf32.position(&text, 2), at(0, 2));
         assert_eq!(Encoding::Utf16.position(&text, 2), at(0, 2));
         assert_eq!(Encoding::Utf8.position(&text, 2), at(0, 3));
+    }
+
+    #[test]
+    fn a_line_on_its_own_converts_as_the_rope_would() {
+        let line = "a😀中e\u{301}x";
+        let text = Rope::from_str(line);
+        for encoding in ALL {
+            for character in 0..16 {
+                assert_eq!(
+                    encoding.column(line, character),
+                    encoding.char_index(&text, at(0, character)),
+                    "{encoding:?} at {character}"
+                );
+            }
+        }
     }
 
     #[test]

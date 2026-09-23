@@ -79,6 +79,8 @@ pub(super) enum Pick {
     /// Start the query again with this prefix, which is how the help list
     /// leads into every other mode with the mouse.
     Prefix(&'static str),
+    /// Go to this place a server named, here or beside.
+    Place(super::navigation::Place, super::navigation::Open),
     /// Nothing: a row that is only telling you something.
     Nothing,
 }
@@ -108,6 +110,17 @@ pub(super) struct Palette {
     listed: bool,
     /// What had the keyboard before it opened.
     was_focused: Focus,
+    /// A fixed list to pick from, filtered by what is typed, instead of a
+    /// mode: the definitions of a symbol that has several.
+    choices: Option<Choices>,
+}
+
+/// A fixed list for the palette to offer.
+#[derive(Debug)]
+pub(super) struct Choices {
+    /// What the empty query says.
+    title: String,
+    rows: Vec<Row>,
 }
 
 /// How much having opened a file before is worth, next to a match score.
@@ -128,6 +141,18 @@ impl App {
             self.send_job(Job::ListFiles(root));
         }
         self.finder = Some(palette);
+        self.focus = Focus::Editor;
+        self.refresh_palette();
+        Outcome::Redraw
+    }
+
+    /// Open the palette on a fixed list of `rows`, headed by `title`.
+    pub(super) fn open_choices(&mut self, title: String, rows: Vec<Row>) -> Outcome {
+        self.finder = Some(Palette {
+            was_focused: self.focus,
+            choices: Some(Choices { title, rows }),
+            ..Palette::default()
+        });
         self.focus = Focus::Editor;
         self.refresh_palette();
         Outcome::Redraw
@@ -211,6 +236,21 @@ impl App {
     /// Work out the rows for what has been typed.
     pub(super) fn refresh_palette(&mut self) {
         let Some(palette) = self.finder.as_mut() else { return };
+        if let Some(choices) = palette.choices.as_ref() {
+            let labels: Vec<String> =
+                choices.rows.iter().map(|row| row.entry.label.clone()).collect();
+            palette.rows = nun_workspace::search(&labels, &palette.query, LIMIT)
+                .into_iter()
+                .map(|found| {
+                    let mut row = choices.rows[found.index].clone();
+                    row.entry.matched = found.matched;
+                    row
+                })
+                .collect();
+            palette.selected = 0;
+            palette.scroll = 0;
+            return;
+        }
         let (mode, rest) = Mode::of(&palette.query);
         let rest = rest.to_string();
         palette.selected = 0;
@@ -383,7 +423,7 @@ impl App {
     /// Landing a definition on the top row hides what it belongs to. A little
     /// room above is the difference between arriving somewhere and arriving
     /// somewhere you can read.
-    fn show_with_context(&mut self, at: usize) {
+    pub(super) fn show_with_context(&mut self, at: usize) {
         const ABOVE: usize = 3;
         let line = self.doc().buffer.line_of(at);
         let height = self.text_height();
@@ -477,6 +517,11 @@ impl App {
 
         match pick {
             Pick::Nothing => return Outcome::Redraw,
+            Pick::Place(place, open) => {
+                self.finder = None;
+                let open = if split { super::navigation::Open::Beside } else { open };
+                return self.pick_place(&place, open);
+            }
             Pick::Prefix(prefix) => {
                 if let Some(palette) = self.finder.as_mut() {
                     palette.query = prefix.to_string();
@@ -561,7 +606,9 @@ impl App {
             _ => None,
         };
         PaletteView::new(&self.palette, &palette.query, &entries)
-            .placeholder(mode.placeholder())
+            .placeholder(
+                palette.choices.as_ref().map_or(mode.placeholder(), |choices| &choices.title),
+            )
             .selected(palette.selected)
             .scrolled_to(palette.scroll)
             .hovered(hovered)

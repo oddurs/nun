@@ -52,7 +52,7 @@ const REPLACE_PROMPT: &str = "→ ";
 /// one cell away, and it pairs with the magnifier the tree shows for coming
 /// the other way: two marks for two views, neither of them an arrow that would
 /// only say "back" without saying back to what.
-const BACK: &str = "▤";
+pub(crate) const BACK: &str = "▤";
 
 /// The button that writes the replacement into the files.
 ///
@@ -602,8 +602,14 @@ impl Widget for SearchView<'_> {
         self.draw_apply(cells, area);
         self.draw_toggles(cells, area);
         self.draw_summary(cells, Self::summary_area(area));
+        self.draw_rows(cells, Self::rows_area(area));
+    }
+}
 
-        let rows_area = Self::rows_area(area);
+impl SearchView<'_> {
+    /// The result rows, into `rows_area`: this panel's list, and any other
+    /// panel's that lists lines of files the same way.
+    pub(crate) fn draw_rows(&self, cells: &mut Cells, rows_area: Rect) {
         let gutter = self.gutter();
         for (offset, index) in
             (self.scroll..self.rows.len()).take(usize::from(rows_area.height)).enumerate()
@@ -613,9 +619,7 @@ impl Widget for SearchView<'_> {
             self.draw_row(cells, line, index, gutter);
         }
     }
-}
 
-impl SearchView<'_> {
     fn draw_header(&self, cells: &mut Cells, area: Rect) {
         if area.height == 0 {
             return;
@@ -924,7 +928,7 @@ fn text_column(line: Rect, gutter: u16) -> u16 {
 }
 
 /// The `index`-th row of `area`, zero-height when `area` is not that tall.
-fn band(area: Rect, index: u16) -> Rect {
+pub(crate) fn band(area: Rect, index: u16) -> Rect {
     let offset = index.min(area.height);
     Rect { y: area.y + offset, height: area.height.saturating_sub(index).min(1), ..area }
 }
@@ -992,7 +996,7 @@ fn query_window(room: u16, query: &str, caret: usize) -> usize {
     0
 }
 
-fn fill(cells: &mut Cells, area: Rect, style: Style) {
+pub(crate) fn fill(cells: &mut Cells, area: Rect, style: Style) {
     for y in area.top()..area.bottom() {
         for x in area.left()..area.right() {
             cells[(x, y)].set_char(' ').set_style(style);
@@ -1002,7 +1006,7 @@ fn fill(cells: &mut Cells, area: Rect, style: Style) {
 
 /// Write `text` at `(x, y)` in at most `room` columns, clipping at a cluster
 /// rather than splitting one, and ending with `…` when it had to clip.
-fn put(cells: &mut Cells, x: u16, y: u16, room: u16, text: &str, style: Style) {
+pub(crate) fn put(cells: &mut Cells, x: u16, y: u16, room: u16, text: &str, style: Style) {
     let room = usize::from(room);
     let fits = text.width() <= room;
     let budget = if fits { room } else { room.saturating_sub(1) };
