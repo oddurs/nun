@@ -115,7 +115,7 @@
 
 ## m6 — Polish until it is boring
 
-`##········` 20% · 1 of 5 done · due 2026-12-17
+`##········` 17% · 1 of 6 done · due 2026-12-17
 
 ### backlog
 
@@ -123,6 +123,7 @@
 - [ ] [`0047`](https://github.com/oddurs/nun/blob/main/cairn/items/0047-first-run.md) First run <sup>feature · p1</sup>
 - [ ] [`0048`](https://github.com/oddurs/nun/blob/main/cairn/items/0048-one-command-install.md) One-command install <sup>chore · p1</sup>
 - [ ] [`0049`](https://github.com/oddurs/nun/blob/main/cairn/items/0049-freeze-and-ship-0-1.md) Freeze and ship 0.1 <sup>chore · p0</sup>
+- [ ] [`0082`](https://github.com/oddurs/nun/blob/main/cairn/items/0082-a-key-pressed-right-after-escape-types-its-escape-sequence-as-text.md) A key pressed right after Escape types its escape sequence as text <sup>bug · p1</sup>
 
 ### done
 
