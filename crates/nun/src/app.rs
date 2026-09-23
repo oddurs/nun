@@ -659,7 +659,7 @@ impl App {
                 self.chords.cancel();
                 self.acknowledge();
                 self.focus = Focus::Editor;
-                self.doc_mut().buffer.insert(&text);
+                self.doc_mut().buffer.insert(&pasted_line_endings(&text));
                 self.follow_caret();
                 Outcome::Redraw
             }
@@ -1496,6 +1496,21 @@ fn display_path(path: Option<&std::path::Path>) -> String {
     )
 }
 
+/// Pasted text with every line ending made `\n`, the only one the buffer holds.
+///
+/// Terminals are not consistent about what a pasted newline is: xterm and
+/// others send `\r`, and a paste copied from a CRLF source carries `\r\n`.
+/// Left alone, either puts a carriage return in the buffer, which draws a
+/// pasted block as one line and moves every language-server position after it,
+/// since the protocol ends a line at a lone `\r` and nun does not.
+fn pasted_line_endings(text: &str) -> std::borrow::Cow<'_, str> {
+    if text.contains('\r') {
+        text.replace("\r\n", "\n").replace('\r', "\n").into()
+    } else {
+        text.into()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1725,6 +1740,29 @@ mod tests {
         assert_eq!(text_of(&app), "pasted text");
         app.handle(chord(KeyCode::Char('z'), KeyModifiers::CONTROL));
         assert_eq!(text_of(&app), "", "a paste undoes in one step, not per character");
+    }
+
+    #[test]
+    fn a_paste_with_carriage_returns_lands_as_lines() {
+        let mut app = app_over("");
+        app.handle(Event::Paste("one\rtwo\r".into()));
+        assert_eq!(text_of(&app), "one\ntwo\n", "a lone CR is a newline");
+
+        let mut app = app_over("");
+        app.handle(Event::Paste("one\r\ntwo\r\n".into()));
+        assert_eq!(text_of(&app), "one\ntwo\n", "CRLF is one newline, not two");
+
+        let mut app = app_over("");
+        app.handle(Event::Paste("a\r\r\nb\n\rc".into()));
+        assert_eq!(text_of(&app), "a\n\nb\n\nc", "each ending counts once, whatever the mix");
+    }
+
+    #[test]
+    fn a_crlf_file_saves_a_pasted_crlf_block_without_doubling() {
+        let (buffer, _) = Buffer::from_bytes(b"x\r\n");
+        let mut app = app_with(buffer);
+        app.handle(Event::Paste("one\r\ntwo\r\n".into()));
+        assert_eq!(app.buffer().to_bytes(), b"one\r\ntwo\r\nx\r\n");
     }
 
     // ── quitting ────────────────────────────────────────────────────────────
