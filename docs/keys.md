@@ -9,6 +9,12 @@ is in both.
 Typing, the arrows, Home, End, Page Up and Down, Backspace, Delete, Enter,
 Tab and Esc are editing keys and work the same in both.
 
+While a card is open (a problem, a hover), Alt+Page Up and Alt+Page Down
+scroll it and leave it open, in both sets; any other key puts it away and
+then does what it does. iTerm2 sends them only when Option counts as Alt
+for function keys, and Terminal.app keeps Page Up and Down for itself; the
+wheel scrolls a card in every terminal.
+
 Add or replace bindings in `~/.config/nun/nun.toml`; the defaults you do not
 mention stay as they are:
 

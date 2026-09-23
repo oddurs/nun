@@ -15,7 +15,8 @@
 //!
 //! The body is paragraphs of styled runs, wrapped to the card's width at word
 //! boundaries. Buttons, if any, sit on the last row and are always visible;
-//! the body scrolls above them.
+//! the body scrolls above them. A body that does not fit can say how to
+//! scroll it in that row too, beside the buttons or in a row of its own.
 
 use std::num::NonZeroU16;
 
@@ -85,6 +86,8 @@ pub struct Popover<'a> {
     /// Whether to tell the terminal, with OSC 8, which cells are links.
     hyperlinks: bool,
     hovered_link: Option<usize>,
+    /// What to say in the bottom row when the body does not fit.
+    overflow_hint: Option<&'a str>,
 }
 
 /// One row of wrapped body: pieces of runs, each with the run it came from.
@@ -103,7 +106,17 @@ impl<'a> Popover<'a> {
             links: &[],
             hyperlinks: false,
             hovered_link: None,
+            overflow_hint: None,
         }
+    }
+
+    /// Say `hint` at the right of the bottom row, dimmed, when the body does
+    /// not all fit: how to scroll it, say. With no buttons it takes a row
+    /// of its own, and only then; it is left out where there is no room.
+    #[must_use]
+    pub const fn overflow_hint(mut self, hint: &'a str) -> Self {
+        self.overflow_hint = Some(hint);
+        self
     }
 
     /// Where the body's links go, by the index each run's `link` names.
@@ -266,9 +279,22 @@ impl<'a> Popover<'a> {
         }
     }
 
-    /// Rows of body that fit in a card at `area`, after the buttons.
-    fn body_height(&self, area: Rect) -> u16 {
-        area.height.saturating_sub(u16::from(!self.buttons.is_empty()))
+    /// Rows of body that fit in a card at `area`, after the buttons and any
+    /// overflow hint.
+    #[must_use]
+    pub fn body_height(&self, area: Rect) -> u16 {
+        let footer = !self.buttons.is_empty() || self.hint_shown(area);
+        area.height.saturating_sub(u16::from(footer))
+    }
+
+    /// Whether the overflow hint is said in a card at `area`: there is one,
+    /// the body does not fit beside the buttons, and there is a row of body
+    /// left over to scroll.
+    fn hint_shown(&self, area: Rect) -> bool {
+        let buttons = u16::from(!self.buttons.is_empty());
+        self.overflow_hint.is_some()
+            && area.height >= 2
+            && self.body_rows(area.width) > usize::from(area.height - buttons)
     }
 
     /// The width the content wants, padding included.
@@ -504,6 +530,27 @@ impl Widget for Popover<'_> {
                 x += width;
             }
         }
+
+        if let Some(text) = self.overflow_hint.filter(|_| self.hint_shown(area)) {
+            // Right-aligned, after the last button drawn, or not at all.
+            let y = area.bottom() - 1;
+            let after = self
+                .button_areas(area)
+                .iter()
+                .filter(|at| at.width > 0)
+                .map(|at| at.right() + 1)
+                .max()
+                .unwrap_or(area.left() + PADDING);
+            let width = u16::try_from(drawn_width(text)).unwrap_or(u16::MAX);
+            let right = area.right().saturating_sub(PADDING);
+            if let Some(mut x) = right.checked_sub(width).filter(|x| *x >= after) {
+                for grapheme in text.graphemes(true) {
+                    let width = u16::try_from(grapheme.width()).unwrap_or(1);
+                    cells[(x, y)].set_symbol(grapheme).set_style(hint);
+                    x += width;
+                }
+            }
+        }
     }
 }
 
@@ -598,6 +645,68 @@ mod tests {
         let drawn: String =
             (areas[1].x..areas[1].right()).map(|x| cells[(x, areas[1].y)].symbol()).collect();
         assert_eq!(drawn, " Previous ");
+    }
+
+    fn bottom_row(cells: &Cells, card: Rect) -> String {
+        (card.x..card.right()).map(|x| cells[(x, card.bottom() - 1)].symbol()).collect()
+    }
+
+    #[test]
+    fn a_card_that_overflows_says_how_to_scroll_in_a_row_of_its_own() {
+        let palette = palette();
+        let long = "word ".repeat(200);
+        let body = body(&long);
+        let popover = Popover::new(&body, &palette).overflow_hint("Alt+PgDn");
+        let card = popover.place(Rect::new(0, 0, 1, 1), SCREEN).unwrap();
+        assert_eq!(card.height, MOST_HEIGHT);
+        assert_eq!(popover.body_height(card), MOST_HEIGHT - 1, "the hint takes the last row");
+        let mut cells = Cells::empty(SCREEN);
+        popover.render(card, &mut cells);
+        let row = bottom_row(&cells, card);
+        assert!(row.trim_start().starts_with("Alt+PgDn "), "right-aligned: {row:?}");
+        assert!(!row.contains("word"));
+        let at = card.right() - 1 - 8;
+        assert_eq!(
+            cells[(at, card.bottom() - 1)].fg,
+            palette.on(Role::Overlay, Role::Dim).fg.unwrap()
+        );
+        assert_eq!(cells[(card.right() - 1, card.bottom() - 2)].symbol(), "▾");
+    }
+
+    #[test]
+    fn the_hint_sits_beside_the_buttons_and_only_when_the_card_overflows() {
+        let palette = palette();
+        let buttons = vec!["Next".to_string()];
+        let long = "word ".repeat(200);
+        let long = body(&long);
+        let popover = Popover::new(&long, &palette).buttons(&buttons).overflow_hint("Alt+PgDn");
+        let card = popover.place(Rect::new(0, 0, 1, 1), SCREEN).unwrap();
+        assert_eq!(popover.body_height(card), MOST_HEIGHT - 1, "no row of its own");
+        let mut cells = Cells::empty(SCREEN);
+        popover.render(card, &mut cells);
+        let row = bottom_row(&cells, card);
+        assert!(row.starts_with("  Next ") && row.ends_with("Alt+PgDn "), "{row:?}");
+
+        let short = body("unused variable");
+        let popover = Popover::new(&short, &palette).overflow_hint("Alt+PgDn");
+        let card = popover.place(Rect::new(0, 0, 1, 1), SCREEN).unwrap();
+        assert_eq!(card.height, 1, "no row for a hint with nothing to scroll");
+        let mut cells = Cells::empty(SCREEN);
+        popover.render(card, &mut cells);
+        assert!(!bottom_row(&cells, card).contains("Alt"));
+    }
+
+    #[test]
+    fn a_hint_with_no_room_is_left_out() {
+        let palette = palette();
+        let buttons = vec!["A button that fills the card".to_string()];
+        let long = "word ".repeat(40);
+        let body = body(&long);
+        let popover = Popover::new(&body, &palette).buttons(&buttons).overflow_hint("Alt+PgDn");
+        let card = Rect::new(0, 0, 32, 4);
+        let mut cells = Cells::empty(SCREEN);
+        popover.render(card, &mut cells);
+        assert!(!bottom_row(&cells, card).contains("Alt"), "never over a button");
     }
 
     #[test]

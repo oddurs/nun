@@ -511,6 +511,11 @@ pub fn reference() -> String {
          is in both.\n\n\
          Typing, the arrows, Home, End, Page Up and Down, Backspace, Delete, Enter,\n\
          Tab and Esc are editing keys and work the same in both.\n\n\
+         While a card is open (a problem, a hover), Alt+Page Up and Alt+Page Down\n\
+         scroll it and leave it open, in both sets; any other key puts it away and\n\
+         then does what it does. iTerm2 sends them only when Option counts as Alt\n\
+         for function keys, and Terminal.app keeps Page Up and Down for itself; the\n\
+         wheel scrolls a card in every terminal.\n\n\
          Add or replace bindings in `~/.config/nun/nun.toml`; the defaults you do not\n\
          mention stay as they are:\n\n\
          ```toml\n[keys]\n\"ctrl+k ctrl+s\" = \"file.save\"\n```\n\n\
