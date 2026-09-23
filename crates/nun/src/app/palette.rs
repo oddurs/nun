@@ -455,12 +455,20 @@ impl App {
         }
 
         let root = self.workspace_root();
+        // The open files resolved once, not once per row: a row's path is the
+        // tree root, already resolved, and a relative path under it.
+        let open_files: Vec<PathBuf> = self
+            .docs
+            .iter()
+            .filter_map(|doc| doc.buffer.path())
+            .map(|path| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()))
+            .collect();
         let mut rows: Vec<(u32, Row)> = results
             .into_iter()
             .map(|(path, found)| {
                 let full = root.as_ref().map_or_else(|| path.clone(), |root| root.join(&path));
                 let bonus = self.frecency.get(&full).copied().unwrap_or(0) * FRECENCY_BONUS;
-                let open = self.docs.iter().any(|doc| doc.buffer.path() == Some(full.as_path()));
+                let open = open_files.contains(&full);
                 (
                     found.score + bonus,
                     Row {

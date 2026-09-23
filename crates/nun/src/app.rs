@@ -1740,6 +1740,17 @@ fn write_at(cells: &mut Cells, area: Rect, start: u16, text: &str, style: ratatu
     }
 }
 
+/// Whether two paths name the same file, however each is spelled: relative
+/// from the command line, in full from the tree, or through a symlink. A
+/// file open under one spelling and looked for under another is still open.
+fn same_file(one: &std::path::Path, other: &std::path::Path) -> bool {
+    one == other
+        || matches!(
+            (std::fs::canonicalize(one), std::fs::canonicalize(other)),
+            (Ok(one), Ok(other)) if one == other
+        )
+}
+
 fn display_path(path: Option<&std::path::Path>) -> String {
     path.map_or_else(
         || "[no name]".to_string(),
