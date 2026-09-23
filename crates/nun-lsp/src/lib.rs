@@ -20,12 +20,14 @@
 //! server agreed to.
 
 mod client;
+pub mod completion;
 mod event;
 mod language;
 mod log;
 mod position;
 mod rpc;
 mod server;
+pub mod snippet;
 mod sync;
 pub mod uri;
 

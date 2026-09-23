@@ -11,6 +11,7 @@
 //!   `ratatui::style::Color`.
 
 mod backend;
+mod completion;
 mod events;
 mod harness;
 mod layout;
@@ -31,6 +32,7 @@ mod underline;
 mod view;
 
 pub use backend::NunBackend;
+pub use completion::{CompletionView, DocsView, MOST_DOC_LINES, MOST_SUGGESTIONS, Suggestion};
 pub use events::{Event, Events};
 pub use harness::{Harness, changed_cells, changed_rows};
 pub use layout::{Dir, Divider, Edge, Layout, Side};

@@ -208,7 +208,14 @@ impl Widget for PaletteView<'_> {
 }
 
 /// Write `text`, clipped to `room` columns with an ellipsis.
-fn write(cells: &mut Cells, x: u16, y: u16, room: u16, text: &str, style: ratatui::style::Style) {
+pub(crate) fn write(
+    cells: &mut Cells,
+    x: u16,
+    y: u16,
+    room: u16,
+    text: &str,
+    style: ratatui::style::Style,
+) {
     let room = usize::from(room);
     let fits = text.width() <= room;
     let budget = if fits { room } else { room.saturating_sub(1) };
@@ -237,7 +244,7 @@ fn write(cells: &mut Cells, x: u16, y: u16, room: u16, text: &str, style: ratatu
 
 /// Write a label with the characters that matched picked out.
 #[allow(clippy::too_many_arguments)] // Each one is a separate thing to draw.
-fn write_matched(
+pub(crate) fn write_matched(
     cells: &mut Cells,
     x: u16,
     y: u16,

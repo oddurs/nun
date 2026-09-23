@@ -180,6 +180,34 @@ impl<'a> EditorView<'a> {
         rects
     }
 
+    /// The cell of `area` that char index `at` is drawn in: the inverse of
+    /// [`EditorView::position_at`], for putting something beside the text.
+    ///
+    /// `None` when its line is scrolled out of view or folded away, or it is
+    /// past the right edge.
+    #[must_use]
+    pub fn cell_of(&self, area: Rect, at: usize) -> Option<(u16, u16)> {
+        let at = at.min(self.buffer.len_chars());
+        let line = self.buffer.line_of(at);
+        let row = self
+            .buffer
+            .hidden()
+            .from(self.scroll)
+            .take(usize::from(area.height))
+            .position(|l| l == line)?;
+        let text = self.buffer.line_text(line);
+        let mut column = 0;
+        for cell in self.cells_of(line, &text) {
+            if cell.char_index >= at {
+                break;
+            }
+            column = cell.column + cell.width;
+        }
+        let x = usize::from(area.left() + self.gutter_width()) + column;
+        let x = u16::try_from(x).ok().filter(|x| *x < area.right())?;
+        Some((x, area.top() + u16::try_from(row).ok()?))
+    }
+
     /// The grapheme clusters of `line`, whose text is `text`, as they are
     /// laid out on screen.
     ///

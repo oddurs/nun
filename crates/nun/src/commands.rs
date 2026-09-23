@@ -112,6 +112,8 @@ pub enum Command {
     NextDiagnostic,
     /// Go to the diagnostic before the caret, and say what it is.
     PreviousDiagnostic,
+    /// Ask the language server what could go at the caret.
+    Complete,
 }
 
 impl Command {
@@ -164,6 +166,7 @@ impl Command {
         Self::PreviousReference,
         Self::NextDiagnostic,
         Self::PreviousDiagnostic,
+        Self::Complete,
     ];
 
     /// The name used in `[keys]` in `nun.toml`.
@@ -217,6 +220,7 @@ impl Command {
             Self::PreviousReference => "nav.previous_reference",
             Self::NextDiagnostic => "diagnostics.next",
             Self::PreviousDiagnostic => "diagnostics.previous",
+            Self::Complete => "lsp.complete",
         }
     }
 
@@ -271,6 +275,7 @@ impl Command {
             Self::PreviousReference => "Previous reference",
             Self::NextDiagnostic => "Go to the next problem",
             Self::PreviousDiagnostic => "Go to the previous problem",
+            Self::Complete => "Suggest completions",
         }
     }
 
@@ -294,6 +299,7 @@ impl Command {
                 | Self::FoldAll
                 | Self::UnfoldAll
                 | Self::FormatDocument
+                | Self::Complete
         )
     }
 
@@ -372,6 +378,9 @@ const BASIC: &[(&str, Command)] = &[
     // VS Code's.
     ("f8", Command::NextDiagnostic),
     ("shift+f8", Command::PreviousDiagnostic),
+    // A legacy terminal sends Ctrl+Space as NUL, which crossterm reports as
+    // exactly this.
+    ("ctrl+space", Command::Complete),
 ];
 
 /// Bindings that need the Kitty keyboard protocol, added over [`BASIC`].

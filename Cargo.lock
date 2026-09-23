@@ -1092,6 +1092,7 @@ name = "nun-lsp"
 version = "0.1.0"
 dependencies = [
  "lsp-types",
+ "nucleo-matcher",
  "nun-core",
  "proptest",
  "ropey",

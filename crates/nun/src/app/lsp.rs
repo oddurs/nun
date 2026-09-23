@@ -74,10 +74,12 @@ impl App {
     /// edits documents nobody is looking at, and the server has to hear about
     /// those too.
     pub(super) fn lsp_flush(&mut self) {
-        let Some(lsp) = self.lsp.as_mut() else { return };
         for document in &mut self.docs {
             let edits = document.buffer.take_edits();
-            if !edits.is_empty() {
+            self.completion.follow_edits(document.id, &edits);
+            if !edits.is_empty()
+                && let Some(lsp) = self.lsp.as_mut()
+            {
                 lsp.change(document.id, edits.clone(), document.buffer.rope());
                 // The diagnostics move with the text, and keep this version
                 // for an answer about it that is still on its way.
@@ -101,12 +103,15 @@ impl App {
         let Some(lsp) = self.lsp.as_mut() else { return Outcome::Continue };
         let marks = super::diagnostics::moves_marks(&event);
         let outcome = match lsp.handle(event) {
+            // Each feature that asks takes its own answers, matching each by
+            // the id `request` returned.
             Handled::Response(response) if self.formatting.asked(response.id) => {
                 self.format_answer(&response)
             }
+            Handled::Response(response) if self.completion_owns(&response) => {
+                self.completion_answer(&response)
+            }
             Handled::Nothing => Outcome::Continue,
-            // Each feature that asks takes its own answers, matching each by
-            // the id `request` returned.
             Handled::Response(response) => {
                 self.navigation_answered(&response).unwrap_or(Outcome::Continue)
             }
