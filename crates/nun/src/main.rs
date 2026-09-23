@@ -42,8 +42,12 @@ fn main() {
             print!("{}", capabilities_report(&nun_config::load(), &startup));
         }
         Some("theme") => print!("{}", theme(args.get(1).map(String::as_str))),
-        Some("config") => print!("{}", nun_config::load().describe()),
+        Some("config") => {
+            let settings = nun_config::load();
+            print!("{}{}", settings.describe(), glyphs(&settings).summary());
+        }
         Some("keys") => print!("{}", commands::reference()),
+        Some("glyphs") => print!("{}", glyphs(&nun_config::load()).reference()),
         Some("--help" | "-h") | None => print!("{}", usage()),
         Some(argument) if argument.starts_with('-') => {
             eprint!("nun: unknown option `{argument}`\n\n{}", usage());
@@ -125,7 +129,8 @@ fn edit(path: &Path, lsp_log: Option<&Path>) -> io::Result<()> {
     // and only one of them can have them.
     let startup = terminal::probe(terminal::PROBE_TIMEOUT);
     let (ramp, role_problems) = build_ramp(&startup.palette, &settings);
-    let palette = Palette::new(ramp);
+    let glyphs = glyphs(&settings);
+    let palette = Palette::new(ramp).with_glyphs(glyphs.glyphs);
 
     // A folder opens the file tree with an empty buffer beside it; a file
     // opens the file, with the tree rooted at the folder it is in.
@@ -137,7 +142,7 @@ fn edit(path: &Path, lsp_log: Option<&Path>) -> io::Result<()> {
     let set = key_set(&settings, startup.kitty_keyboard);
     let (keymap, key_problems) = commands::keymap(set, &settings.config.keys);
     let (servers, server_problems) = language_servers(&settings);
-    let problems = [role_problems, key_problems, server_problems].concat();
+    let problems = [role_problems, glyphs.problems, key_problems, server_problems].concat();
     let ctrl_click = ctrl_click_hint(&settings, &startup, &keymap);
 
     let mut app = App::new(buffer, palette, keymap);
@@ -359,6 +364,11 @@ fn build_ramp(probe: &Probe, settings: &Loaded) -> (Ramp, Vec<String>) {
     (ramp, problems)
 }
 
+/// The glyphs `[glyphs]` asks for, and what could not be used of it.
+fn glyphs(settings: &Loaded) -> nun_ui::glyph::Resolution {
+    nun_ui::Glyphs::resolve(&settings.config.glyph_preset, &settings.config.glyphs)
+}
+
 /// The folder the file tree is rooted at.
 ///
 /// A folder argument is its own root. A file is shown in the folder it is in,
@@ -556,7 +566,7 @@ fn usage() -> String {
     format!(
         "nun {VERSION}\n\
          A mouse-first terminal code editor.\n\n\
-         Usage: nun [--lsp-log <path>] <file>\n       nun [--lsp-log <path>] <folder>\n       nun config\n       nun keys\n       nun theme dump\n\n\
+         Usage: nun [--lsp-log <path>] <file>\n       nun [--lsp-log <path>] <folder>\n       nun config\n       nun keys\n       nun glyphs\n       nun theme dump\n\n\
          Options:\n  \
            -h, --help         Print help\n  \
            -V, --version      Print version\n  \
@@ -565,6 +575,7 @@ fn usage() -> String {
          Commands:\n  \
            config         Print the effective configuration and where it came from\n  \
            keys           List every command and the keys bound to it\n  \
+           glyphs         List every glyph nun draws, and what draws it\n  \
            theme dump     Probe this terminal and print the derived ramp as TOML\n\n\
          Keys:\n  \
            Ctrl+S save   Ctrl+Z undo   Ctrl+Y redo   Ctrl+A select all   Ctrl+Q quit\n  \
@@ -811,6 +822,27 @@ mod tests {
         assert!(report.contains("curly underline: no (the terminal could not say"), "{report}");
         assert!(report.contains("straight underline in the text's colour"), "{report}");
         assert!(report.contains("undercurl = \"auto\""), "{report}");
+    }
+
+    #[test]
+    fn glyph_overrides_are_resolved_and_bad_ones_reported_with_the_rest() {
+        let mut settings = Loaded::defaults();
+        settings.config.glyph_preset = "ascii".into();
+        settings.config.glyphs.insert("lightbulb".into(), "?".into());
+        settings.config.glyphs.insert("fold.opne".into(), "v".into());
+        settings.config.glyphs.insert("tab.close".into(), "😀".into());
+
+        let resolved = glyphs(&settings);
+        assert_eq!(resolved.glyphs.get(nun_ui::Glyph::Lightbulb), "?");
+        assert_eq!(resolved.glyphs.get(nun_ui::Glyph::TabClose), "x", "the preset's stands in");
+        assert_eq!(resolved.problems.len(), 2, "{:?}", resolved.problems);
+        assert!(resolved.problems.iter().any(|p| p.contains("did you mean `fold.open`?")));
+        assert!(resolved.problems.iter().any(|p| p.contains("U+1F600 is an emoji")));
+    }
+
+    #[test]
+    fn usage_documents_the_glyphs() {
+        assert!(usage().contains("nun glyphs"));
     }
 
     #[test]

@@ -13,9 +13,10 @@ use nun_theme::Role;
 use ratatui::buffer::Buffer as Cells;
 use ratatui::layout::Rect;
 use ratatui::widgets::Widget;
-use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
+use crate::clip;
+use crate::glyph::Glyph;
 use crate::style::Palette;
 
 /// Widest a tab is allowed to be, however long its label.
@@ -173,15 +174,26 @@ impl Widget for TabStrip<'_> {
             }
 
             let room = at.width.saturating_sub(PADDING);
-            write_clipped(cells, at.x + 1, at.y, room, &tab.label, style);
+            clip::write(
+                cells,
+                at.x + 1,
+                at.y,
+                room,
+                &tab.label,
+                style,
+                self.palette.glyph(Glyph::Ellipsis),
+            );
 
             // The dot and the cross share a column: an unsaved tab shows the
             // dot until the pointer arrives to close it.
             if let Some(close) = TabStrip::close_area(at) {
                 let show_close = active || self.hovered == Some(index);
                 let (glyph, glyph_style) = match (show_close, tab.modified) {
-                    (true, _) => ("×", style),
-                    (false, true) => ("•", style.patch(self.palette.ink(Role::Accent))),
+                    (true, _) => (self.palette.glyph(Glyph::TabClose), style),
+                    (false, true) => (
+                        self.palette.glyph(Glyph::TabModified),
+                        style.patch(self.palette.ink(Role::Accent)),
+                    ),
                     (false, false) => (" ", style),
                 };
                 cells[(close.x, close.y)].set_symbol(glyph).set_style(glyph_style);
@@ -195,41 +207,10 @@ impl Widget for TabStrip<'_> {
                 .get(index)
                 .map_or_else(|| areas.last().map_or(strip.x, |last| last.right()), |at| at.x);
             if x >= strip.x && x < strip.right() {
-                cells[(x, strip.y)].set_symbol("▏").set_style(self.palette.ink(Role::Accent));
+                cells[(x, strip.y)]
+                    .set_symbol(self.palette.glyph(Glyph::TabDrop))
+                    .set_style(self.palette.ink(Role::Accent));
             }
         }
-    }
-}
-
-/// Write `text` in at most `room` columns, ending in `…` when it does not fit.
-fn write_clipped(
-    cells: &mut Cells,
-    x: u16,
-    y: u16,
-    room: u16,
-    text: &str,
-    style: ratatui::style::Style,
-) {
-    let room = usize::from(room);
-    let fits = text.width() <= room;
-    let budget = if fits { room } else { room.saturating_sub(1) };
-
-    let mut column = 0usize;
-    for cluster in text.graphemes(true) {
-        let width = cluster.width();
-        if column + width > budget {
-            break;
-        }
-        let Ok(offset) = u16::try_from(column) else { break };
-        cells[(x + offset, y)].set_symbol(cluster).set_style(style);
-        for extra in 1..width {
-            let Ok(extra) = u16::try_from(column + extra) else { break };
-            cells[(x + extra, y)].set_symbol(" ").set_style(style);
-        }
-        column += width;
-    }
-    if !fits && room > 0 {
-        let Ok(offset) = u16::try_from(column) else { return };
-        cells[(x + offset, y)].set_symbol("…").set_style(style);
     }
 }

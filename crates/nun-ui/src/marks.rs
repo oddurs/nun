@@ -15,6 +15,7 @@ use ratatui::buffer::Buffer as Cells;
 use ratatui::layout::Rect;
 use ratatui::widgets::Widget;
 
+use crate::glyph::Glyph;
 use crate::style::Palette;
 
 /// How serious a diagnostic is. Ordered most serious first, so the worst of
@@ -206,15 +207,15 @@ impl<'a> Rail<'a> {
     }
 
     /// The glyph for `count` marks on one row: a bar that fills as they add
-    /// up, so a row of five is visibly not a row of one.
+    /// up, so a row of five is visibly not a row of one. None for none.
     #[must_use]
-    pub const fn glyph(count: usize) -> &'static str {
+    pub const fn glyph(count: usize) -> Option<Glyph> {
         match count {
-            0 => " ",
-            1 => "▎",
-            2 => "▌",
-            3 | 4 => "▊",
-            _ => "█",
+            0 => None,
+            1 => Some(Glyph::Rail1),
+            2 => Some(Glyph::Rail2),
+            3 | 4 => Some(Glyph::Rail3),
+            _ => Some(Glyph::Rail4),
         }
     }
 }
@@ -248,9 +249,8 @@ impl Widget for Rail<'_> {
         }
         for bucket in Self::buckets(self.marks, self.lines, area.height) {
             let style = self.palette.on(ground(bucket.row), bucket.worst.role());
-            cells[(x, area.top() + bucket.row)]
-                .set_symbol(Self::glyph(bucket.count))
-                .set_style(style);
+            let glyph = Self::glyph(bucket.count).map_or(" ", |glyph| self.palette.glyph(glyph));
+            cells[(x, area.top() + bucket.row)].set_symbol(glyph).set_style(style);
         }
     }
 }
@@ -302,9 +302,9 @@ mod tests {
         let marks = [(0, Severity::Warning), (0, Severity::Error), (5, Severity::Info)];
         let mut cells = Cells::empty(Rect::new(0, 0, 1, 8));
         Rail::new(&marks, 8, &palette).viewing(0..4).render(Rect::new(0, 0, 1, 8), &mut cells);
-        assert_eq!(cells[(0, 0)].symbol(), Rail::glyph(2));
+        assert_eq!(cells[(0, 0)].symbol(), palette.glyph(Glyph::Rail2));
         assert_eq!(cells[(0, 0)].fg, palette.fg(Role::Error).fg.unwrap());
-        assert_eq!(cells[(0, 5)].symbol(), Rail::glyph(1));
+        assert_eq!(cells[(0, 5)].symbol(), palette.glyph(Glyph::Rail1));
         assert_eq!(cells[(0, 5)].fg, palette.fg(Role::Info).fg.unwrap());
         assert_eq!(cells[(0, 3)].bg, palette.on(Role::Line, Role::Text).bg.unwrap(), "the thumb");
         assert_eq!(cells[(0, 6)].bg, palette.ground(), "the track below it");

@@ -928,7 +928,7 @@ fn a_preview_with_actions_draws_them_where_the_toggles_go_and_says_where_they_ar
     let toggles = text.lines().nth(3).unwrap_or_default();
     assert_eq!(toggles, "  Rename   Cancel", "trailing blanks are trimmed");
     for glyph in SearchButton::ALL.map(SearchButton::glyph) {
-        assert!(!toggles.contains(glyph), "no toggles: {toggles:?}");
+        assert!(!toggles.contains(palette.glyph(glyph)), "no toggles: {toggles:?}");
     }
 
     let rename = SearchView::action_area(area, &actions, 0).unwrap();

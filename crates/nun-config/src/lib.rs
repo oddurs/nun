@@ -178,6 +178,14 @@ pub struct Config {
     /// Which languages exist is the binary's business, like the commands in
     /// `keys`; it reports a language it does not know as a problem.
     pub lsp: BTreeMap<String, LspServer>,
+    /// `glyphs.preset`: which set of glyphs to start from.
+    pub glyph_preset: String,
+    /// The rest of `[glyphs]`: role name to glyph, over the preset.
+    ///
+    /// Kept as text, like `keys`. Which roles and presets exist, and which
+    /// glyphs are fit to draw, is the UI's business; it reports anything it
+    /// cannot use as a problem.
+    pub glyphs: BTreeMap<String, String>,
 }
 
 impl Default for Config {
@@ -196,6 +204,8 @@ impl Default for Config {
             lightbulb: true,
             keys: BTreeMap::new(),
             lsp: default_servers(),
+            glyph_preset: "default".to_string(),
+            glyphs: BTreeMap::new(),
         }
     }
 }
@@ -287,6 +297,17 @@ impl Loaded {
             }
         }
 
+        let _ = writeln!(out, "\n[glyphs]");
+        let _ = writeln!(out, "preset = {:?}{}", c.glyph_preset, self.note("glyphs.preset"));
+        if c.glyphs.is_empty() {
+            let _ = writeln!(out, "# none changed; every role is listed by `nun glyphs`");
+        } else {
+            for (role, glyph) in &c.glyphs {
+                let note = self.note(&format!("glyphs.{role}"));
+                let _ = writeln!(out, "{} = {}{note}", toml_string(role), toml_string(glyph));
+            }
+        }
+
         for (language, server) in &c.lsp {
             let _ = writeln!(out, "\n[lsp.{language}]{}", self.note(&format!("lsp.{language}")));
             let _ = writeln!(out, "command = {:?}", server.command);
@@ -312,6 +333,30 @@ impl Loaded {
             Origin::File(path) => format!("    # {}", path.display()),
         }
     }
+}
+
+/// `text` as a TOML basic string.
+///
+/// Not Rust's `{:?}`, which writes `\u{301}` for a combining mark where TOML
+/// wants `\u0301`: a glyph can be exactly that, and `nun config` is meant to
+/// paste back. Only what TOML requires is escaped; the rest stays as it is.
+fn toml_string(text: &str) -> String {
+    use fmt::Write as _;
+    let mut out = String::from('"');
+    for ch in text.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            ch if ch.is_control() => {
+                let _ = write!(out, "\\u{:04X}", u32::from(ch));
+            }
+            ch => out.push(ch),
+        }
+    }
+    out.push('"');
+    out
 }
 
 /// Where nun looks for the user's file.
@@ -378,6 +423,7 @@ struct RawConfig {
     ui: Option<RawUi>,
     keys: Option<BTreeMap<String, String>>,
     lsp: Option<BTreeMap<String, RawLsp>>,
+    glyphs: Option<toml::Table>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -480,6 +526,9 @@ impl RawConfig {
         if let Some(ui) = self.ui.take() {
             ui.apply(loaded, path);
         }
+        if let Some(glyphs) = self.glyphs.take() {
+            apply_glyphs(glyphs, loaded, path);
+        }
         let mut set = |key: &str| {
             loaded.origins.insert(key.to_string(), Origin::File(path.to_path_buf()));
         };
@@ -554,6 +603,59 @@ impl RawConfig {
             }
             loaded.config.lsp.insert(language.clone(), server);
             set(&format!("lsp.{language}"));
+        }
+    }
+}
+
+/// Apply `[glyphs]`: `preset`, and every other string in it, however deep, as
+/// a role named by its dotted path.
+///
+/// Role names have dots in them, and TOML reads `fold.open = "v"` as a table
+/// `fold` holding `open`. Flattening the tables back into dotted names lets
+/// that, `"fold.open" = "v"` and a `[glyphs.fold]` section all mean the same
+/// thing, which is what anyone writing one of them would expect.
+fn apply_glyphs(table: toml::Table, loaded: &mut Loaded, path: &Path) {
+    let mut glyphs = BTreeMap::new();
+    let mut problems = Vec::new();
+    flatten(table, "", &mut glyphs, &mut problems);
+
+    let origin = || Origin::File(path.to_path_buf());
+    if let Some(preset) = glyphs.remove("preset") {
+        loaded.config.glyph_preset = preset;
+        loaded.origins.insert("glyphs.preset".to_string(), origin());
+    }
+    for (role, glyph) in glyphs {
+        // Added to, not replaced, like `[keys]`: a later layer changes the
+        // roles it names and leaves an earlier layer's others alone.
+        loaded.origins.insert(format!("glyphs.{role}"), origin());
+        loaded.config.glyphs.insert(role, glyph);
+    }
+    for message in problems {
+        loaded.problems.push(Problem { path: path.to_path_buf(), message });
+    }
+}
+
+fn flatten(
+    table: toml::Table,
+    prefix: &str,
+    out: &mut BTreeMap<String, String>,
+    problems: &mut Vec<String>,
+) {
+    for (key, value) in table {
+        let name = if prefix.is_empty() { key } else { format!("{prefix}.{key}") };
+        match value {
+            toml::Value::String(glyph) => {
+                // `fold.open` and `"fold.open"` are different keys to TOML and
+                // the same role here.
+                if out.insert(name.clone(), glyph).is_some() {
+                    problems.push(format!("glyphs.{name} is set twice; the second is used"));
+                }
+            }
+            toml::Value::Table(inner) => flatten(inner, &name, out, problems),
+            other => problems.push(format!(
+                "glyphs.{name} must be a string, like \"v\", not {}",
+                other.type_str()
+            )),
         }
     }
 }

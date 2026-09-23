@@ -31,7 +31,7 @@ use nun_lsp::types::{
 };
 use nun_lsp::{Encoding, RequestId, Response};
 use nun_theme::Role;
-use nun_ui::{HitState, PaletteEntry, ReferencesView, SearchRow};
+use nun_ui::{Glyph, HitState, PaletteEntry, ReferencesView, SearchRow};
 use nun_workspace::Job;
 use ratatui::buffer::Buffer as Cells;
 use ratatui::layout::Rect;
@@ -940,7 +940,8 @@ impl App {
                     .filter(|line| (*line as usize) < doc.buffer.len_lines())
                     .map(|line| (line, doc.buffer.line_text(line as usize)))
                     .collect();
-                fill_lines(&mut self.navigation.listing.groups[at], &lines);
+                let ellipsis = self.palette.glyph(Glyph::Ellipsis);
+                fill_lines(&mut self.navigation.listing.groups[at], &lines, ellipsis);
             } else {
                 let lines = self.navigation.listing.groups[at]
                     .hits
@@ -970,13 +971,14 @@ impl App {
         generation: u64,
         lines: Vec<(PathBuf, Vec<(u32, String)>)>,
     ) -> Outcome {
+        let ellipsis = self.palette.glyph(Glyph::Ellipsis);
         let listing = &mut self.navigation.listing;
         if generation != listing.generation {
             return Outcome::Continue;
         }
         for (path, lines) in lines {
             if let Some(group) = listing.groups.iter_mut().find(|group| group.path == path) {
-                fill_lines(group, &lines);
+                fill_lines(group, &lines, ellipsis);
             }
         }
         Outcome::Redraw
@@ -1160,8 +1162,8 @@ fn places_of(found: Option<GotoDefinitionResponse>, encoding: Encoding) -> Vec<P
 }
 
 /// Put the lines read for a group into its hits, with the reference in each
-/// picked out.
-fn fill_lines(group: &mut Group, lines: &[(u32, String)]) {
+/// picked out, and `ellipsis` in front of a line cut short.
+fn fill_lines(group: &mut Group, lines: &[(u32, String)], ellipsis: &str) {
     for hit in &mut group.hits {
         let start = hit.place.range.start;
         let Some((_, text)) = lines.iter().find(|(line, _)| *line == start.line) else { continue };
@@ -1175,7 +1177,7 @@ fn fill_lines(group: &mut Group, lines: &[(u32, String)]) {
         } else {
             text.chars().count()
         };
-        let (shown, matched) = window(text, from, to);
+        let (shown, matched) = window(text, from, to, ellipsis);
         hit.text = shown;
         hit.matched = vec![matched];
     }
@@ -1183,15 +1185,17 @@ fn fill_lines(group: &mut Group, lines: &[(u32, String)]) {
 
 /// `text`, cut so the chars `from..to` are near its start when they would
 /// otherwise be far along a long line, with those chars' range in what is
-/// kept.
-fn window(text: &str, from: usize, to: usize) -> (String, Range<u32>) {
+/// kept. `ellipsis` stands in for what was cut, and the range moves by the
+/// chars it is made of, which need not be one.
+fn window(text: &str, from: usize, to: usize, ellipsis: &str) -> (String, Range<u32>) {
     let cut = from.saturating_sub(LEAD);
     let mut shown = String::new();
     let (mut from, mut to) = (from, to);
     if cut > 0 {
-        shown.push('…');
-        from = from - cut + 1;
-        to = to - cut + 1;
+        shown.push_str(ellipsis);
+        let chars = ellipsis.chars().count();
+        from = from - cut + chars;
+        to = to - cut + chars;
     }
     shown.extend(text.chars().skip(cut));
     let at = |chars: usize| u32::try_from(chars).unwrap_or(u32::MAX);
@@ -1372,12 +1376,19 @@ mod tests {
 
     #[test]
     fn a_reference_on_a_long_line_is_brought_into_view() {
-        let (shown, matched) = window("short", 0, 5);
+        let (shown, matched) = window("short", 0, 5, "…");
         assert_eq!((shown.as_str(), matched), ("short", 0..5));
 
         let line = format!("{}needle rest", "x".repeat(100));
-        let (shown, matched) = window(&line, 100, 106);
+        let (shown, matched) = window(&line, 100, 106, "…");
         assert!(shown.starts_with('…'));
+        let picked: String =
+            shown.chars().skip(matched.start as usize).take(matched.len()).collect();
+        assert_eq!(picked, "needle");
+
+        // An ellipsis of two chars moves the range by two.
+        let (shown, matched) = window(&line, 100, 106, "~\u{301}");
+        assert!(shown.starts_with("~\u{301}"));
         let picked: String =
             shown.chars().skip(matched.start as usize).take(matched.len()).collect();
         assert_eq!(picked, "needle");
@@ -1395,7 +1406,7 @@ mod tests {
             };
             let mut group = Group { path: PathBuf::from("/x"), label: "x".into(), hits: vec![] };
             group.hits.push(Hit { place, text: String::new(), matched: vec![] });
-            fill_lines(&mut group, &[(0, text.to_string())]);
+            fill_lines(&mut group, &[(0, text.to_string())], "…");
             let hit = &group.hits[0];
             let picked: String = hit
                 .text

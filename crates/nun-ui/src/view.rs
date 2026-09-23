@@ -8,20 +8,12 @@ use ratatui::widgets::Widget;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
+use crate::glyph::Glyph;
 use crate::marks::Mark;
 use crate::style::Palette;
 
 /// Space between the gutter digits and the text.
 const GUTTER_PADDING: u16 = 2;
-
-/// The mark beside a line that has code actions.
-///
-/// A lozenge rather than a light bulb: 💡 is two cells wide and drawn as an
-/// emoji, in a colour of its own that no role reaches. This one is a single
-/// cell whatever the terminal makes of ambiguous widths (it is neutral, not
-/// ambiguous, unlike `•`), has no emoji form to be switched into, and is in
-/// every monospace font that has the fold arrows beside it.
-pub const LIGHTBULB: &str = "◊";
 
 /// Where one of a live snippet's tab-stops is, in char indices, and whether
 /// it is the one being edited. An empty stop marks the one cell at `start`.
@@ -352,7 +344,9 @@ impl Widget for EditorView<'_> {
             self.draw_arrow(cells, area, y, line, folded_here);
             if self.lightbulb == Some(line) {
                 let x = area.left() + self.lightbulb_column();
-                cells[(x, y)].set_symbol(LIGHTBULB).set_style(self.palette.fg(Role::Accent));
+                cells[(x, y)]
+                    .set_symbol(self.palette.glyph(Glyph::Lightbulb))
+                    .set_style(self.palette.fg(Role::Accent));
             }
             let end = self.draw_line(cells, area, y, line, gutter, &carets);
             if folded_here {
@@ -378,24 +372,26 @@ impl EditorView<'_> {
             .binary_search_by_key(&u32::try_from(line).unwrap_or(u32::MAX), |range| range.header)
             .is_ok();
         let (glyph, role) = match (folded, foldable) {
-            (true, _) => ("▸", Role::Accent),
-            (false, true) => ("▾", Role::Faint),
+            (true, _) => (Glyph::FoldClosed, Role::Accent),
+            (false, true) => (Glyph::FoldOpen, Role::Faint),
             (false, false) => return,
         };
-        cells[(x, y)].set_symbol(glyph).set_style(self.palette.fg(role));
+        cells[(x, y)].set_symbol(self.palette.glyph(glyph)).set_style(self.palette.fg(role));
     }
 
     /// The marker after a folded header's text, standing in for what is
     /// hidden: a small raised chip, one space after the line.
     fn draw_fold_marker(&self, cells: &mut Cells, area: Rect, y: u16, after: u16) {
         let style = self.palette.on(Role::Raised, Role::Dim);
-        for (offset, ch) in " ⋯ ".chars().enumerate() {
+        for (offset, symbol) in
+            [" ", self.palette.glyph(Glyph::FoldHidden), " "].into_iter().enumerate()
+        {
             let Ok(offset) = u16::try_from(offset + 1) else { break };
             let x = after.saturating_add(offset);
             if x >= area.right() {
                 break;
             }
-            cells[(x, y)].set_char(ch).set_style(style);
+            cells[(x, y)].set_symbol(symbol).set_style(style);
         }
     }
 

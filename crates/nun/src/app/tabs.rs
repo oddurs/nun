@@ -659,10 +659,15 @@ impl App {
             } else {
                 self.palette.fg(nun_theme::Role::Line)
             };
-            let glyph = if divider.dir == Dir::Beside { '│' } else { '─' };
+            let rule = if divider.dir == Dir::Beside {
+                nun_ui::Glyph::RuleVertical
+            } else {
+                nun_ui::Glyph::RuleHorizontal
+            };
+            let glyph = self.palette.glyph(rule);
             for y in divider.area.top()..divider.area.bottom() {
                 for x in divider.area.left()..divider.area.right() {
-                    cells[(x, y)].set_char(glyph).set_style(style);
+                    cells[(x, y)].set_symbol(glyph).set_style(style);
                 }
             }
         }

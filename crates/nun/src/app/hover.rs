@@ -31,7 +31,7 @@ use nun_lsp::types::{
     self as lsp, HoverContents, HoverParams, HoverProviderCapability, MarkedString, MarkupKind,
 };
 use nun_lsp::{Encoding, RequestId, Response};
-use nun_ui::{CodeBudget, Event, Markdown};
+use nun_ui::{CodeBudget, Event, Glyphs, Markdown};
 
 use super::card::{Anchor, Card};
 use super::navigation::{Open, Place};
@@ -370,8 +370,9 @@ impl App {
             spot.word = word.clone();
         }
 
-        let markdown =
-            found.map_or_else(Markdown::default, |hover| contents(hover.contents, language));
+        let markdown = found.map_or_else(Markdown::default, |hover| {
+            contents(hover.contents, language, self.palette.glyphs())
+        });
         let problems = self.problems_on(doc, &word);
         let fixable = !problems.is_empty();
         if markdown.is_empty() && problems.is_empty() {
@@ -494,10 +495,10 @@ impl App {
 
 /// What a hover says, as a card shows it: every form the protocol allows.
 /// All of its code shares one card's allowance of highlighting.
-fn contents(contents: HoverContents, language: Option<&str>) -> Markdown {
+fn contents(contents: HoverContents, language: Option<&str>, glyphs: &Glyphs) -> Markdown {
     let mut budget = CodeBudget::new();
     let mut marked = |marked: MarkedString| match marked {
-        MarkedString::String(text) => Markdown::parse(&text, language, &mut budget),
+        MarkedString::String(text) => Markdown::parse(&text, language, &mut budget, glyphs),
         MarkedString::LanguageString(code) => {
             Markdown::code(&code.language, &code.value, &mut budget)
         }
@@ -512,7 +513,7 @@ fn contents(contents: HoverContents, language: Option<&str>) -> Markdown {
             all
         }
         HoverContents::Markup(markup) => match markup.kind {
-            MarkupKind::Markdown => Markdown::parse(&markup.value, language, &mut budget),
+            MarkupKind::Markdown => Markdown::parse(&markup.value, language, &mut budget, glyphs),
             MarkupKind::PlainText => Markdown::plain(&markup.value),
         },
     }
@@ -902,29 +903,29 @@ done
                 .join("|")
         };
         let scalar = HoverContents::Scalar(MarkedString::String("*a*".into()));
-        assert_eq!(plain(&contents(scalar, None)), "a");
+        assert_eq!(plain(&contents(scalar, None, &Glyphs::default())), "a");
         let code = HoverContents::Scalar(MarkedString::LanguageString(LanguageString {
             language: "rust".into(),
             value: "fn f()".into(),
         }));
-        let code = contents(code, None);
+        let code = contents(code, None, &Glyphs::default());
         assert_eq!(plain(&code), "fn f()");
         assert!(code.body[0].iter().any(|run| run.role == Role::Keyword));
         let array = HoverContents::Array(vec![
             MarkedString::String("one".into()),
             MarkedString::String("two".into()),
         ]);
-        assert_eq!(plain(&contents(array, None)), "one||two");
+        assert_eq!(plain(&contents(array, None, &Glyphs::default())), "one||two");
         let text = HoverContents::Markup(MarkupContent {
             kind: MarkupKind::PlainText,
             value: "*not* markdown".into(),
         });
-        assert_eq!(plain(&contents(text, None)), "*not* markdown");
+        assert_eq!(plain(&contents(text, None, &Glyphs::default())), "*not* markdown");
         let markdown = HoverContents::Markup(MarkupContent {
             kind: MarkupKind::Markdown,
             value: "```\nlet x\n```".into(),
         });
-        let markdown = contents(markdown, Some("rust"));
+        let markdown = contents(markdown, Some("rust"), &Glyphs::default());
         assert!(
             markdown.body[0].iter().any(|run| run.role == Role::Keyword),
             "the file's language"

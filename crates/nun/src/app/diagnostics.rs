@@ -25,7 +25,8 @@ use nun_core::{Assoc, Edit, Range, Selections};
 use nun_lsp::Encoding;
 use nun_lsp::types::{Diagnostic, DiagnosticSeverity, NumberOrString};
 use nun_theme::Role;
-use nun_ui::{EditorView, Mark, Paragraph, Rail, Run, Severity, Tally};
+use nun_ui::text_width;
+use nun_ui::{EditorView, Glyph, Mark, Paragraph, Rail, Run, Severity, Tally};
 use ratatui::buffer::Buffer as Cells;
 use ratatui::layout::Rect;
 use ropey::Rope;
@@ -413,8 +414,11 @@ impl App {
             return Vec::new();
         }
         vec![
-            ("‹ Previous".to_string(), Command::PreviousDiagnostic),
-            ("Next ›".to_string(), Command::NextDiagnostic),
+            (
+                format!("{} Previous", self.palette.glyph(Glyph::CardPrevious)),
+                Command::PreviousDiagnostic,
+            ),
+            (format!("Next {}", self.palette.glyph(Glyph::CardNext)), Command::NextDiagnostic),
         ]
     }
 
@@ -594,12 +598,12 @@ impl App {
         }
         let mut runs = vec![(" ".to_string(), Role::Dim)];
         for (count, glyph, role) in [
-            (tally.errors, "✕", Role::Error),
-            (tally.warnings, "▲", Role::Warn),
-            (tally.notes, "●", Role::Info),
+            (tally.errors, Glyph::DiagnosticError, Role::Error),
+            (tally.warnings, Glyph::DiagnosticWarning, Role::Warn),
+            (tally.notes, Glyph::DiagnosticInfo, Role::Info),
         ] {
             if count > 0 {
-                runs.push((format!("{glyph} {count} "), role));
+                runs.push((format!("{} {count} ", self.palette.glyph(glyph)), role));
             }
         }
         Some(runs)
@@ -617,17 +621,17 @@ impl App {
     ) -> Option<Rect> {
         let label = self.problems_label()?;
         let width =
-            u16::try_from(label.iter().map(|(run, _)| run.chars().count()).sum::<usize>()).ok()?;
+            u16::try_from(label.iter().map(|(run, _)| text_width(run)).sum::<usize>()).ok()?;
         let (left, right) = self.status();
         let edge = match lsp {
             Some(lsp) => lsp.x,
             None => close
                 .map_or(status.right(), |close| close.x)
-                .checked_sub(u16::try_from(right.chars().count() + 1).ok()?)?,
+                .checked_sub(u16::try_from(text_width(&right) + 1).ok()?)?,
         };
         let x = edge.checked_sub(width)?;
         let used = undo.map_or_else(
-            || text.saturating_add(u16::try_from(left.chars().count() + 1).unwrap_or(u16::MAX)),
+            || text.saturating_add(u16::try_from(text_width(&left) + 1).unwrap_or(u16::MAX)),
             Rect::right,
         );
         (x > used).then(|| Rect::new(x, status.y, width, 1))
@@ -645,7 +649,7 @@ impl App {
                 self.palette.on(Role::Raised, role)
             };
             super::write_at(cells, area, x, &run, style);
-            x = x.saturating_add(u16::try_from(run.chars().count()).unwrap_or(u16::MAX));
+            x = x.saturating_add(u16::try_from(text_width(&run)).unwrap_or(u16::MAX));
         }
     }
 }

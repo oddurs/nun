@@ -9,10 +9,14 @@
 //! * **Nothing names a colour.** [`Palette`] turns a [`nun_theme::Ramp`] into
 //!   ratatui styles, and it is the only place in the UI that touches a
 //!   `ratatui::style::Color`.
+//! * **Nothing spells a glyph.** Widgets ask the palette for a [`Glyph`] role,
+//!   and every mark comes out of the one table in [`glyph`].
 
 mod backend;
+mod clip;
 mod completion;
 mod events;
+pub mod glyph;
 mod harness;
 mod layout;
 mod lifecycle;
@@ -33,8 +37,10 @@ mod underline;
 mod view;
 
 pub use backend::NunBackend;
+pub use clip::{clusters, text_width};
 pub use completion::{CompletionView, DocsView, MOST_DOC_LINES, MOST_SUGGESTIONS, Suggestion};
 pub use events::{Event, Events};
+pub use glyph::{Glyph, Glyphs};
 pub use harness::{Harness, changed_cells, changed_rows};
 pub use layout::{Dir, Divider, Edge, Layout, Side};
 pub use lifecycle::{
@@ -56,4 +62,4 @@ pub use syntax::{FALLBACK, role_of};
 pub use tabs::{Tab, TabStrip};
 pub use tree::{TreeButton, TreeView};
 pub use underline::{Evidence, UNDERLINE_QUERY, UnderlineProbe, Underlines};
-pub use view::{EditorView, LIGHTBULB, Stop};
+pub use view::{EditorView, Stop};

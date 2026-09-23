@@ -3,21 +3,46 @@
 //! Widgets ask for a [`Role`] and get a `Style`. Nothing downstream constructs
 //! a `ratatui::style::Color`, which is what keeps the terminal-derived palette
 //! from being quietly bypassed one widget at a time.
+//!
+//! The palette carries the glyphs too, so the look travels as one value: a
+//! widget handed a palette can colour a mark and knows which mark to draw,
+//! with no second thing to thread through every signature.
 
 use nun_theme::{Ramp, Rgb, Role};
 use ratatui::style::{Color, Modifier, Style};
 
-/// A derived ramp, ready to hand out ratatui styles.
+use crate::glyph::{Glyph, Glyphs};
+
+/// A derived ramp, ready to hand out ratatui styles, and the glyphs to draw.
 #[derive(Debug, Clone)]
 pub struct Palette {
     ramp: Ramp,
+    glyphs: Glyphs,
 }
 
 impl Palette {
-    /// Wrap a derived ramp.
+    /// Wrap a derived ramp, drawing the default glyphs.
     #[must_use]
-    pub const fn new(ramp: Ramp) -> Self {
-        Self { ramp }
+    pub fn new(ramp: Ramp) -> Self {
+        Self { ramp, glyphs: Glyphs::default() }
+    }
+
+    /// The same colours, drawing `glyphs`.
+    #[must_use]
+    pub fn with_glyphs(self, glyphs: Glyphs) -> Self {
+        Self { glyphs, ..self }
+    }
+
+    /// What to draw for one glyph role.
+    #[must_use]
+    pub fn glyph(&self, glyph: Glyph) -> &str {
+        self.glyphs.get(glyph)
+    }
+
+    /// Every glyph in use.
+    #[must_use]
+    pub const fn glyphs(&self) -> &Glyphs {
+        &self.glyphs
     }
 
     /// The ramp underneath.

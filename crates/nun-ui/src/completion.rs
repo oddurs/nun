@@ -13,7 +13,9 @@ use ratatui::widgets::Widget;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-use crate::palette::{Entry, write, write_matched};
+use crate::clip;
+use crate::glyph::Glyph;
+use crate::palette::{Entry, write_matched};
 use crate::style::Palette;
 
 /// One suggestion.
@@ -168,7 +170,15 @@ impl Widget for CompletionView<'_> {
 
             let kind =
                 if selected { row } else { self.palette.on(Role::Overlay, suggestion.kind_role) };
-            write(cells, area.x + 1, y, KIND - 1, suggestion.kind, kind);
+            clip::write(
+                cells,
+                area.x + 1,
+                y,
+                KIND - 1,
+                suggestion.kind,
+                kind,
+                self.palette.glyph(Glyph::Ellipsis),
+            );
 
             let detail_width = u16::try_from(suggestion.detail.width()).unwrap_or(u16::MAX);
             let label_room = area.width.saturating_sub(KIND + 2);
@@ -192,11 +202,20 @@ impl Widget for CompletionView<'_> {
                 label_style,
                 self.palette.on(Role::Overlay, Role::Accent),
                 selected,
+                self.palette.glyph(Glyph::Ellipsis),
             );
             if detail_room >= 4 {
                 let width = detail_width.min(detail_room);
                 let detail = if selected { row } else { self.palette.on(Role::Overlay, Role::Dim) };
-                write(cells, area.right() - 1 - width, y, width, &suggestion.detail, detail);
+                clip::write(
+                    cells,
+                    area.right() - 1 - width,
+                    y,
+                    width,
+                    &suggestion.detail,
+                    detail,
+                    self.palette.glyph(Glyph::Ellipsis),
+                );
             }
         }
     }
@@ -273,7 +292,15 @@ impl Widget for DocsView<'_> {
             wrap(self.text, room).iter().take(usize::from(area.height)).enumerate()
         {
             let Ok(offset) = u16::try_from(offset) else { break };
-            write(cells, area.x + 1, area.y + offset, room, line, style);
+            clip::write(
+                cells,
+                area.x + 1,
+                area.y + offset,
+                room,
+                line,
+                style,
+                self.palette.glyph(Glyph::Ellipsis),
+            );
         }
     }
 }
