@@ -41,11 +41,18 @@ cd ../.worktrees/nun/feat/0007-core-buffer
 cairn close 7                              # before the PR, not after
 scripts/agent check                        # must be green
 scripts/agent commit "feat(core): add the rope-backed buffer"
-scripts/agent pr
-
-# after the PR merges
-scripts/agent done                         # from inside the worktree
+scripts/agent pr                           # push (hook runs the check) + open
+scripts/agent merge                        # rebase if behind, re-check, merge, clean up
 ```
+
+**The check that gates a merge is the local one.** The `pre-push` hook runs
+`scripts/task check` on every push, and `scripts/agent merge` rebases a branch
+that has fallen behind and pushes it again, so what lands has been checked as it
+will land. CI runs the same check on `main` after the merge, as a net for what
+only Linux or a cold toolchain would catch; it does not gate anything. If it goes
+red, fixing `main` is the next piece of work.
+
+`scripts/agent done` cleans up after a PR that was merged some other way.
 
 **Close the item before opening the PR.** cairn items are files in this
 repository, so a status change only exists once it is committed. Closing after
@@ -53,8 +60,8 @@ the merge writes to a worktree that is about to be deleted and the change is
 lost. Run every `cairn` command inside the worktree for the same reason — never
 in the primary checkout, which must stay clean on the default branch.
 
-`scripts/agent done` deletes the directory you are standing in. It prints the
-path to move back to; it will not `cd` for you.
+`scripts/agent merge` and `scripts/agent done` delete the directory you are
+standing in. They print the path to move back to; they will not `cd` for you.
 
 Branch names are `<type>/<slug>` where type is one of `feat` `fix` `chore`
 `docs` `perf` `refactor` `test`. When the work has a cairn item, the slug starts

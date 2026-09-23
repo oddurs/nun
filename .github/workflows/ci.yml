@@ -1,9 +1,12 @@
 name: ci
 
+# A pull request is checked locally before it exists: the pre-push hook runs
+# `scripts/task check`, and `scripts/agent merge` re-runs it after a rebase. This
+# job is the after-the-fact net for what a Mac cannot see — Linux, a clean
+# toolchain, a cold cache. It gates nothing.
 on:
   push:
     branches: [main]
-  pull_request:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -32,19 +35,3 @@ jobs:
 
       - name: scripts/task check
         run: ./scripts/task check
-
-  # The single status check required by the branch ruleset. Adding a job above
-  # means adding it to `needs` here, and nowhere else.
-  required:
-    name: required
-    if: always()
-    needs: [check]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Verify every job succeeded
-        run: |
-          if [ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" = "true" ]; then
-            echo "a required job did not succeed"
-            exit 1
-          fi
-          echo "all required jobs succeeded"
