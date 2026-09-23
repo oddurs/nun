@@ -482,9 +482,10 @@ fn the_code_action_mark_is_one_cell_wherever_it_is_drawn() {
     use unicode_width::UnicodeWidthStr;
     // Narrow both where ambiguous characters are narrow and where they are
     // wide, so no terminal setting can push the text a cell to the right.
-    assert_eq!(nun_ui::LIGHTBULB.width(), 1);
-    assert_eq!(nun_ui::LIGHTBULB.width_cjk(), 1);
-    assert_eq!(nun_ui::LIGHTBULB.chars().count(), 1, "no variation selector to go wrong");
+    let lightbulb = palette().glyph(nun_ui::Glyph::Lightbulb).to_string();
+    assert_eq!(lightbulb.width(), 1);
+    assert_eq!(lightbulb.width_cjk(), 1);
+    assert_eq!(lightbulb.chars().count(), 1, "no variation selector to go wrong");
 }
 
 #[test]

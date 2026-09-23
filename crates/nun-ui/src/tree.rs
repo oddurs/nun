@@ -11,9 +11,9 @@ use ratatui::buffer::Buffer as Cells;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::widgets::Widget;
-use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::UnicodeWidthStr;
 
+use crate::clip;
+use crate::glyph::Glyph;
 use crate::style::Palette;
 
 /// Columns each level of nesting indents by.
@@ -39,15 +39,15 @@ impl TreeButton {
     /// What the button shows. One cell wide each, so the header's geometry
     /// never depends on a font.
     #[must_use]
-    pub const fn glyph(self, showing_ignored: bool) -> &'static str {
+    pub const fn glyph(self, showing_ignored: bool) -> Glyph {
         match self {
-            Self::NewFile => "+",
-            Self::NewDir => "▪",
-            Self::ToggleIgnored if showing_ignored => "●",
-            Self::ToggleIgnored => "○",
+            Self::NewFile => Glyph::TreeNewFile,
+            Self::NewDir => Glyph::TreeNewFolder,
+            Self::ToggleIgnored if showing_ignored => Glyph::TreeIgnoredShown,
+            Self::ToggleIgnored => Glyph::TreeIgnoredHidden,
             // The same magnifier the status line's search button uses, so the
             // two ways into a search look like the same thing.
-            Self::Search => "⌕",
+            Self::Search => Glyph::SearchIcon,
         }
     }
 
@@ -225,7 +225,15 @@ impl TreeView<'_> {
         // title so a long project name never runs into them.
         let buttons = u16::try_from(TreeButton::ALL.len()).unwrap_or(u16::MAX);
         let limit = area.width.saturating_sub(buttons.saturating_mul(2).saturating_add(2));
-        put(cells, area.x + 1, area.y, limit, self.title, style);
+        clip::write(
+            cells,
+            area.x + 1,
+            area.y,
+            limit,
+            self.title,
+            style,
+            self.palette.glyph(Glyph::Ellipsis),
+        );
 
         for button in TreeButton::ALL {
             let Some(cell) = Self::button_area(area, button) else { continue };
@@ -234,7 +242,15 @@ impl TreeView<'_> {
             } else {
                 self.palette.on(Role::Raised, Role::Dim)
             };
-            put(cells, cell.x, cell.y, 1, button.glyph(self.showing_ignored), style);
+            clip::write(
+                cells,
+                cell.x,
+                cell.y,
+                1,
+                self.palette.glyph(button.glyph(self.showing_ignored)),
+                style,
+                self.palette.glyph(Glyph::Ellipsis),
+            );
         }
     }
 
@@ -260,18 +276,28 @@ impl TreeView<'_> {
         let depth = u16::try_from(row.depth).unwrap_or(u16::MAX);
         let indent = line.x.saturating_add(1).saturating_add(depth.saturating_mul(INDENT));
         let disclosure = match (row.kind, row.expanded) {
-            (Kind::Dir, true) => "▾ ",
-            (Kind::Dir, false) => "▸ ",
-            (Kind::Symlink, _) => "↪ ",
-            (Kind::File, _) => "  ",
+            (Kind::Dir, true) => Some(Glyph::TreeExpanded),
+            (Kind::Dir, false) => Some(Glyph::TreeCollapsed),
+            (Kind::Symlink, _) => Some(Glyph::TreeSymlink),
+            (Kind::File, _) => None,
         };
+        let disclosure = disclosure
+            .map_or_else(|| "  ".to_string(), |glyph| format!("{} ", self.palette.glyph(glyph)));
         let marker_style = if self.drop_target == Some(index) {
             style
         } else {
             style.patch(self.palette.ink(Role::Dim))
         };
         let room = line.right().saturating_sub(indent);
-        put(cells, indent, line.y, room, disclosure, marker_style);
+        clip::write(
+            cells,
+            indent,
+            line.y,
+            room,
+            &disclosure,
+            marker_style,
+            self.palette.glyph(Glyph::Ellipsis),
+        );
 
         let name_x = indent.saturating_add(2);
         let room = line.right().saturating_sub(name_x);
@@ -279,7 +305,7 @@ impl TreeView<'_> {
             Some(error) => format!("{} — {error}", row.name),
             None => row.name.clone(),
         };
-        put(cells, name_x, line.y, room, &name, style);
+        clip::write(cells, name_x, line.y, room, &name, style, self.palette.glyph(Glyph::Ellipsis));
     }
 }
 
@@ -288,32 +314,5 @@ fn fill(cells: &mut Cells, area: Rect, style: Style) {
         for x in area.left()..area.right() {
             cells[(x, y)].set_char(' ').set_style(style);
         }
-    }
-}
-
-/// Write `text` at `(x, y)` in at most `room` columns, clipping at a cluster
-/// rather than splitting one, and ending with `…` when it had to clip.
-fn put(cells: &mut Cells, x: u16, y: u16, room: u16, text: &str, style: Style) {
-    let room = usize::from(room);
-    let fits = text.width() <= room;
-    let budget = if fits { room } else { room.saturating_sub(1) };
-
-    let mut column = 0usize;
-    for cluster in text.graphemes(true) {
-        let width = cluster.width();
-        if column + width > budget {
-            break;
-        }
-        let Ok(offset) = u16::try_from(column) else { break };
-        cells[(x + offset, y)].set_symbol(cluster).set_style(style);
-        for extra in 1..width {
-            let Ok(extra) = u16::try_from(column + extra) else { break };
-            cells[(x + extra, y)].set_symbol(" ").set_style(style);
-        }
-        column += width;
-    }
-    if !fits && room > 0 {
-        let Ok(offset) = u16::try_from(column) else { return };
-        cells[(x + offset, y)].set_symbol("…").set_style(style);
     }
 }

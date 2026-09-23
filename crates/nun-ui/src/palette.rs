@@ -12,9 +12,10 @@ use nun_theme::Role;
 use ratatui::buffer::Buffer as Cells;
 use ratatui::layout::Rect;
 use ratatui::widgets::Widget;
-use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
+use crate::clip;
+use crate::glyph::Glyph;
 use crate::style::Palette;
 
 /// One row of the palette.
@@ -142,16 +143,25 @@ impl Widget for PaletteView<'_> {
             + u16::try_from(self.query.width()).unwrap_or(0).min(area.width.saturating_sub(3));
         if self.query.is_empty() {
             let room = area.right().saturating_sub(caret + 3);
-            write(
+            clip::write(
                 cells,
                 caret + 2,
                 area.y,
                 room,
                 self.placeholder,
                 self.palette.on(Role::Overlay, Role::Faint),
+                self.palette.glyph(Glyph::Ellipsis),
             );
         } else {
-            write(cells, area.x + 1, area.y, area.width.saturating_sub(2), self.query, ground);
+            clip::write(
+                cells,
+                area.x + 1,
+                area.y,
+                area.width.saturating_sub(2),
+                self.query,
+                ground,
+                self.palette.glyph(Glyph::Ellipsis),
+            );
         }
         cells[(caret, area.y)]
             .set_char(' ')
@@ -160,7 +170,9 @@ impl Widget for PaletteView<'_> {
         // A hairline under the query.
         let line = self.palette.on(Role::Overlay, Role::Line);
         for x in area.left()..area.right() {
-            cells[(x, area.y + 1)].set_char('─').set_style(line);
+            cells[(x, area.y + 1)]
+                .set_symbol(self.palette.glyph(Glyph::RuleHorizontal))
+                .set_style(line);
         }
 
         let visible = PaletteView::visible_rows(area);
@@ -192,6 +204,7 @@ impl Widget for PaletteView<'_> {
                 row_style,
                 self.palette.on(Role::Overlay, Role::Accent),
                 index == self.selected,
+                self.palette.glyph(Glyph::Ellipsis),
             );
             if hint_width > 0
                 && let Some(x) = area.right().checked_sub(hint_width + 1)
@@ -201,44 +214,17 @@ impl Widget for PaletteView<'_> {
                 } else {
                     self.palette.on(Role::Overlay, Role::Dim)
                 };
-                write(cells, x, y, hint_width, &entry.hint, hint_style);
+                clip::write(
+                    cells,
+                    x,
+                    y,
+                    hint_width,
+                    &entry.hint,
+                    hint_style,
+                    self.palette.glyph(Glyph::Ellipsis),
+                );
             }
         }
-    }
-}
-
-/// Write `text`, clipped to `room` columns with an ellipsis.
-pub(crate) fn write(
-    cells: &mut Cells,
-    x: u16,
-    y: u16,
-    room: u16,
-    text: &str,
-    style: ratatui::style::Style,
-) {
-    let room = usize::from(room);
-    let fits = text.width() <= room;
-    let budget = if fits { room } else { room.saturating_sub(1) };
-
-    let mut column = 0usize;
-    for cluster in text.graphemes(true) {
-        let width = cluster.width();
-        if column + width > budget {
-            break;
-        }
-        let Ok(offset) = u16::try_from(column) else { break };
-        cells[(x + offset, y)].set_symbol(cluster).set_style(style);
-        for extra in 1..width {
-            let Ok(extra) = u16::try_from(column + extra) else { break };
-            cells[(x + extra, y)].set_symbol(" ").set_style(style);
-        }
-        column += width;
-    }
-    if !fits
-        && room > 0
-        && let Ok(offset) = u16::try_from(column)
-    {
-        cells[(x + offset, y)].set_symbol("…").set_style(style);
     }
 }
 
@@ -253,41 +239,16 @@ pub(crate) fn write_matched(
     style: ratatui::style::Style,
     matched_style: ratatui::style::Style,
     selected: bool,
+    ellipsis: &str,
 ) {
-    let room = usize::from(room);
-    let fits = entry.label.width() <= room;
-    let budget = if fits { room } else { room.saturating_sub(1) };
-
-    let mut column = 0usize;
-    let mut chars = 0u32;
-    for cluster in entry.label.graphemes(true) {
-        let width = cluster.width();
-        if column + width > budget {
-            break;
-        }
-        let matched = (0..cluster.chars().count())
-            .filter_map(|offset| u32::try_from(offset).ok())
-            .any(|offset| entry.matched.contains(&(chars + offset)));
+    clip::write_styled(cells, x, y, room, &entry.label, style, ellipsis, |chars| {
+        let matched = chars.into_iter().any(|char| entry.matched.contains(&char));
         // On the selected row the wash already carries the accent, so the
         // matched characters are marked by weight instead.
-        let cell_style = match (matched, selected) {
+        match (matched, selected) {
             (true, false) => matched_style,
             (true, true) => style.add_modifier(ratatui::style::Modifier::BOLD),
             (false, _) => style,
-        };
-        let Ok(offset) = u16::try_from(column) else { break };
-        cells[(x + offset, y)].set_symbol(cluster).set_style(cell_style);
-        for extra in 1..width {
-            let Ok(extra) = u16::try_from(column + extra) else { break };
-            cells[(x + extra, y)].set_symbol(" ").set_style(cell_style);
         }
-        column += width;
-        chars += u32::try_from(cluster.chars().count()).unwrap_or(0);
-    }
-    if !fits
-        && room > 0
-        && let Ok(offset) = u16::try_from(column)
-    {
-        cells[(x + offset, y)].set_symbol("…").set_style(style);
-    }
+    });
 }

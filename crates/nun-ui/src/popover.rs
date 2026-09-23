@@ -28,6 +28,7 @@ use ratatui::widgets::Widget;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
+use crate::glyph::Glyph;
 use crate::style::Palette;
 
 /// The widest a card gets, padding included. Past this, prose is hard to
@@ -504,11 +505,15 @@ impl Widget for Popover<'_> {
         let edge = area.right() - 1;
         let hint = self.palette.on(Role::Overlay, Role::Dim);
         if scroll > 0 {
-            cells[(edge, area.top())].set_char('▴').set_style(hint);
+            cells[(edge, area.top())]
+                .set_symbol(self.palette.glyph(Glyph::CardAbove))
+                .set_style(hint);
         }
         if scroll + height < rows && height > 0 {
             let Ok(last) = u16::try_from(height - 1) else { return };
-            cells[(edge, area.top() + last)].set_char('▾').set_style(hint);
+            cells[(edge, area.top() + last)]
+                .set_symbol(self.palette.glyph(Glyph::CardBelow))
+                .set_style(hint);
         }
 
         for (index, (label, at)) in self.buttons.iter().zip(self.button_areas(area)).enumerate() {

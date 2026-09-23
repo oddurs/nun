@@ -18,6 +18,7 @@ What works today — milestones 1 and 2, and the start of 3:
 nun <file>         # open it, edit it, save it
 nun <folder>       # open it with the file tree beside it
 nun keys           # every command and the keys bound to it
+nun glyphs         # every mark nun draws, and what it draws it with
 nun config         # print the effective configuration and where each value came from
 nun theme dump     # probe this terminal and print the derived ramp as TOML
 ```
@@ -69,6 +70,26 @@ args = []                  # or turned off with `enabled = false`
 A bad value names the line and falls back rather than taking the editor down,
 and an unknown key is reported rather than silently ignored. Run `nun config` to
 see what actually took effect.
+
+### Glyphs
+
+Every mark nun draws has a role, the way every colour does: `fold.open`,
+`tab.close`, `lightbulb`, `rail.1` and forty-odd more. The `default` preset is
+box drawing and geometric shapes; `ascii` is for a font or console with none of
+that. Any role can be changed on top of either:
+
+```toml
+[glyphs]
+preset = "ascii"
+fold.open = "▿"
+```
+
+Each glyph must be one character exactly one cell wide. One that is not — an
+emoji, a control character, a wide character, anything a terminal might draw
+at a width of its own choosing — is refused with the reason, and the preset's
+glyph is drawn in its place, so a bad glyph never moves the layout.
+`nun glyphs` lists every role with its code points and what it is for; the same
+list, for the defaults, is [`docs/glyphs.md`](docs/glyphs.md).
 
 The file tree sits beside the editor. Click a file to open it, click a folder
 to unfold it, drag a file onto a folder to move it there. The header's buttons

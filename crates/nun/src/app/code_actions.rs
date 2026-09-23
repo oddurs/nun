@@ -46,7 +46,7 @@ use nun_lsp::types::{
     WorkDoneProgressParams,
 };
 use nun_lsp::{EditRequest, RequestId, Response};
-use nun_ui::PaletteEntry;
+use nun_ui::{Glyph, PaletteEntry};
 use ratatui::layout::Rect;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
@@ -244,8 +244,9 @@ fn drawn_width(text: &str) -> usize {
     text.graphemes(true).map(UnicodeWidthStr::width).sum()
 }
 
-/// `title`, cut short between graphemes to fit on a button.
-fn button_label(title: &str) -> String {
+/// `title`, cut short between graphemes to fit on a button, ending in
+/// `ellipsis` when it was.
+fn button_label(title: &str, ellipsis: &str) -> String {
     let title = printable(title);
     if drawn_width(&title) <= MOST_BUTTON_WIDTH {
         return title;
@@ -254,13 +255,13 @@ fn button_label(title: &str) -> String {
     let mut used = 0;
     for grapheme in title.graphemes(true) {
         let wide = grapheme.width();
-        if used + wide > MOST_BUTTON_WIDTH - 1 {
+        if used + wide > MOST_BUTTON_WIDTH.saturating_sub(ellipsis.width()) {
             break;
         }
         label.push_str(grapheme);
         used += wide;
     }
-    label.push('…');
+    label.push_str(ellipsis);
     label
 }
 
@@ -379,8 +380,12 @@ impl App {
         if *about != anchor || offered.is_empty() {
             return;
         }
-        let mut labels: Vec<String> =
-            offered.iter().take(MOST_ON_CARD).map(|offer| button_label(offer.title())).collect();
+        let ellipsis = self.palette.glyph(Glyph::Ellipsis);
+        let mut labels: Vec<String> = offered
+            .iter()
+            .take(MOST_ON_CARD)
+            .map(|offer| button_label(offer.title(), ellipsis))
+            .collect();
         if offered.len() > MOST_ON_CARD {
             labels.push(format!("{} more…", offered.len() - MOST_ON_CARD));
         }
@@ -1360,11 +1365,20 @@ done
 
     #[test]
     fn a_long_title_is_cut_short_on_its_button() {
-        let label = button_label("Change the type of this binding to something much longer");
+        let label = button_label("Change the type of this binding to something much longer", "…");
         assert!(label.ends_with('…'));
         assert!(label.width() <= MOST_BUTTON_WIDTH, "{label}");
-        assert_eq!(button_label("Short"), "Short");
-        assert_eq!(button_label("Import\nfrom\tthere"), "Import from there");
+        assert_eq!(button_label("Short", "…"), "Short");
+        assert_eq!(button_label("Import\nfrom\tthere", "…"), "Import from there");
+
+        let label =
+            button_label("Change the type of this binding to something much longer", "~\u{301}");
+        assert!(label.ends_with("~\u{301}"), "{label}");
+        assert_eq!(
+            label.width(),
+            MOST_BUTTON_WIDTH,
+            "the ellipsis is one cell, however many chars"
+        );
     }
 
     #[test]
@@ -1374,14 +1388,14 @@ done
             (format!("{}🇮🇸 flag", "a".repeat(28)), "🇮🇸"),
             (format!("{}👍🏽 ok", "a".repeat(27)), "👍🏽"),
         ] {
-            let label = button_label(&title);
+            let label = button_label(&title, "…");
             let kept = label.strip_suffix('…').unwrap();
             assert!(title.starts_with(kept), "{label:?}");
             let last = kept.graphemes(true).next_back().unwrap();
             assert!(last == "a" || last == whole, "{label:?}");
         }
         // Measured as it is drawn: a grapheme at a time.
-        let label = button_label(&"لا".repeat(15));
+        let label = button_label(&"لا".repeat(15), "…");
         assert!(drawn_width(&label) <= MOST_BUTTON_WIDTH, "{label}");
     }
 
@@ -1427,7 +1441,7 @@ done
         let actions = two_fixes_and_a_refactor();
         let mut t = Tester::new(&Says { actions: &actions, lightbulb: true, ..Says::default() });
         t.until(|app| app.lightbulb_line() == Some(0));
-        assert_eq!(t.gutter_mark(0), nun_ui::LIGHTBULB);
+        assert_eq!(t.gutter_mark(0), t.app.palette.glyph(nun_ui::Glyph::Lightbulb));
         assert_eq!(t.gutter_mark(1), " ", "only the caret's line");
 
         // Asked about the whole line, as something the person did not ask
@@ -1534,7 +1548,7 @@ done
         /// that ends between graphemes and fits.
         #[test]
         fn a_button_label_is_a_prefix_that_fits(title in "[a 😀é中\u{301}\u{200d}لا🇮🇸]{0,40}") {
-            let label = button_label(&title);
+            let label = button_label(&title, "…");
             let kept = label.strip_suffix('…').unwrap_or(&label);
             proptest::prop_assert!(title.starts_with(kept));
             proptest::prop_assert!(title.graphemes(true).count() >= kept.graphemes(true).count());

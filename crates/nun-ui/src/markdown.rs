@@ -28,6 +28,7 @@ use nun_theme::Role;
 use pulldown_cmark::{CodeBlockKind, Event, LinkType, Options, Parser, Tag, TagEnd};
 use ropey::Rope;
 
+use crate::glyph::{Glyph, Glyphs};
 use crate::popover::{Paragraph, Run};
 
 /// The most code, in bytes, one card highlights. Past this it is shown
@@ -91,10 +92,16 @@ pub struct Markdown {
 impl Markdown {
     /// `text` read as Markdown. A code block that does not say its language
     /// is taken to be in `language`, the language of the file the text is
-    /// about, when there is one. Code is highlighted out of `budget`.
+    /// about, when there is one. Code is highlighted out of `budget`, and
+    /// bullets, quote bars and task boxes are drawn with `glyphs`.
     #[must_use]
-    pub fn parse(text: &str, language: Option<&str>, budget: &mut CodeBudget) -> Self {
-        let mut reader = Reader::new(language, budget);
+    pub fn parse(
+        text: &str,
+        language: Option<&str>,
+        budget: &mut CodeBudget,
+        glyphs: &Glyphs,
+    ) -> Self {
+        let mut reader = Reader::new(language, budget, glyphs);
         for event in Parser::new_ext(text, Options::empty()) {
             reader.event(event);
         }
@@ -173,6 +180,7 @@ struct Reader<'l, 'b> {
     out: Markdown,
     language: Option<&'l str>,
     budget: &'b mut CodeBudget,
+    glyphs: &'b Glyphs,
     /// The paragraph being built.
     line: Paragraph,
     strong: usize,
@@ -187,11 +195,12 @@ struct Reader<'l, 'b> {
 }
 
 impl<'l, 'b> Reader<'l, 'b> {
-    fn new(language: Option<&'l str>, budget: &'b mut CodeBudget) -> Self {
+    fn new(language: Option<&'l str>, budget: &'b mut CodeBudget, glyphs: &'b Glyphs) -> Self {
         Self {
             out: Markdown::default(),
             language,
             budget,
+            glyphs,
             line: Vec::new(),
             strong: 0,
             emphasis: 0,
@@ -225,7 +234,10 @@ impl<'l, 'b> Reader<'l, 'b> {
             Event::SoftBreak => self.text(" "),
             Event::HardBreak => self.flush(),
             Event::Rule => self.block(),
-            Event::TaskListMarker(done) => self.text(if done { "☑ " } else { "☐ " }),
+            Event::TaskListMarker(done) => {
+                let glyph = if done { Glyph::CardTaskDone } else { Glyph::CardTaskOpen };
+                self.text(&format!("{} ", self.glyphs.get(glyph)));
+            }
             Event::FootnoteReference(name) => self.text(&format!("[{name}]")),
         }
     }
@@ -274,7 +286,7 @@ impl<'l, 'b> Reader<'l, 'b> {
                         *number += 1;
                         marker
                     }
-                    _ => "• ".to_string(),
+                    _ => format!("{} ", self.glyphs.get(Glyph::CardBullet)),
                 };
                 self.line.push(Run::new(format!("{}{marker}", "  ".repeat(depth)), Role::Dim));
             }
@@ -343,7 +355,8 @@ impl<'l, 'b> Reader<'l, 'b> {
         }
         let mut line = std::mem::take(&mut self.line);
         if self.quotes > 0 {
-            line.insert(0, Run::new("│ ".repeat(self.quotes), Role::Dim));
+            let bar = format!("{} ", self.glyphs.get(Glyph::CardQuote));
+            line.insert(0, Run::new(bar.repeat(self.quotes), Role::Dim));
         }
         self.out.body.push(line);
     }
@@ -430,13 +443,14 @@ mod tests {
             "Some **bold** and *soft*\ntext.\n\nUse `len()` here.",
             None,
             &mut CodeBudget::new(),
+            &Glyphs::default(),
         );
         assert_eq!(shown(&md), ["Some *bold* and _soft_ text.", "", "Use @Type:len() here."]);
     }
 
     #[test]
     fn headings_are_bold_and_set_apart() {
-        let md = Markdown::parse("# Title\nbody", None, &mut CodeBudget::new());
+        let md = Markdown::parse("# Title\nbody", None, &mut CodeBudget::new(), &Glyphs::default());
         assert_eq!(shown(&md), ["*Title*", "", "body"]);
     }
 
@@ -446,6 +460,7 @@ mod tests {
             "- one\n- two\n  - inner\n\n1. first\n2. second",
             None,
             &mut CodeBudget::new(),
+            &Glyphs::default(),
         );
         assert_eq!(
             shown(&md),
@@ -459,6 +474,7 @@ mod tests {
             "See [Vec](https://doc.rust-lang.org/std/vec/struct.Vec.html) and <a@b.c>.",
             None,
             &mut CodeBudget::new(),
+            &Glyphs::default(),
         );
         assert_eq!(shown(&md), ["See <0:Vec> and <1:a@b.c>."]);
         assert_eq!(md.links, ["https://doc.rust-lang.org/std/vec/struct.Vec.html", "mailto:a@b.c"]);
@@ -466,8 +482,12 @@ mod tests {
 
     #[test]
     fn fenced_code_is_highlighted_in_its_own_language() {
-        let md =
-            Markdown::parse("```rust\nfn main() {}\n```\n---\nDocs.", None, &mut CodeBudget::new());
+        let md = Markdown::parse(
+            "```rust\nfn main() {}\n```\n---\nDocs.",
+            None,
+            &mut CodeBudget::new(),
+            &Glyphs::default(),
+        );
         let code = &md.body[0];
         assert_eq!(code.iter().map(|run| run.text.as_str()).collect::<String>(), "fn main() {}");
         assert!(code.iter().any(|run| run.text == "fn" && run.role == Role::Keyword), "{code:?}");
@@ -477,15 +497,30 @@ mod tests {
 
     #[test]
     fn a_fence_with_no_language_takes_the_file_s() {
-        let md = Markdown::parse("```\nlet x = 1;\n```", Some("rust"), &mut CodeBudget::new());
+        let md = Markdown::parse(
+            "```\nlet x = 1;\n```",
+            Some("rust"),
+            &mut CodeBudget::new(),
+            &Glyphs::default(),
+        );
         assert!(md.body[0].iter().any(|run| run.text == "let" && run.role == Role::Keyword));
-        let md = Markdown::parse("```\nlet x = 1;\n```", None, &mut CodeBudget::new());
+        let md = Markdown::parse(
+            "```\nlet x = 1;\n```",
+            None,
+            &mut CodeBudget::new(),
+            &Glyphs::default(),
+        );
         assert_eq!(shown(&md), ["let x = 1;"], "plain, with nothing to go on");
     }
 
     #[test]
     fn a_language_nun_does_not_know_is_shown_plain() {
-        let md = Markdown::parse("```haskell\nmain = pure ()\n```", None, &mut CodeBudget::new());
+        let md = Markdown::parse(
+            "```haskell\nmain = pure ()\n```",
+            None,
+            &mut CodeBudget::new(),
+            &Glyphs::default(),
+        );
         assert_eq!(shown(&md), ["main = pure ()"]);
     }
 
@@ -495,6 +530,7 @@ mod tests {
             "```rust\nstruct A {\n    b: u8,\n}\n```",
             None,
             &mut CodeBudget::new(),
+            &Glyphs::default(),
         );
         let text: String = md.body[0].iter().map(|run| run.text.as_str()).collect();
         assert_eq!(text, "struct A {\n    b: u8,\n}");
@@ -502,7 +538,7 @@ mod tests {
 
     #[test]
     fn quotes_are_marked_down_the_side() {
-        let md = Markdown::parse("> quoted", None, &mut CodeBudget::new());
+        let md = Markdown::parse("> quoted", None, &mut CodeBudget::new(), &Glyphs::default());
         assert_eq!(shown(&md), ["@Dim:│ quoted"]);
     }
 
@@ -514,15 +550,18 @@ mod tests {
 
     #[test]
     fn appending_renumbers_links_and_leaves_a_gap() {
-        let mut md = Markdown::parse("[a](x)", None, &mut CodeBudget::new());
-        md.append(Markdown::parse("[b](y)", None, &mut CodeBudget::new()));
+        let mut md = Markdown::parse("[a](x)", None, &mut CodeBudget::new(), &Glyphs::default());
+        md.append(Markdown::parse("[b](y)", None, &mut CodeBudget::new(), &Glyphs::default()));
         assert_eq!(shown(&md), ["<0:a>", "", "<1:b>"]);
         assert_eq!(md.links, ["x", "y"]);
     }
 
     #[test]
     fn nothing_much_is_nothing() {
-        assert!(Markdown::parse("\n\n   \n", None, &mut CodeBudget::new()).is_empty());
+        assert!(
+            Markdown::parse("\n\n   \n", None, &mut CodeBudget::new(), &Glyphs::default())
+                .is_empty()
+        );
         assert!(Markdown::plain("").is_empty());
     }
 
@@ -530,7 +569,7 @@ mod tests {
     fn pathological_input_is_still_quick() {
         let text = "*a **b ".repeat(5000) + &"[".repeat(5000);
         let started = std::time::Instant::now();
-        let md = Markdown::parse(&text, None, &mut CodeBudget::new());
+        let md = Markdown::parse(&text, None, &mut CodeBudget::new(), &Glyphs::default());
         assert!(!md.is_empty());
         assert!(started.elapsed() < Duration::from_secs(2));
     }
@@ -538,7 +577,8 @@ mod tests {
     #[test]
     fn many_blocks_share_one_card_s_allowance() {
         let block = format!("```rust\n{}```\n\n", "let x = 1;\n".repeat(MOST_HIGHLIGHTED / 11 / 3));
-        let md = Markdown::parse(&block.repeat(6), None, &mut CodeBudget::new());
+        let md =
+            Markdown::parse(&block.repeat(6), None, &mut CodeBudget::new(), &Glyphs::default());
         let code: Vec<&Paragraph> =
             md.body.iter().filter(|paragraph| !paragraph.is_empty()).collect();
         assert_eq!(code.len(), 6);

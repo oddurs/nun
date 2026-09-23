@@ -16,7 +16,9 @@ use ratatui::layout::Rect;
 use ratatui::style::Modifier;
 use ratatui::widgets::Widget;
 
-use crate::search::{BACK, SearchRow, SearchView, band, fill, put};
+use crate::clip;
+use crate::glyph::Glyph;
+use crate::search::{SearchRow, SearchView, band, fill};
 use crate::style::Palette;
 
 /// The panel's name.
@@ -138,13 +140,14 @@ impl Widget for ReferencesView<'_> {
 
         let header = Self::header_area(area);
         let style = self.palette.on(Role::Raised, Role::Dim).add_modifier(Modifier::BOLD);
-        put(
+        clip::write(
             cells,
             header.x.saturating_add(1),
             header.y,
             header.width.saturating_sub(4),
             TITLE,
             style,
+            self.palette.glyph(Glyph::Ellipsis),
         );
         if let Some(cell) = Self::back_area(area) {
             let style = if self.hovered_back {
@@ -152,14 +155,30 @@ impl Widget for ReferencesView<'_> {
             } else {
                 self.palette.on(Role::Raised, Role::Dim)
             };
-            put(cells, cell.x, cell.y, 1, BACK, style);
+            clip::write(
+                cells,
+                cell.x,
+                cell.y,
+                1,
+                self.palette.glyph(Glyph::SearchBack),
+                style,
+                self.palette.glyph(Glyph::Ellipsis),
+            );
         }
 
         let summary = Self::summary_area(area);
         if summary.height > 0 {
             let x = summary.x.saturating_add(1);
             let style = self.palette.on(Role::Raised, Role::Faint);
-            put(cells, x, summary.y, summary.right().saturating_sub(x), self.summary, style);
+            clip::write(
+                cells,
+                x,
+                summary.y,
+                summary.right().saturating_sub(x),
+                self.summary,
+                style,
+                self.palette.glyph(Glyph::Ellipsis),
+            );
         }
 
         let mut list = SearchView::new("", self.rows, self.palette)
@@ -203,7 +222,7 @@ mod tests {
         let text = screen.to_text();
         let lines: Vec<&str> = text.lines().collect();
         assert!(lines[0].contains("REFERENCES"), "{text}");
-        assert!(lines[0].contains(BACK), "{text}");
+        assert!(lines[0].contains(palette.glyph(Glyph::SearchBack)), "{text}");
         assert!(lines[1].contains("1 reference to value"), "{text}");
         assert!(lines[2].contains("src/lib.rs"), "{text}");
         assert!(lines[3].contains("12") && lines[3].contains("let value = 1;"), "{text}");

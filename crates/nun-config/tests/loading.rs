@@ -331,3 +331,90 @@ fn the_code_action_mark_is_on_unless_turned_off() {
     assert!(!loaded.config.lightbulb);
     assert!(loaded.describe().contains("lightbulb = false"));
 }
+
+#[test]
+fn glyphs_start_from_the_default_preset_with_nothing_changed() {
+    let config = Config::default();
+    assert_eq!(config.glyph_preset, "default");
+    assert!(config.glyphs.is_empty());
+}
+
+#[test]
+fn a_glyph_role_reads_the_same_dotted_quoted_or_as_a_section() {
+    for text in [
+        "[glyphs]\nfold.open = \"v\"\n",
+        "[glyphs]\n\"fold.open\" = \"v\"\n",
+        "[glyphs.fold]\nopen = \"v\"\n",
+    ] {
+        let (loaded, path) = load_text(text);
+        assert!(loaded.problems.is_empty(), "{text}: {:?}", loaded.problems);
+        assert_eq!(loaded.config.glyphs.get("fold.open").map(String::as_str), Some("v"), "{text}");
+        assert_eq!(loaded.origin("glyphs.fold.open"), Origin::File(path), "{text}");
+    }
+}
+
+#[test]
+fn the_glyph_preset_is_taken_out_of_the_roles() {
+    let (loaded, path) =
+        load_text("[glyphs]\npreset = \"ascii\"\ntab.close = \"x\"\nrail.1 = \".\"\n");
+    assert!(loaded.problems.is_empty(), "{:?}", loaded.problems);
+    assert_eq!(loaded.config.glyph_preset, "ascii");
+    assert_eq!(loaded.origin("glyphs.preset"), Origin::File(path));
+    assert_eq!(loaded.config.glyphs.len(), 2, "{:?}", loaded.config.glyphs);
+    assert_eq!(loaded.config.glyphs.get("rail.1").map(String::as_str), Some("."));
+}
+
+#[test]
+fn a_glyph_that_is_not_a_string_is_reported_and_the_rest_kept() {
+    let (loaded, _) = load_text("[glyphs]\nlightbulb = 1\ntab.close = \"x\"\n");
+    assert_eq!(loaded.problems.len(), 1, "{:?}", loaded.problems);
+    assert!(loaded.problems[0].message.contains("glyphs.lightbulb must be a string"));
+    assert_eq!(loaded.config.glyphs.get("tab.close").map(String::as_str), Some("x"));
+}
+
+#[test]
+fn glyphs_from_a_later_file_add_to_an_earlier_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let first = dir.path().join("a.toml");
+    let second = dir.path().join("b.toml");
+    std::fs::write(&first, "[glyphs]\npreset = \"ascii\"\nlightbulb = \"?\"\n").unwrap();
+    std::fs::write(&second, "[glyphs]\ntab.close = \"x\"\n").unwrap();
+
+    let mut loaded = Loaded::defaults();
+    apply_file(&mut loaded, &first);
+    apply_file(&mut loaded, &second);
+    assert_eq!(loaded.config.glyph_preset, "ascii", "a later file that does not say keeps it");
+    assert_eq!(loaded.config.glyphs.len(), 2);
+}
+
+#[test]
+fn describe_lists_the_glyphs_and_stays_valid_toml() {
+    let (loaded, path) = load_text("[glyphs]\npreset = \"ascii\"\nfold.open = \"▿\"\n");
+    let described = loaded.describe();
+    assert!(described.contains("[glyphs]\npreset = \"ascii\""), "{described}");
+    let line = described.lines().find(|line| line.starts_with("\"fold.open\"")).unwrap();
+    assert!(line.contains("\"▿\"") && line.contains(&path.display().to_string()), "{line}");
+    toml::from_str::<toml::Value>(&described).unwrap_or_else(|error| {
+        panic!("`nun config` printed invalid TOML: {error}\n\n{described}")
+    });
+    assert!(Loaded::defaults().describe().contains("nun glyphs"));
+}
+
+#[test]
+fn a_glyph_role_set_twice_under_two_spellings_is_reported() {
+    let (loaded, _) = load_text("[glyphs]\nfold.open = \"a\"\n\"fold.open\" = \"b\"\n");
+    assert_eq!(loaded.problems.len(), 1, "{:?}", loaded.problems);
+    assert!(loaded.problems[0].message.contains("glyphs.fold.open is set twice"));
+}
+
+#[test]
+fn describe_writes_a_combining_glyph_as_toml_can_read_it_back() {
+    let (loaded, _) = load_text("[glyphs]\nfold.open = \"e\\u0301\"\nlightbulb = \"\\\"\"\n");
+    assert!(loaded.problems.is_empty(), "{:?}", loaded.problems);
+    let described = loaded.describe();
+    let back: toml::Value = toml::from_str(&described).unwrap_or_else(|error| {
+        panic!("`nun config` printed invalid TOML: {error}\n\n{described}")
+    });
+    assert_eq!(back["glyphs"]["fold.open"].as_str(), Some("e\u{301}"));
+    assert_eq!(back["glyphs"]["lightbulb"].as_str(), Some("\""));
+}

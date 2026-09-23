@@ -31,6 +31,8 @@ use ratatui::widgets::Widget;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
+use crate::clip;
+use crate::glyph::Glyph;
 use crate::style::Palette;
 
 /// Columns a hit is indented under the file it belongs to.
@@ -42,45 +44,15 @@ const INDENT: u16 = 2;
 /// for it to vary with, unlike the tree, whose title is the workspace's name.
 const TITLE: &str = "SEARCH";
 
-/// What stands in front of the query.
-const PROMPT: &str = "⌕ ";
-
-/// What stands in front of the replacement.
-///
-/// An arrow, because the row below the query is what the query *becomes*, and
-/// that relation is the whole of what the field means. It reads in the same
-/// direction as the diff underneath it, where a `-` line turns into a `+` one.
-const REPLACE_PROMPT: &str = "→ ";
-
-/// The header's one button, which hands the sidebar back to the file tree.
-///
-/// A ruled square reads as a listing of rows, which is what the tree is from
-/// one cell away, and it pairs with the magnifier the tree shows for coming
-/// the other way: two marks for two views, neither of them an arrow that would
-/// only say "back" without saying back to what.
-pub(crate) const BACK: &str = "▤";
-
-/// The button that writes the replacement into the files.
-///
-/// It points out of the panel, which is what applying does: it takes what the
-/// panel is showing and puts it into the files underneath. Nothing else here
-/// points anywhere, so it does not read as one more toggle.
-///
-/// It is not a tick and not a play triangle on purpose. A tick reads as
-/// confirming something already decided and a triangle as starting something
-/// you could stop, and this is neither — it rewrites files across a repository
-/// the moment it is pressed. What carries that weight is the colour rather
-/// than the shape: see `draw_apply`.
-const APPLY: &str = "⇓";
-
 /// Columns the apply button keeps to itself at the right of the replace row:
 /// the cell it sits in, the margin outside it, and a blank inside it so the
 /// replacement never runs up against it.
 const APPLY_COLS: u16 = 3;
 
-/// Columns [`PROMPT`] occupies, and [`REPLACE_PROMPT`] with it. Held as a
-/// constant because the two fields' geometry must be answerable without
-/// measuring a string; a test holds the constant and both strings together.
+/// Columns the query's prompt occupies, and the replacement's with it: a
+/// glyph and a space. Held as a constant because the two fields' geometry
+/// must be answerable without measuring a string, which every glyph being
+/// one cell wide makes true.
 const PROMPT_COLS: u16 = 2;
 
 /// What an empty query field says when nobody is typing into it.
@@ -129,20 +101,12 @@ impl SearchButton {
     /// glyph: four marks that each change shape would make a row of four read
     /// as eight different things.
     #[must_use]
-    pub const fn glyph(self) -> &'static str {
+    pub const fn glyph(self) -> Glyph {
         match self {
-            // The wildcard out of `.*`, which is the one piece of regex
-            // notation that reads as regex outside a regex.
-            Self::Regex => "*",
-            // A capital letter is the distinction the toggle controls, so the
-            // glyph is the thing itself rather than a sign for it.
-            Self::Case => "A",
-            // A box the match has to fill exactly, which is what a whole-word
-            // match is.
-            Self::Word => "▭",
-            // The same ring the file tree hangs its own ignored toggle on, so
-            // one mark means one thing across the whole sidebar.
-            Self::Ignored => "○",
+            Self::Regex => Glyph::SearchRegex,
+            Self::Case => Glyph::SearchCase,
+            Self::Word => Glyph::SearchWord,
+            Self::Ignored => Glyph::SearchIgnored,
         }
     }
 
@@ -710,7 +674,15 @@ impl SearchView<'_> {
         let role = if self.focused { Role::Accent } else { Role::Dim };
         let style = self.palette.on(Role::Raised, role).add_modifier(Modifier::BOLD);
         let x = area.x.saturating_add(1);
-        put(cells, x, area.y, area.width.saturating_sub(4), self.title, style);
+        clip::write(
+            cells,
+            x,
+            area.y,
+            area.width.saturating_sub(4),
+            self.title,
+            style,
+            self.palette.glyph(Glyph::Ellipsis),
+        );
 
         let Some(cell) = Self::back_area(area) else { return };
         let style = if self.hovered_back {
@@ -718,7 +690,15 @@ impl SearchView<'_> {
         } else {
             self.palette.on(Role::Raised, Role::Dim)
         };
-        put(cells, cell.x, cell.y, 1, BACK, style);
+        clip::write(
+            cells,
+            cell.x,
+            cell.y,
+            1,
+            self.palette.glyph(Glyph::SearchBack),
+            style,
+            self.palette.glyph(Glyph::Ellipsis),
+        );
     }
 
     fn draw_field(&self, cells: &mut Cells, area: Rect, field: Field) {
@@ -730,8 +710,8 @@ impl SearchView<'_> {
             return;
         }
         let (prompt, text, placeholder) = match field {
-            Field::Query => (PROMPT, self.query, PLACEHOLDER),
-            Field::Replace => (REPLACE_PROMPT, self.replacement, REPLACE_PLACEHOLDER),
+            Field::Query => (Glyph::SearchIcon, self.query, PLACEHOLDER),
+            Field::Replace => (Glyph::SearchReplace, self.replacement, REPLACE_PLACEHOLDER),
         };
         let editing = self.editing == Some(field);
 
@@ -745,7 +725,16 @@ impl SearchView<'_> {
         };
         fill(cells, row, style);
         if row.width >= PROMPT_COLS {
-            put(cells, row.x, row.y, PROMPT_COLS, prompt, style.patch(self.palette.ink(Role::Dim)));
+            let prompt = format!("{} ", self.palette.glyph(prompt));
+            clip::write(
+                cells,
+                row.x,
+                row.y,
+                PROMPT_COLS,
+                &prompt,
+                style.patch(self.palette.ink(Role::Dim)),
+                self.palette.glyph(Glyph::Ellipsis),
+            );
         }
 
         let (text_x, room) = Self::field_columns(area, field);
@@ -754,7 +743,15 @@ impl SearchView<'_> {
         }
         if text.is_empty() && !editing {
             let faint = style.patch(self.palette.ink(Role::Faint));
-            put(cells, text_x, row.y, room, placeholder, faint);
+            clip::write(
+                cells,
+                text_x,
+                row.y,
+                room,
+                placeholder,
+                faint,
+                self.palette.glyph(Glyph::Ellipsis),
+            );
             return;
         }
 
@@ -766,7 +763,7 @@ impl SearchView<'_> {
         let caret = if editing { self.caret.min(text.chars().count()) } else { 0 };
         let start = query_window(room, text, caret);
         let tail = from_char(text, start);
-        put(cells, text_x, row.y, room, tail, style);
+        clip::write(cells, text_x, row.y, room, tail, style, self.palette.glyph(Glyph::Ellipsis));
         if !editing {
             return;
         }
@@ -800,7 +797,15 @@ impl SearchView<'_> {
         if self.hovered_apply {
             style = style.patch(self.palette.cursor_line());
         }
-        put(cells, cell.x, cell.y, 1, APPLY, style);
+        clip::write(
+            cells,
+            cell.x,
+            cell.y,
+            1,
+            self.palette.glyph(Glyph::SearchApply),
+            style,
+            self.palette.glyph(Glyph::Ellipsis),
+        );
     }
 
     fn draw_toggles(&self, cells: &mut Cells, area: Rect) {
@@ -825,7 +830,15 @@ impl SearchView<'_> {
                     style.patch(self.palette.cursor_line())
                 };
             }
-            put(cells, cell.x, cell.y, 1, button.glyph(), style);
+            clip::write(
+                cells,
+                cell.x,
+                cell.y,
+                1,
+                self.palette.glyph(button.glyph()),
+                style,
+                self.palette.glyph(Glyph::Ellipsis),
+            );
         }
     }
 
@@ -839,7 +852,15 @@ impl SearchView<'_> {
             } else {
                 self.palette.on(Role::Overlay, Role::Text)
             };
-            put(cells, cell.x, cell.y, cell.width, &format!(" {label} "), style);
+            clip::write(
+                cells,
+                cell.x,
+                cell.y,
+                cell.width,
+                &format!(" {label} "),
+                style,
+                self.palette.glyph(Glyph::Ellipsis),
+            );
         }
     }
 
@@ -850,7 +871,15 @@ impl SearchView<'_> {
         }
         let x = area.x.saturating_add(1);
         let style = self.palette.on(Role::Raised, Role::Faint);
-        put(cells, x, area.y, area.right().saturating_sub(x), summary, style);
+        clip::write(
+            cells,
+            x,
+            area.y,
+            area.right().saturating_sub(x),
+            summary,
+            style,
+            self.palette.glyph(Glyph::Ellipsis),
+        );
     }
 
     /// Columns the line numbers need.
@@ -902,13 +931,17 @@ impl SearchView<'_> {
     /// The two come from one place because they are one decision: the marker
     /// says what is happening to the line and the colour says the same thing
     /// again, and a row where they disagreed would be a row you cannot read.
-    fn diff_marks(state: Option<HitState>) -> (&'static str, Option<Role>) {
+    fn diff_marks(&self, state: Option<HitState>) -> (&str, Option<Role>) {
         match state {
             Some(HitState::Plain) => (" ", None),
-            Some(HitState::Included) => ("-", Some(Role::Removed)),
-            Some(HitState::Excluded) => ("·", Some(Role::Faint)),
+            Some(HitState::Included) => {
+                (self.palette.glyph(Glyph::ReplaceRemoved), Some(Role::Removed))
+            }
+            Some(HitState::Excluded) => {
+                (self.palette.glyph(Glyph::ReplaceExcluded), Some(Role::Faint))
+            }
             // `None` is an `After` row: the line as it would be written.
-            None => ("+", Some(Role::Added)),
+            None => (self.palette.glyph(Glyph::ReplaceAdded), Some(Role::Added)),
         }
     }
 
@@ -928,22 +961,37 @@ impl SearchView<'_> {
         // that is out is dimmed as a whole, the way a struck-out hit is.
         let (mark, style) = match state {
             HitState::Plain => (None, style),
-            HitState::Included => (Some(("✓", style.patch(self.palette.ink(Role::Added)))), style),
+            HitState::Included => (
+                Some((
+                    self.palette.glyph(Glyph::ReplaceIncluded),
+                    style.patch(self.palette.ink(Role::Added)),
+                )),
+                style,
+            ),
             HitState::Excluded => {
                 let faint = style.patch(self.palette.ink(Role::Faint));
-                (Some(("·", faint)), faint)
+                (Some((self.palette.glyph(Glyph::ReplaceExcluded), faint)), faint)
             }
         };
         if let Some((mark, ink)) = mark
             && let Some(x) = line.x.checked_add(FILE_MARKER_COL)
             && x < line.right()
         {
-            put(cells, x, line.y, 1, mark, ink);
+            clip::write(cells, x, line.y, 1, mark, ink, self.palette.glyph(Glyph::Ellipsis));
         }
         let x = line.x.saturating_add(1);
-        let disclosure = if collapsed { "▸ " } else { "▾ " };
+        let disclosure = if collapsed { Glyph::TreeCollapsed } else { Glyph::TreeExpanded };
+        let disclosure = format!("{} ", self.palette.glyph(disclosure));
         let room = line.right().saturating_sub(x);
-        put(cells, x, line.y, room, disclosure, style.patch(self.palette.ink(Role::Dim)));
+        clip::write(
+            cells,
+            x,
+            line.y,
+            room,
+            &disclosure,
+            style.patch(self.palette.ink(Role::Dim)),
+            self.palette.glyph(Glyph::Ellipsis),
+        );
 
         let count = hits.to_string();
         let count_cols = u16::try_from(count.width()).unwrap_or(0);
@@ -951,18 +999,19 @@ impl SearchView<'_> {
         // The count keeps its columns and the path yields to it: a truncated
         // path still says which file, a truncated count says nothing.
         let room = line.right().saturating_sub(path_x).saturating_sub(count_cols + 1);
-        put(cells, path_x, line.y, room, path, style);
+        clip::write(cells, path_x, line.y, room, path, style, self.palette.glyph(Glyph::Ellipsis));
 
         if let Some(count_x) = line.right().checked_sub(count_cols + 1)
             && count_x >= path_x
         {
-            put(
+            clip::write(
                 cells,
                 count_x,
                 line.y,
                 count_cols,
                 &count,
                 style.patch(self.palette.ink(Role::Dim)),
+                self.palette.glyph(Glyph::Ellipsis),
             );
         }
     }
@@ -980,7 +1029,7 @@ impl SearchView<'_> {
         matched: &[Range<u32>],
         state: HitState,
     ) {
-        let (marker, ink) = Self::diff_marks(Some(state));
+        let (marker, ink) = self.diff_marks(Some(state));
         let style = self.draw_line_start(cells, line, style, gutter, number, marker, ink);
 
         let text_x = text_column(line, gutter);
@@ -989,7 +1038,17 @@ impl SearchView<'_> {
         // one colour nun has for "this is what you asked about". It stays on
         // an excluded line too: where the match is, is why the line is here.
         let matched_style = style.patch(self.palette.ink(Role::Accent));
-        put_matched(cells, text_x, line.y, room, text, matched, style, matched_style);
+        put_matched(
+            cells,
+            text_x,
+            line.y,
+            room,
+            text,
+            matched,
+            style,
+            matched_style,
+            self.palette.glyph(Glyph::Ellipsis),
+        );
     }
 
     fn draw_after(
@@ -1001,13 +1060,13 @@ impl SearchView<'_> {
         number: u32,
         text: &str,
     ) {
-        let (marker, ink) = Self::diff_marks(None);
+        let (marker, ink) = self.diff_marks(None);
         let style = self.draw_line_start(cells, line, style, gutter, number, marker, ink);
 
         let text_x = text_column(line, gutter);
         let room = line.right().saturating_sub(text_x);
         // Nothing is picked out of it: the whole line is what changed.
-        put(cells, text_x, line.y, room, text, style);
+        clip::write(cells, text_x, line.y, room, text, style, self.palette.glyph(Glyph::Ellipsis));
     }
 
     /// The marker and the line number a hit or an after row starts with, and
@@ -1027,13 +1086,21 @@ impl SearchView<'_> {
         if let Some(x) = line.x.checked_add(MARKER_COL)
             && x < line.right()
         {
-            put(cells, x, line.y, 1, marker, ink);
+            clip::write(cells, x, line.y, 1, marker, ink, self.palette.glyph(Glyph::Ellipsis));
         }
 
         let x = line.x.saturating_add(1).saturating_add(INDENT);
         let number = format!("{number:>width$}", width = usize::from(gutter));
         let room = line.right().saturating_sub(x).min(gutter);
-        put(cells, x, line.y, room, &number, style.patch(self.palette.ink(Role::Dim)));
+        clip::write(
+            cells,
+            x,
+            line.y,
+            room,
+            &number,
+            style.patch(self.palette.ink(Role::Dim)),
+            self.palette.glyph(Glyph::Ellipsis),
+        );
         ink
     }
 }
@@ -1121,41 +1188,9 @@ pub(crate) fn fill(cells: &mut Cells, area: Rect, style: Style) {
     }
 }
 
-/// Write `text` at `(x, y)` in at most `room` columns, clipping at a cluster
-/// rather than splitting one, and ending with `…` when it had to clip.
-pub(crate) fn put(cells: &mut Cells, x: u16, y: u16, room: u16, text: &str, style: Style) {
-    let room = usize::from(room);
-    let fits = text.width() <= room;
-    let budget = if fits { room } else { room.saturating_sub(1) };
-
-    let mut column = 0usize;
-    for cluster in text.graphemes(true) {
-        let width = cluster.width();
-        if column + width > budget {
-            break;
-        }
-        let Ok(offset) = u16::try_from(column) else { break };
-        cells[(x + offset, y)].set_symbol(cluster).set_style(style);
-        for extra in 1..width {
-            let Ok(extra) = u16::try_from(column + extra) else { break };
-            cells[(x + extra, y)].set_symbol(" ").set_style(style);
-        }
-        column += width;
-    }
-    if !fits && room > 0 {
-        let Ok(offset) = u16::try_from(column) else { return };
-        cells[(x + offset, y)].set_symbol("…").set_style(style);
-    }
-}
-
-/// Write `text` like [`put`], with the char ranges in `matched` picked out.
-///
-/// A cluster is matched when any of the chars it is made of falls inside a
-/// range, which is what makes the highlight land on the right columns when the
-/// line holds a wide character, a combining mark or an emoji: the ranges are
-/// counted in chars and the screen is counted in columns, and the walk is the
-/// only honest way between the two. A range running past the end of `text` —
-/// which happens when the engine windowed a long line — simply stops matching.
+/// Write `text` like [`clip::write`], with the char ranges in `matched`
+/// picked out. A range running past the end of `text` — which happens when
+/// the engine windowed a long line — simply stops matching.
 #[allow(clippy::too_many_arguments)] // Each one is a separate thing to draw.
 fn put_matched(
     cells: &mut Cells,
@@ -1166,33 +1201,10 @@ fn put_matched(
     matched: &[Range<u32>],
     style: Style,
     matched_style: Style,
+    ellipsis: &str,
 ) {
-    let room = usize::from(room);
-    let fits = text.width() <= room;
-    let budget = if fits { room } else { room.saturating_sub(1) };
-
-    let mut column = 0usize;
-    let mut chars = 0u32;
-    for cluster in text.graphemes(true) {
-        let width = cluster.width();
-        if column + width > budget {
-            break;
-        }
-        let next = chars.saturating_add(u32::try_from(cluster.chars().count()).unwrap_or(1));
-        let hit = matched.iter().any(|range| range.start < next && chars < range.end);
-        let cell_style = if hit { matched_style } else { style };
-
-        let Ok(offset) = u16::try_from(column) else { break };
-        cells[(x + offset, y)].set_symbol(cluster).set_style(cell_style);
-        for extra in 1..width {
-            let Ok(extra) = u16::try_from(column + extra) else { break };
-            cells[(x + extra, y)].set_symbol(" ").set_style(cell_style);
-        }
-        column += width;
-        chars = next;
-    }
-    if !fits && room > 0 {
-        let Ok(offset) = u16::try_from(column) else { return };
-        cells[(x + offset, y)].set_symbol("…").set_style(style);
-    }
+    clip::write_styled(cells, x, y, room, text, style, ellipsis, |chars| {
+        let hit = matched.iter().any(|range| range.start < chars.end && chars.start < range.end);
+        if hit { matched_style } else { style }
+    });
 }

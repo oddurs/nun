@@ -115,7 +115,7 @@
 
 ## m6 — Polish until it is boring
 
-`###·······` 29% · 2 of 7 done · due 2026-12-17
+`###·······` 30% · 3 of 10 done · due 2026-12-17
 
 ### backlog
 
@@ -124,9 +124,12 @@
 - [ ] [`0048`](https://github.com/oddurs/nun/blob/main/cairn/items/0048-one-command-install.md) One-command install <sup>chore · p1</sup>
 - [ ] [`0049`](https://github.com/oddurs/nun/blob/main/cairn/items/0049-freeze-and-ship-0-1.md) Freeze and ship 0.1 <sup>chore · p0</sup>
 - [ ] [`0082`](https://github.com/oddurs/nun/blob/main/cairn/items/0082-a-key-pressed-right-after-escape-types-its-escape-sequence-as-text.md) A key pressed right after Escape types its escape sequence as text <sup>bug · p1</sup>
+- [ ] [`0085`](https://github.com/oddurs/nun/blob/main/cairn/items/0085-nerd-font-glyph-preset.md) Nerd Font glyph preset <sup>feature · p2</sup>
+- [ ] [`0086`](https://github.com/oddurs/nun/blob/main/cairn/items/0086-custom-glyphs-drawn-as-cell-images.md) Custom glyphs drawn as cell images <sup>feature · p3</sup>
 
 ### done
 
 - [x] [`0054`](https://github.com/oddurs/nun/blob/main/cairn/items/0054-install-nun-from-the-working-copy-with-one-command.md) Install nun from the working copy with one command <sup>chore · p2</sup>
 - [x] [`0083`](https://github.com/oddurs/nun/blob/main/cairn/items/0083-show-the-github-repository-as-the-file-tree-s-title.md) Show the GitHub repository as the file tree's title <sup>feature · p2</sup>
+- [x] [`0084`](https://github.com/oddurs/nun/blob/main/cairn/items/0084-glyphs-come-from-semantic-roles-overridable-in-nun-toml.md) Glyphs come from semantic roles, overridable in nun.toml <sup>feature · p1</sup>
 

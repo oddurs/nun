@@ -16,7 +16,8 @@ use nun_input::{
     Chords, Clicks, Code, HitMap, Hover, Key, Keymap, Mods, PLATFORM_THRESHOLD, Resolved, Sequence,
 };
 use nun_theme::Role;
-use nun_ui::{EditorView, Event, Menu, Palette, TreeButton, TreeView};
+use nun_ui::text_width;
+use nun_ui::{EditorView, Event, Glyph, Menu, Palette, TreeButton, TreeView};
 use ratatui::buffer::Buffer as Cells;
 use ratatui::layout::Rect;
 use ratatui::widgets::Widget;
@@ -664,7 +665,7 @@ impl App {
         let text = search.map_or(after_files, Rect::right);
         let undo = self.undo_offer.then(|| {
             let (left, _) = self.status();
-            let x = text + u16::try_from(left.chars().count() + 2).unwrap_or(u16::MAX);
+            let x = text + u16::try_from(text_width(&left) + 2).unwrap_or(u16::MAX);
             Rect::new(x, status.y, u16::try_from(self.undo_label().len()).unwrap_or(6), 1)
         });
         let undo = undo.filter(|undo| undo.right() <= status.right());
@@ -677,10 +678,10 @@ impl App {
         // beside what the left half says.
         let lsp = self.lsp_label().and_then(|(label, _)| {
             let (left, right) = self.status();
-            let width = u16::try_from(label.chars().count()).ok()?;
+            let width = u16::try_from(text_width(&label)).ok()?;
             let edge = close.map_or(status.right(), |close| close.x);
-            let x = edge.checked_sub(u16::try_from(right.chars().count() + 1).ok()? + width)?;
-            let used = text + u16::try_from(left.chars().count() + 1).ok()?;
+            let x = edge.checked_sub(u16::try_from(text_width(&right) + 1).ok()? + width)?;
+            let used = text + u16::try_from(text_width(&left) + 1).ok()?;
             (x > undo.map_or(used, Rect::right)).then(|| Rect::new(x, status.y, width, 1))
         });
         let problems = self.problems_part(status, text, undo, close, lsp);
@@ -1439,6 +1440,11 @@ impl App {
         }
     }
 
+    /// A status-line button's glyph, with a cell of padding either side.
+    fn button_glyph(&self, glyph: Glyph) -> String {
+        format!(" {} ", self.palette.glyph(glyph))
+    }
+
     /// What the button beside a file-operation message offers: undoing it, or
     /// putting back what was just undone.
     const fn undo_label(&self) -> &'static str {
@@ -1457,13 +1463,18 @@ impl App {
     #[must_use]
     pub fn status(&self) -> (String, String) {
         let pending = self.chords.pending();
-        let chord = (!pending.is_empty()).then(|| format!("{} …", Sequence(pending)));
+        let chord = (!pending.is_empty())
+            .then(|| format!("{} {}", Sequence(pending), self.palette.glyph(Glyph::Ellipsis)));
         let left =
             chord.or_else(|| self.shown_message().map(str::to_string)).unwrap_or_else(|| {
                 format!(
                     "{}{}",
                     display_path(self.doc().buffer.path()),
-                    if self.doc().buffer.is_modified() { " •" } else { "" }
+                    if self.doc().buffer.is_modified() {
+                        format!(" {}", self.palette.glyph(Glyph::TabModified))
+                    } else {
+                        String::new()
+                    }
                 )
             });
 
@@ -1563,7 +1574,7 @@ impl App {
             self.palette.fg(Role::Line)
         };
         for y in area.top()..area.bottom() {
-            cells[(edge, y)].set_char('│').set_style(style);
+            cells[(edge, y)].set_symbol(self.palette.glyph(Glyph::RuleVertical)).set_style(style);
         }
     }
 
@@ -1593,11 +1604,16 @@ impl App {
             }
         };
         if let Some(files) = parts.files {
-            let glyph = if self.sidebar_area().is_some() { " ◧ " } else { " ▯ " };
-            write_at(cells, files, files.x, glyph, button(Target::StatusFiles));
+            let glyph = if self.sidebar_area().is_some() {
+                Glyph::SidebarShown
+            } else {
+                Glyph::SidebarHidden
+            };
+            write_at(cells, files, files.x, &self.button_glyph(glyph), button(Target::StatusFiles));
         }
         if let Some(search) = parts.search {
-            write_at(cells, search, search.x, " ⌕ ", button(Target::StatusSearch));
+            let glyph = self.button_glyph(Glyph::SearchIcon);
+            write_at(cells, search, search.x, &glyph, button(Target::StatusSearch));
         }
 
         let (left, right) = self.status();
@@ -1606,7 +1622,8 @@ impl App {
             write_at(cells, undo, undo.x, self.undo_label(), button(Target::StatusUndo));
         }
         if let Some(close) = parts.close {
-            write_at(cells, close, close.x, " × ", button(Target::StatusClose));
+            let glyph = self.button_glyph(Glyph::TabClose);
+            write_at(cells, close, close.x, &glyph, button(Target::StatusClose));
         }
         if let Some(lsp) = parts.lsp {
             self.render_lsp(lsp, cells);
@@ -1615,12 +1632,12 @@ impl App {
             self.render_problems(problems, cells);
         }
 
-        let width = u16::try_from(right.chars().count()).unwrap_or(0);
+        let width = u16::try_from(text_width(&right)).unwrap_or(0);
         // Dropped entirely rather than overlapping when the two halves would
         // collide on a narrow terminal.
         let right_edge = parts.close.map_or(area.right(), |close| close.x);
         let used = parts.undo.map_or_else(
-            || parts.text + u16::try_from(left.chars().count()).unwrap_or(0),
+            || parts.text + u16::try_from(text_width(&left)).unwrap_or(0),
             Rect::right,
         );
         if let Some(start) = right_edge.checked_sub(width + 1)
@@ -1639,8 +1656,7 @@ impl App {
         write_at(cells, area, area.x, &text, style);
         // The field's caret, just after what has been typed.
         if prompt.field.is_some() {
-            let x = area.x
-                + u16::try_from(unicode_width::UnicodeWidthStr::width(text.as_str())).unwrap_or(0);
+            let x = area.x + u16::try_from(text_width(&text)).unwrap_or(0);
             if x < area.right() {
                 cells[(x, area.y)]
                     .set_char(' ')
@@ -1729,14 +1745,23 @@ const fn cells(area: Rect) -> nun_input::Rect {
     nun_input::Rect::new(area.x, area.y, area.width, area.height)
 }
 
+/// Write `text` from `start`, a grapheme at a time, stopping at the edge of
+/// `area` rather than splitting a wide character across it. It takes
+/// [`text_width`] cells, which is what anything placed after it measures it
+/// with.
 fn write_at(cells: &mut Cells, area: Rect, start: u16, text: &str, style: ratatui::style::Style) {
-    for (offset, ch) in text.chars().enumerate() {
-        let Ok(offset) = u16::try_from(offset) else { break };
-        let Some(x) = start.checked_add(offset) else { break };
-        if x >= area.right() {
+    let mut x = start;
+    for (cluster, width) in nun_ui::clusters(text) {
+        let Ok(width) = u16::try_from(width) else { break };
+        let Some(end) = x.checked_add(width) else { break };
+        if end > area.right() {
             break;
         }
-        cells[(x, area.y)].set_char(ch).set_style(style);
+        cells[(x, area.y)].set_symbol(cluster).set_style(style);
+        for covered in x + 1..end {
+            cells[(covered, area.y)].set_symbol(" ").set_style(style);
+        }
+        x = end;
     }
 }
 

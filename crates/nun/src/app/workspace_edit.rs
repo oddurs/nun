@@ -87,7 +87,7 @@ use nun_lsp::types::{
     DocumentChangeOperation, DocumentChanges, OneOf, ResourceOp, TextEdit, WorkspaceEdit,
 };
 use nun_lsp::{EditRequest, Encoding};
-use nun_ui::{HitState, SearchRow, SearchView};
+use nun_ui::{Glyph, HitState, SearchRow, SearchView};
 use nun_workspace::{Job, Rewrite, Written};
 use ratatui::buffer::Buffer as Cells;
 use ratatui::layout::Rect;
@@ -612,7 +612,8 @@ impl App {
             let edits = join(encoding.edits(&before, &file.edits), before.len_chars())
                 .map_err(|why| format!("{label}: {why}"))?;
             let after = Rope::from_str(&splice(&before, &edits));
-            let changes = changes(&before, &edits, &after);
+            let changes =
+                changes(&before, &edits, &after, self.palette.glyph(Glyph::ReplaceLineBreak));
             open.push(FilePlan {
                 path: file.path,
                 label,
@@ -686,8 +687,9 @@ impl App {
         }
         for ((path, text), (_, edits)) in read.into_iter().zip(disk) {
             let label = self.label(&path);
+            let line_break = self.palette.glyph(Glyph::ReplaceLineBreak);
             let planned = text.and_then(|text| {
-                let (after, changes) = disk_plan(&text, encoding, &edits)?;
+                let (after, changes) = disk_plan(&text, encoding, &edits, line_break)?;
                 Ok((text, after, changes))
             });
             match planned {
@@ -1509,9 +1511,6 @@ fn splice(before: &Rope, edits: &[Edit]) -> String {
     out
 }
 
-/// What stands for a line break inside a row that shows more than one line.
-const BREAK: &str = "↵";
-
 /// A run of lines some edits change, while the rows are being worked out.
 struct Run {
     /// The first and last lines of the text before.
@@ -1528,11 +1527,11 @@ struct Run {
 ///
 /// Edits whose lines touch share a row, so a row is a run of whole lines of
 /// `before` and the run of whole lines of `after` it became, each joined with
-/// [`BREAK`] when there is more than one — which only happens when an edit
+/// `line_break` when there is more than one — which only happens when an edit
 /// takes a line break away or puts one in. Where an edit lands in `after` is
 /// its start moved by what every edit before it added or took away, which is
 /// exact because `after` is [`splice`] of the same list.
-fn changes(before: &Rope, edits: &[Edit], after: &Rope) -> Vec<Change> {
+fn changes(before: &Rope, edits: &[Edit], after: &Rope, line_break: &str) -> Vec<Change> {
     let mut runs: Vec<Run> = Vec::new();
     let mut shift: isize = 0;
     for edit in edits {
@@ -1561,7 +1560,7 @@ fn changes(before: &Rope, edits: &[Edit], after: &Rope) -> Vec<Change> {
     }
     runs.into_iter()
         .map(|run| {
-            let (text, offsets) = shown(before, run.from, run.to);
+            let (text, offsets) = shown(before, run.from, run.to, line_break);
             let matched = run
                 .ranges
                 .iter()
@@ -1574,7 +1573,7 @@ fn changes(before: &Rope, edits: &[Edit], after: &Rope) -> Vec<Change> {
                 after_line: to_u32(run.after_from + 1),
                 before: text,
                 matched,
-                after: shown(after, run.after_from, run.after_to).0,
+                after: shown(after, run.after_from, run.after_to, line_break).0,
             }
         })
         .collect()
@@ -1582,15 +1581,21 @@ fn changes(before: &Rope, edits: &[Edit], after: &Rope) -> Vec<Change> {
 
 /// Lines `from` to `to` of `text` as one row, and for each line its first
 /// char in `text`, where it starts in the row, and how many chars it has
-/// there — for [`place`].
-fn shown(text: &Rope, from: usize, to: usize) -> (String, Vec<(usize, usize, usize)>) {
+/// there — for [`place`]. Lines are joined with `line_break`, which may be
+/// more than one char.
+fn shown(
+    text: &Rope,
+    from: usize,
+    to: usize,
+    line_break: &str,
+) -> (String, Vec<(usize, usize, usize)>) {
     let mut row = String::new();
     let mut lines = Vec::new();
     let mut at = 0;
     for line in from..=to {
         if line > from {
-            row.push_str(BREAK);
-            at += 1;
+            row.push_str(line_break);
+            at += line_break.chars().count();
         }
         let content = line_text(text, line);
         let chars = content.chars().count();
@@ -1639,6 +1644,7 @@ fn disk_plan(
     text: &str,
     encoding: Encoding,
     edits: &[TextEdit],
+    line_break: &str,
 ) -> Result<(String, Vec<Change>), String> {
     let (bom, body) = match text.strip_prefix('\u{feff}') {
         Some(body) => ("\u{feff}", body),
@@ -1658,7 +1664,7 @@ fn disk_plan(
         }
     }
     let after = splice(&before, &edits);
-    let changes = changes(&before, &edits, &Rope::from_str(&after));
+    let changes = changes(&before, &edits, &Rope::from_str(&after), line_break);
     Ok((format!("{bom}{after}"), changes))
 }
 
@@ -1672,6 +1678,9 @@ mod tests {
     use proptest::prelude::*;
 
     use super::*;
+
+    /// The default preset's line break, which the rows below are written with.
+    const BREAK: &str = "↵";
 
     fn uri(path: &str) -> Uri {
         Uri::from_str(&format!("file://{path}")).unwrap()
@@ -1734,7 +1743,7 @@ mod tests {
         let text = "\u{feff}let cat = 1;\r\nlet cat = 2;\nno newline cat";
         let edits =
             [text_edit(0, 4, 7, "dog"), text_edit(1, 4, 7, "dog"), text_edit(2, 11, 14, "dog")];
-        let (after, changes) = disk_plan(text, Encoding::Utf16, &edits).unwrap();
+        let (after, changes) = disk_plan(text, Encoding::Utf16, &edits, BREAK).unwrap();
         assert_eq!(after, "\u{feff}let dog = 1;\r\nlet dog = 2;\nno newline dog");
         assert_eq!(changes.len(), 3);
         assert_eq!(changes[0].before, "let cat = 1;", "no mark, no ending");
@@ -1747,26 +1756,26 @@ mod tests {
         // Two UTF-16 units for the crab, four bytes, one char.
         let text = "🦀 cat é cat\n";
         let edits = [text_edit(0, 3, 6, "dog"), text_edit(0, 9, 12, "dog")];
-        let (after, changes) = disk_plan(text, Encoding::Utf16, &edits).unwrap();
+        let (after, changes) = disk_plan(text, Encoding::Utf16, &edits, BREAK).unwrap();
         assert_eq!(after, "🦀 dog é dog\n");
         assert_eq!(changes.len(), 1, "one line, one row");
         assert_eq!(changes[0].matched, [2..5, 8..11], "char offsets");
 
         let edits = [text_edit(0, 5, 8, "dog")];
-        let (after, _) = disk_plan(text, Encoding::Utf8, &edits).unwrap();
+        let (after, _) = disk_plan(text, Encoding::Utf8, &edits, BREAK).unwrap();
         assert_eq!(after, "🦀 dog é cat\n");
     }
 
     #[test]
     fn new_text_with_line_breaks_takes_the_files_own() {
         let (after, _) =
-            disk_plan("a\r\nb\r\n", Encoding::Utf16, &[text_edit(0, 1, 1, "\nx")]).unwrap();
+            disk_plan("a\r\nb\r\n", Encoding::Utf16, &[text_edit(0, 1, 1, "\nx")], BREAK).unwrap();
         assert_eq!(after, "a\r\nx\r\nb\r\n");
     }
 
     #[test]
     fn a_bare_carriage_return_is_refused_rather_than_miscounted() {
-        let refused = disk_plan("a\rb cat\n", Encoding::Utf16, &[text_edit(1, 2, 5, "dog")]);
+        let refused = disk_plan("a\rb cat\n", Encoding::Utf16, &[text_edit(1, 2, 5, "dog")], BREAK);
         assert!(refused.unwrap_err().contains("bare carriage return"));
     }
 
@@ -1776,6 +1785,7 @@ mod tests {
             "cat\n",
             Encoding::Utf16,
             &[text_edit(0, 0, 2, "x"), text_edit(0, 1, 3, "y")],
+            BREAK,
         );
         assert!(refused.unwrap_err().contains("overlap"));
     }
@@ -1786,7 +1796,7 @@ mod tests {
         let edits = join(vec![Edit::replace(0, 1, "x\ny"), Edit::replace(4, 7, "dog")], 8).unwrap();
         let after = Rope::from_str(&splice(&before, &edits));
         assert_eq!(after.to_string(), "x\ny\nb dog\n");
-        let rows = changes(&before, &edits, &after);
+        let rows = changes(&before, &edits, &after, BREAK);
         assert_eq!((rows[0].line, rows[0].after_line), (1, 1));
         assert_eq!(rows[0].after, "x↵y", "both lines it became");
         assert_eq!((rows[1].line, rows[1].after_line), (2, 3), "numbered where it now is");
@@ -1800,11 +1810,16 @@ mod tests {
             join(vec![Edit::replace(4, 8, "dog "), Edit::replace(10, 13, "dog")], 20).unwrap();
         let after = Rope::from_str(&splice(&before, &edits));
         assert_eq!(after.to_string(), "let dog = dog;\nnext\n");
-        let rows = changes(&before, &edits, &after);
+        let rows = changes(&before, &edits, &after, BREAK);
         assert_eq!(rows.len(), 1, "{rows:?}");
         assert_eq!(rows[0].before, "let cat↵= cat;");
         assert_eq!(rows[0].matched, vec![4..8, 10..13], "the break counts as one");
         assert_eq!(rows[0].after, "let dog = dog;");
+
+        // A break drawn with two chars moves what follows it by two.
+        let rows = changes(&before, &edits, &after, "$\u{301}");
+        assert_eq!(rows[0].before, "let cat$\u{301}= cat;");
+        assert_eq!(rows[0].matched, vec![4..9, 11..14], "the first edit takes the break with it");
     }
 
     #[test]
@@ -1821,7 +1836,7 @@ mod tests {
     #[test]
     fn past_the_end_of_a_crlf_line_on_disk_keeps_its_carriage_return() {
         let (after, _) =
-            disk_plan("cat\r\nx", Encoding::Utf16, &[text_edit(0, 0, 99, "dog")]).unwrap();
+            disk_plan("cat\r\nx", Encoding::Utf16, &[text_edit(0, 0, 99, "dog")], BREAK).unwrap();
         assert_eq!(after, "dog\r\nx");
     }
 
@@ -1860,7 +1875,7 @@ mod tests {
                     TextEdit { range: encoding.range(&rope, from..to), new_text: new }
                 })
                 .collect();
-            let Ok((after, rows)) = disk_plan(&text, encoding, &edits) else {
+            let Ok((after, rows)) = disk_plan(&text, encoding, &edits, BREAK) else {
                 // Overlapping, or split a CRLF: refused, which is allowed.
                 return Ok(());
             };
