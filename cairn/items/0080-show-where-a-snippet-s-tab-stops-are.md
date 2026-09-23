@@ -2,12 +2,14 @@
 id: 80
 title: Show where a snippet's tab-stops are
 type: feature
-status: backlog
+status: done
 milestone: m4
+assignee: Oddur Sigurdsson
 depends_on:
 - 33
 created: 2026-09-23
 updated: 2026-09-23
+closed_at: 2026-09-23
 priority: p2
 effort: s
 area: lsp
@@ -30,6 +32,6 @@ snippet ends. Mirrors of the current stop share its mark.
 
 ## Acceptance criteria
 
-- [ ] Every remaining stop is visible while a snippet is live, and nothing is once it ends
-- [ ] Mouse: clicking a marked stop moves to it (this already works; keep it working)
-- [ ] Colours come from nun-theme roles
+- [x] Every remaining stop is visible while a snippet is live, and nothing is once it ends
+- [x] Mouse: clicking a marked stop moves to it (this already works; keep it working)
+- [x] Colours come from nun-theme roles

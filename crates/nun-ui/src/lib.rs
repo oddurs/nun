@@ -56,4 +56,4 @@ pub use syntax::{FALLBACK, role_of};
 pub use tabs::{Tab, TabStrip};
 pub use tree::{TreeButton, TreeView};
 pub use underline::{Evidence, UNDERLINE_QUERY, UnderlineProbe, Underlines};
-pub use view::EditorView;
+pub use view::{EditorView, Stop};

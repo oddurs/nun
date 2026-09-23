@@ -174,6 +174,19 @@ fn overlay_sits_further_from_the_ground_than_raised() {
 }
 
 #[test]
+fn tabstops_are_washes_the_selection_still_reads_over() {
+    for (name, probe) in corpus() {
+        let ramp = derive(&probe);
+        let ground = ramp.get(Role::Ground);
+        let [other, current, selection] = [Role::Tabstop, Role::TabstopCurrent, Role::Selection]
+            .map(|role| contrast_ratio(ramp.get(role), ground));
+        assert!(other > 1.0, "{name}: a tab-stop is invisible");
+        assert!(current > other, "{name}: the current stop must stand out from the rest");
+        assert!(selection > current, "{name}: a selection must read over a stop");
+    }
+}
+
+#[test]
 fn text_on_the_accent_is_legible() {
     for (name, probe) in corpus() {
         let ramp = derive(&probe);

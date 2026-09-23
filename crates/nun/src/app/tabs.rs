@@ -590,11 +590,13 @@ impl App {
             {
                 let focused = pane == self.panes.focus();
                 let (text, rail) = self.split_rail(doc, text);
+                let stops = self.snippet_stops(doc);
                 nun_ui::EditorView::new(&doc.buffer, &self.palette)
                     .scrolled_to(doc.scroll)
                     .highlighted(App::spans_of(doc))
                     .foldable(&doc.syntax.folding.ranges)
                     .marked(self.diagnostics.marks(doc.id))
+                    .with_stops(&stops)
                     .with_drop_marker(focused.then(|| self.drop_marker()).flatten())
                     .render(text, cells);
                 if let Some(rail) = rail {

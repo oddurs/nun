@@ -64,6 +64,10 @@ pub enum Role {
     Selection,
     /// The current line's highlight.
     CursorLine,
+    /// A live snippet's tab-stops, other than the one being edited.
+    Tabstop,
+    /// The tab-stop being edited, in every place it appears.
+    TabstopCurrent,
     /// Errors.
     Error,
     /// Warnings.
@@ -125,6 +129,8 @@ pub struct Ramp {
     on_accent: Rgb,
     selection: Rgb,
     cursor_line: Rgb,
+    tabstop: Rgb,
+    tabstop_current: Rgb,
     error: Rgb,
     warn: Rgb,
     info: Rgb,
@@ -164,6 +170,8 @@ impl Ramp {
             Role::OnAccent => self.on_accent,
             Role::Selection => self.selection,
             Role::CursorLine => self.cursor_line,
+            Role::Tabstop => self.tabstop,
+            Role::TabstopCurrent => self.tabstop_current,
             Role::Error => self.error,
             Role::Warn => self.warn,
             Role::Info => self.info,
@@ -199,6 +207,8 @@ impl Ramp {
             Role::OnAccent => self.on_accent = color,
             Role::Selection => self.selection = color,
             Role::CursorLine => self.cursor_line = color,
+            Role::Tabstop => self.tabstop = color,
+            Role::TabstopCurrent => self.tabstop_current = color,
             Role::Error => self.error = color,
             Role::Warn => self.warn = color,
             Role::Info => self.info = color,
@@ -236,7 +246,7 @@ impl Ramp {
 
 impl Role {
     /// Every role, in the order `nun theme dump` prints them.
-    pub const ALL: [Self; 26] = [
+    pub const ALL: [Self; 28] = [
         Self::Ground,
         Self::Raised,
         Self::Overlay,
@@ -250,6 +260,8 @@ impl Role {
         Self::OnAccent,
         Self::Selection,
         Self::CursorLine,
+        Self::Tabstop,
+        Self::TabstopCurrent,
         Self::Error,
         Self::Warn,
         Self::Info,
@@ -282,6 +294,8 @@ impl Role {
             Self::OnAccent => "on_accent",
             Self::Selection => "selection",
             Self::CursorLine => "cursor_line",
+            Self::Tabstop => "tabstop",
+            Self::TabstopCurrent => "tabstop_current",
             Self::Error => "error",
             Self::Warn => "warn",
             Self::Info => "info",
@@ -365,6 +379,11 @@ pub fn derive_with_polarity(probe: &Probe, polarity: Polarity) -> Ramp {
         on_accent: readable_on(accent_rgb),
         selection: Rgb::from(ground.mix(accent, 0.22)),
         cursor_line: Rgb::from(surface(1.035)),
+        // Washes of the accent, like the selection but lighter: the one being
+        // edited stands out from the rest, and a selection still reads over
+        // either.
+        tabstop: Rgb::from(ground.mix(accent, 0.08)),
+        tabstop_current: Rgb::from(ground.mix(accent, 0.15)),
         error: Rgb::from(role(Ansi::Red)),
         warn: Rgb::from(role(Ansi::Yellow)),
         info: Rgb::from(role(Ansi::Cyan)),

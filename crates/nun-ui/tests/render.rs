@@ -4,7 +4,7 @@ use std::time::Instant;
 
 use nun_core::{Buffer, Range, Selections};
 use nun_theme::{Probe, Role, derive};
-use nun_ui::{EditorView, Harness, Palette, changed_cells, changed_rows};
+use nun_ui::{EditorView, Harness, Palette, Stop, changed_cells, changed_rows};
 
 fn palette() -> Palette {
     Palette::new(derive(&Probe::builtin_dark()))
@@ -492,4 +492,75 @@ fn a_position_is_drawn_in_the_cell_that_maps_back_to_it() {
     assert_eq!(view.cell_of(area, buffer.line_start(1)), None, "folded away");
     let narrow = ratatui::layout::Rect::new(0, 0, gutter + 2, 4);
     assert_eq!(view.cell_of(narrow, start + 4), None, "past the right edge");
+}
+
+// ── snippet tab-stops ───────────────────────────────────────────────────────
+
+#[test]
+fn tab_stops_are_washed_the_current_one_and_its_mirror_more_strongly() {
+    // `let x = x; y|` with `x` the current stop, mirrored, and `y` the next.
+    let mut buffer = Buffer::from_text("let x = x; y\nz");
+    buffer.set_selections(Selections::single(Range::caret(buffer.len_chars())));
+    let stops = [
+        Stop { start: 4, end: 5, current: true },
+        Stop { start: 8, end: 9, current: true },
+        Stop { start: 11, end: 12, current: false },
+        // Empty, at the end of the line: its one cell is still marked.
+        Stop { start: 12, end: 12, current: false },
+    ];
+    let palette = palette();
+    let mut harness = Harness::new(20, 2);
+    harness.draw(EditorView::new(&buffer, &palette).with_stops(&stops));
+
+    let gutter = EditorView::new(&buffer, &palette).gutter_width();
+    let bg = |column: u16| harness.cells()[(gutter + column, 0)].bg;
+    let (current, other) = (palette.tabstop(true).bg, palette.tabstop(false).bg);
+    assert_eq!(Some(bg(4)), current, "the current stop");
+    assert_eq!(Some(bg(8)), current, "its mirror");
+    assert_eq!(Some(bg(11)), other, "the next stop, more quietly");
+    assert_eq!(Some(bg(12)), other, "an empty stop past the end of the line");
+    assert_eq!(bg(3), palette.ground(), "nothing between them");
+    assert_eq!(bg(13), palette.ground(), "and nothing after");
+}
+
+#[test]
+fn a_selection_and_a_caret_read_over_a_tab_stop() {
+    let mut buffer = Buffer::from_text("ab cd");
+    buffer.set_selections(Selections::new(vec![Range::new(0, 2), Range::caret(3)], 0));
+    let stops =
+        [Stop { start: 0, end: 2, current: true }, Stop { start: 3, end: 5, current: false }];
+    let palette = palette();
+    let mut harness = Harness::new(20, 1);
+    harness.draw(EditorView::new(&buffer, &palette).with_stops(&stops));
+
+    let gutter = EditorView::new(&buffer, &palette).gutter_width();
+    let cells = harness.cells();
+    assert_eq!(Some(cells[(gutter, 0)].bg), palette.selection().bg, "the placeholder, selected");
+    assert_ne!(Some(cells[(gutter + 3, 0)].bg), palette.tabstop(false).bg, "the caret wins");
+    assert_eq!(Some(cells[(gutter + 4, 0)].bg), palette.tabstop(false).bg);
+}
+
+#[test]
+fn a_tab_stop_below_a_fold_is_drawn_on_the_row_its_line_is_on() {
+    let mut buffer = Buffer::from_text("fn a() {\n    one();\n}\nlet x\n");
+    buffer.set_selections(Selections::single(Range::caret(buffer.len_chars())));
+    buffer.fold(0, 2);
+    let start = buffer.line_start(3) + 4;
+    // One stop hidden in the fold, one below it.
+    let stops = [
+        Stop { start: 13, end: 16, current: false },
+        Stop { start, end: start + 1, current: true },
+    ];
+    let palette = palette();
+    let mut harness = Harness::new(20, 3);
+    harness.draw(EditorView::new(&buffer, &palette).with_stops(&stops));
+
+    let gutter = EditorView::new(&buffer, &palette).gutter_width();
+    let quiet = palette.tabstop(false).bg.expect("a wash");
+    assert_eq!(Some(harness.cells()[(gutter + 4, 1)].bg), palette.tabstop(true).bg);
+    for y in 0..3 {
+        for x in 0..20 {
+            assert_ne!(harness.cells()[(x, y)].bg, quiet, "the folded stop drew at ({x}, {y})");
+        }
+    }
 }

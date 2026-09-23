@@ -14,6 +14,18 @@ use crate::style::Palette;
 /// Space between the gutter digits and the text.
 const GUTTER_PADDING: u16 = 2;
 
+/// Where one of a live snippet's tab-stops is, in char indices, and whether
+/// it is the one being edited. An empty stop marks the one cell at `start`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stop {
+    /// Char index where it begins.
+    pub start: usize,
+    /// Char index where it ends.
+    pub end: usize,
+    /// Whether it is the stop being edited, or one of its mirrors.
+    pub current: bool,
+}
+
 /// One buffer, drawn into a rectangle.
 #[derive(Debug)]
 pub struct EditorView<'a> {
@@ -24,6 +36,7 @@ pub struct EditorView<'a> {
     highlights: &'a [nun_syntax::Span],
     foldable: &'a [nun_syntax::FoldRange],
     marks: &'a [Mark],
+    stops: &'a [Stop],
 }
 
 impl<'a> EditorView<'a> {
@@ -38,6 +51,7 @@ impl<'a> EditorView<'a> {
             highlights: &[],
             foldable: &[],
             marks: &[],
+            stops: &[],
         }
     }
 
@@ -46,6 +60,14 @@ impl<'a> EditorView<'a> {
     #[must_use]
     pub const fn marked(mut self, marks: &'a [Mark]) -> Self {
         self.marks = marks;
+        self
+    }
+
+    /// Wash these snippet tab-stops, the current one more strongly. They may
+    /// be in any order; where they overlap, the current one wins.
+    #[must_use]
+    pub const fn with_stops(mut self, stops: &'a [Stop]) -> Self {
+        self.stops = stops;
         self
     }
 
@@ -366,6 +388,29 @@ impl EditorView<'_> {
         }
     }
 
+    /// The tab-stop wash for the chars `from..to`, for a line spanning
+    /// `line_from..line_to`: the stops that reach the line are found once,
+    /// rather than per cell.
+    fn stop_wash(
+        &self,
+        line_from: usize,
+        line_to: usize,
+    ) -> impl Fn(usize, usize) -> Option<ratatui::style::Style> + '_ {
+        let stops: Vec<&Stop> = self
+            .stops
+            .iter()
+            .filter(|stop| overlaps(stop.start, stop.end, line_from, line_to))
+            .collect();
+        move |from, to| {
+            stops
+                .iter()
+                .filter(|stop| overlaps(stop.start, stop.end, from, to))
+                .map(|stop| stop.current)
+                .max()
+                .map(|current| self.palette.tabstop(current))
+        }
+    }
+
     fn draw_line(
         &self,
         cells: &mut Cells,
@@ -424,6 +469,8 @@ impl EditorView<'_> {
                 .map(|severity| self.palette.underline(severity.role()))
         };
 
+        let wash = self.stop_wash(line_from, line_to + 1);
+
         let mut x = area.left() + gutter;
         let mut char_index = self.buffer.line_start(line);
 
@@ -454,6 +501,9 @@ impl EditorView<'_> {
 
             if line == caret_line {
                 style = style.patch(self.palette.cursor_line());
+            }
+            if let Some(stop) = wash(char_index, char_index + chars) {
+                style = style.patch(stop);
             }
             if selected {
                 style = style.patch(self.palette.selection());
@@ -487,10 +537,18 @@ impl EditorView<'_> {
 
         // The caret may sit one past the last character on the line, and so
         // may a diagnostic: a missing semicolon is reported there.
+        // So may an empty stop, at the end of a line or of the text.
         let past_end = underline(char_index, char_index + 1);
-        if (is_caret(char_index) || past_end.is_some()) && x < area.right() {
-            let mut style =
-                if is_caret(char_index) { caret_style(char_index) } else { cells[(x, y)].style() };
+        let stop_past_end = wash(char_index, char_index + 1);
+        let marked = past_end.is_some() || stop_past_end.is_some();
+        if (is_caret(char_index) || marked) && x < area.right() {
+            let mut style = cells[(x, y)].style();
+            if let Some(stop) = stop_past_end {
+                style = style.patch(stop);
+            }
+            if is_caret(char_index) {
+                style = caret_style(char_index);
+            }
             if let Some(line) = past_end {
                 style = style.patch(line);
             }
