@@ -59,3 +59,10 @@ This file is generated from the source by `nun keys`. Do not edit it by hand.
 | Unfold everything | `fold.unfold_all` | `Ctrl+K J` | `Ctrl+K J` |
 | Restart the language server | `lsp.restart` | `Ctrl+K Shift+R` | `Ctrl+K Shift+R` |
 | Format document | `lsp.format` | `Alt+Shift+F`, `Ctrl+K Shift+F` | `Ctrl+K Shift+F` |
+| Go to definition | `nav.definition` | `F12` | `F12` |
+| Open definition beside | `nav.definition_beside` | `Ctrl+K F12` | `Ctrl+K F12` |
+| Find references | `nav.references` | `Shift+F12` | `Shift+F12` |
+| Go back | `nav.back` | `Alt+Left` | `Alt+Left` |
+| Go forward | `nav.forward` | `Alt+Right` | `Alt+Right` |
+| Next reference | `nav.next_reference` | `F4` | `F4` |
+| Previous reference | `nav.previous_reference` | `Shift+F4` | `Shift+F4` |

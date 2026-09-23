@@ -53,25 +53,26 @@
 
 ## m4 — Language servers
 
-`###·······` 25% · 2 of 8 done · due 2026-11-19
+`####······` 33% · 3 of 9 done · due 2026-11-19
 
 ### backlog
 
 - [ ] [`0032`](https://github.com/oddurs/nun/blob/main/cairn/items/0032-diagnostics-and-the-mark-rail.md) Diagnostics and the mark rail <sup>feature · p0</sup>
 - [ ] [`0033`](https://github.com/oddurs/nun/blob/main/cairn/items/0033-completion.md) Completion <sup>feature · p0</sup>
 - [ ] [`0034`](https://github.com/oddurs/nun/blob/main/cairn/items/0034-hover-cards.md) Hover cards <sup>feature · p1</sup>
-- [ ] [`0035`](https://github.com/oddurs/nun/blob/main/cairn/items/0035-go-to-definition-and-find-references.md) Go to definition and find references <sup>feature · p0</sup>
 - [ ] [`0036`](https://github.com/oddurs/nun/blob/main/cairn/items/0036-rename.md) Rename <sup>feature · p1</sup>
 - [ ] [`0037`](https://github.com/oddurs/nun/blob/main/cairn/items/0037-format-on-save.md) Format on save <sup>feature · p1</sup>
+- [ ] [`0076`](https://github.com/oddurs/nun/blob/main/cairn/items/0076-say-where-ctrl-click-is-taken-by-the-terminal.md) Say where Ctrl-click is taken by the terminal <sup>feature · p2</sup>
 
 ### done
 
 - [x] [`0031`](https://github.com/oddurs/nun/blob/main/cairn/items/0031-async-lsp-client-and-server-lifecycle.md) Async LSP client and server lifecycle <sup>feature · p0</sup>
+- [x] [`0035`](https://github.com/oddurs/nun/blob/main/cairn/items/0035-go-to-definition-and-find-references.md) Go to definition and find references <sup>feature · p0</sup>
 - [x] [`0074`](https://github.com/oddurs/nun/blob/main/cairn/items/0074-pasted-text-can-put-a-bare-carriage-return-in-the-buffer.md) Pasted text can put a bare carriage return in the buffer <sup>bug · p1</sup>
 
 ## m5 — Git and terminal
 
-`··········` 0% · 0 of 6 done · due 2026-12-03
+`··········` 0% · 0 of 7 done · due 2026-12-03
 
 ### backlog
 
@@ -81,6 +82,7 @@
 - [ ] [`0041`](https://github.com/oddurs/nun/blob/main/cairn/items/0041-integrated-terminal-panel.md) Integrated terminal panel <sup>feature · p1</sup>
 - [ ] [`0042`](https://github.com/oddurs/nun/blob/main/cairn/items/0042-layered-config-with-hot-reload.md) Layered config with hot reload <sup>feature · p0</sup>
 - [ ] [`0043`](https://github.com/oddurs/nun/blob/main/cairn/items/0043-session-restore.md) Session restore <sup>feature · p2</sup>
+- [ ] [`0075`](https://github.com/oddurs/nun/blob/main/cairn/items/0075-format-on-save-per-project.md) Format on save per project <sup>feature · p2</sup>
 
 ## perf — Fast on anything
 

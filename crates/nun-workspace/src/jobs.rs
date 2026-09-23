@@ -94,6 +94,14 @@ pub enum Job {
         /// Which keystroke this is, so a late answer can be recognised.
         generation: u64,
     },
+    /// Read some lines of some files, for showing where they are without
+    /// opening them: the references to a symbol, say.
+    Lines {
+        /// Which request this is, so a late answer can be recognised.
+        generation: u64,
+        /// Each file, and the lines of it wanted, counting from zero.
+        wanted: Vec<(PathBuf, Vec<u32>)>,
+    },
     /// Nothing: a marker that comes back once everything queued before it is
     /// done. Jobs are done in order, so this is how a caller waits for the
     /// worker to catch up without guessing at a delay.
@@ -137,6 +145,15 @@ pub enum Done {
         /// [`Done::Changed`]. `None` when no file was written and so there is
         /// nothing to take back.
         change: Option<Change>,
+    },
+    /// The lines [`Job::Lines`] asked for.
+    Lines {
+        /// Which request they answer.
+        generation: u64,
+        /// Each file, and the lines of it that could be read, without their
+        /// line endings. A file that could not be read is left out, and so is
+        /// a line past its end.
+        lines: Vec<(PathBuf, Vec<(u32, String)>)>,
     },
     /// The marker from [`Job::Echo`], and with it the news that everything
     /// asked for before it has been done.
@@ -240,6 +257,16 @@ impl Worker {
                 return Done::Found { query, generation, results };
             }
             Job::Echo(marker) => return Done::Echo(marker),
+            Job::Lines { generation, wanted } => {
+                let lines = wanted
+                    .into_iter()
+                    .filter_map(|(path, wanted)| {
+                        let found = read_lines(&path, &wanted)?;
+                        Some((path, found))
+                    })
+                    .collect();
+                return Done::Lines { generation, lines };
+            }
             Job::Replace { root, options, replacement, chosen, searched_at } => {
                 let replacer = match Replacer::new(&options, &replacement) {
                     Ok(replacer) => replacer,
@@ -269,6 +296,26 @@ fn step(outcome: Result<Option<Change>, crate::ops::OpError>, undo: bool) -> Don
         Ok(None) => Done::Nothing { redo: !undo },
         Err(error) => Done::Failed(error.to_string()),
     }
+}
+
+/// Lines `wanted` of the file at `path`, each with its number. Read lossily:
+/// this is for showing, and one bad byte should not hide the whole line.
+fn read_lines(path: &Path, wanted: &[u32]) -> Option<Vec<(u32, String)>> {
+    let bytes = std::fs::read(path).ok()?;
+    let text = String::from_utf8_lossy(&bytes);
+    let mut wanted = wanted.to_vec();
+    wanted.sort_unstable();
+    wanted.dedup();
+    let mut found = Vec::with_capacity(wanted.len());
+    let mut next = wanted.iter().peekable();
+    for (number, line) in (0u32..).zip(text.split('\n')) {
+        let Some(&&want) = next.peek() else { break };
+        if number == want {
+            found.push((number, line.strip_suffix('\r').unwrap_or(line).to_string()));
+            next.next();
+        }
+    }
+    Some(found)
 }
 
 /// The trash a worker would use, for callers that want to say where it is.
@@ -311,6 +358,30 @@ mod tests_support {
 mod tests {
     use super::tests_support::*;
     use super::*;
+
+    #[test]
+    fn lines_are_read_by_number_without_their_endings() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.rs");
+        std::fs::write(&path, "zero\r\none 😀\ntwo\n").unwrap();
+        let (jobs, receiver) = worker(&dir.path().join(".trash"));
+
+        let gone = dir.path().join("gone.rs");
+        jobs.send(Job::Lines {
+            generation: 7,
+            wanted: vec![(path.clone(), vec![1, 0, 9]), (gone, vec![0])],
+        });
+        match next(&receiver) {
+            Done::Lines { generation, lines } => {
+                assert_eq!(generation, 7);
+                assert_eq!(
+                    lines,
+                    vec![(path, vec![(0, "zero".to_string()), (1, "one 😀".to_string())])]
+                );
+            }
+            other => panic!("expected lines, got {other:?}"),
+        }
+    }
 
     #[test]
     fn a_listing_comes_back_as_a_message() {
