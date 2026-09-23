@@ -33,6 +33,8 @@ pub enum Event {
     Syntax(nun_syntax::Reply),
     /// News from a project search: more hits, the end of one, or a failure.
     Found(nun_workspace::Found),
+    /// A language server said something, or answered.
+    Lsp(nun_lsp::Event),
     /// Something changed inside a watched directory, or watching one failed.
     Files {
         /// The directory whose contents changed.

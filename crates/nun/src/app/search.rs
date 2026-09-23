@@ -990,6 +990,7 @@ impl App {
             };
             document.buffer = buffer;
             self.syntax_open(id);
+            self.lsp_open(id);
         }
         untaken
     }

@@ -53,17 +53,21 @@
 
 ## m4 — Language servers
 
-`··········` 0% · 0 of 7 done · due 2026-11-19
+`##········` 13% · 1 of 8 done · due 2026-11-19
 
 ### backlog
 
-- [ ] [`0031`](https://github.com/oddurs/nun/blob/main/cairn/items/0031-async-lsp-client-and-server-lifecycle.md) Async LSP client and server lifecycle <sup>feature · p0</sup>
 - [ ] [`0032`](https://github.com/oddurs/nun/blob/main/cairn/items/0032-diagnostics-and-the-mark-rail.md) Diagnostics and the mark rail <sup>feature · p0</sup>
 - [ ] [`0033`](https://github.com/oddurs/nun/blob/main/cairn/items/0033-completion.md) Completion <sup>feature · p0</sup>
 - [ ] [`0034`](https://github.com/oddurs/nun/blob/main/cairn/items/0034-hover-cards.md) Hover cards <sup>feature · p1</sup>
 - [ ] [`0035`](https://github.com/oddurs/nun/blob/main/cairn/items/0035-go-to-definition-and-find-references.md) Go to definition and find references <sup>feature · p0</sup>
 - [ ] [`0036`](https://github.com/oddurs/nun/blob/main/cairn/items/0036-rename.md) Rename <sup>feature · p1</sup>
 - [ ] [`0037`](https://github.com/oddurs/nun/blob/main/cairn/items/0037-format-on-save.md) Format on save <sup>feature · p1</sup>
+- [ ] [`0074`](https://github.com/oddurs/nun/blob/main/cairn/items/0074-pasted-text-can-put-a-bare-carriage-return-in-the-buffer.md) Pasted text can put a bare carriage return in the buffer <sup>bug · p1</sup>
+
+### done
+
+- [x] [`0031`](https://github.com/oddurs/nun/blob/main/cairn/items/0031-async-lsp-client-and-server-lifecycle.md) Async LSP client and server lifecycle <sup>feature · p0</sup>
 
 ## m5 — Git and terminal
 

@@ -214,3 +214,68 @@ fn the_double_click_threshold_can_be_set_within_reason() {
     assert_eq!(loaded.config.double_click_ms, None, "falls back to the platform value");
     assert!(loaded.problems[0].message.contains("between 100 and 2000"));
 }
+
+#[test]
+fn rust_analyzer_is_the_default_rust_server() {
+    let config = Config::default();
+    let rust = config.lsp.get("rust").expect("rust has a default server");
+    assert_eq!(rust.command, "rust-analyzer");
+    assert!(rust.enabled);
+    assert!(config.lsp.contains_key("python"), "defaults cover more than one language");
+}
+
+#[test]
+fn a_language_server_can_be_changed_one_field_at_a_time() {
+    let (loaded, path) = load_text("[lsp.rust]\nargs = [\"--log-file\", \"/tmp/ra.log\"]\n");
+    assert!(loaded.problems.is_empty(), "{:?}", loaded.problems);
+    let rust = &loaded.config.lsp["rust"];
+    assert_eq!(rust.command, "rust-analyzer", "the command was not mentioned, so it stays");
+    assert_eq!(rust.args, ["--log-file", "/tmp/ra.log"]);
+    assert_eq!(loaded.origin("lsp.rust"), nun_config::Origin::File(path));
+    assert_eq!(loaded.origin("lsp.python"), nun_config::Origin::Default);
+}
+
+#[test]
+fn a_language_server_can_be_turned_off_or_added() {
+    let (loaded, _) = load_text("[lsp.python]\nenabled = false\n\n[lsp.zig]\ncommand = \"zls\"\n");
+    assert!(loaded.problems.is_empty(), "{:?}", loaded.problems);
+    assert!(!loaded.config.lsp["python"].enabled);
+    assert_eq!(loaded.config.lsp["zig"].command, "zls");
+    assert!(loaded.config.lsp["zig"].args.is_empty());
+}
+
+#[test]
+fn a_new_language_server_without_a_command_is_reported() {
+    let (loaded, _) = load_text("[lsp.zig]\nargs = [\"x\"]\n");
+    assert_eq!(loaded.problems.len(), 1);
+    assert!(
+        loaded.problems[0].message.contains("lsp.zig needs a command"),
+        "{:?}",
+        loaded.problems
+    );
+    assert!(!loaded.config.lsp.contains_key("zig"));
+}
+
+#[test]
+fn an_empty_server_command_is_refused_with_the_way_to_turn_it_off() {
+    let (loaded, _) = load_text("[lsp.rust]\ncommand = \"\"\n");
+    assert!(loaded.problems[0].message.contains("enabled = false"), "{:?}", loaded.problems);
+    assert_eq!(loaded.config.lsp["rust"].command, "rust-analyzer", "the default stands");
+}
+
+#[test]
+fn an_unknown_key_in_a_server_section_is_reported() {
+    let (loaded, _) = load_text("[lsp.rust]\ncomand = \"ra\"\n");
+    assert_eq!(loaded.problems.len(), 1, "{:?}", loaded.problems);
+}
+
+#[test]
+fn describe_lists_the_language_servers_and_stays_valid_toml() {
+    let (loaded, _) = load_text("[lsp.python]\nenabled = false\n");
+    let described = loaded.describe();
+    assert!(described.contains("[lsp.rust]\ncommand = \"rust-analyzer\""), "{described}");
+    assert!(described.contains("enabled = false"), "{described}");
+    toml::from_str::<toml::Value>(&described).unwrap_or_else(|error| {
+        panic!("`nun config` printed invalid TOML: {error}\n\n{described}")
+    });
+}
