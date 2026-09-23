@@ -182,6 +182,17 @@ cmd_merge() {
   resolve it, run: git rebase --continue, then scripts/agent merge again"
     fi
 
+    # The roadmap is rendered from every item, so a branch rendered before the
+    # items that merged ahead of it lands a stale one. Render it against what
+    # will actually land, and carry it in the push the check runs on.
+    if command -v cairn >/dev/null 2>&1; then
+        cairn render -q
+        if [ -n "$(git status --porcelain -- ROADMAP.md)" ]; then
+            say 'the roadmap was stale; committing a fresh render'
+            git commit --quiet -m 'chore(cairn): render the roadmap' -- ROADMAP.md
+        fi
+    fi
+
     if [ "$(git rev-parse HEAD)" != "$(git rev-parse "origin/$_b" 2>/dev/null || true)" ]; then
         say "pushing $_b (the pre-push hook runs the full check)"
         git push --force-with-lease origin "$_b"
