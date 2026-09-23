@@ -2,10 +2,12 @@
 id: 74
 title: Pasted text can put a bare carriage return in the buffer
 type: bug
-status: backlog
+status: done
 milestone: m4
+assignee: Oddur Sigurdsson
 created: 2026-09-22
 updated: 2026-09-22
+closed_at: 2026-09-22
 priority: p1
 effort: s
 area: core
