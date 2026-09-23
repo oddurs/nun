@@ -124,6 +124,14 @@ fn edit(path: &Path, lsp_log: Option<&Path>) -> io::Result<()> {
     let problems = [role_problems, key_problems, server_problems].concat();
 
     let mut app = App::new(buffer, palette, keymap);
+    app.set_format_on_save(
+        settings
+            .config
+            .lsp
+            .iter()
+            .filter(|(_, server)| server.enabled && server.format_on_save)
+            .map(|(language, _)| language.clone()),
+    );
     if let Some(path) = session::Session::default_path() {
         app.attach_session(session::Session::load(path));
     }
@@ -223,6 +231,9 @@ fn edit(path: &Path, lsp_log: Option<&Path>) -> io::Result<()> {
     }
 
     screen.close();
+    // A save still waiting on a formatter is made now, unformatted, however
+    // the loop ended — a signal as much as a quit.
+    app.save_before_quitting();
     // After the terminal is back, so a failure can be said where it is seen.
     // Losing it costs the folds, and nothing else.
     if let Err(error) = app.save_session() {

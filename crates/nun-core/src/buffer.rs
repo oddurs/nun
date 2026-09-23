@@ -7,6 +7,7 @@ use std::time::SystemTime;
 
 use ropey::Rope;
 
+use crate::batch::{self, BatchError};
 use crate::edit::Edit;
 use crate::fold::{Fold, Folds, Hidden};
 use crate::grapheme;
@@ -441,6 +442,88 @@ impl Buffer {
             "edits in one revision must be disjoint"
         );
 
+        // Lowest first for the mapping, which walks them in order once rather
+        // than once per edit: with five hundred carets, mapping every
+        // selection through every edit is a quarter of a million steps a key.
+        let ascending: Vec<Edit> = edits.iter().rev().cloned().collect();
+        let mut after = self.selections.clone();
+        after.map_through_all(&ascending);
+
+        let before = self.selections.clone();
+        let inverse = self.apply_revision(&edits);
+        self.selections = after;
+        self.reveal();
+
+        let after = self.selections.clone();
+        self.record(edits, inverse, before, after);
+    }
+
+    /// Apply edits from outside the editor — a formatter's, a rename's — as
+    /// one undo step of their own, carrying the selections across them.
+    ///
+    /// Unlike [`Buffer::edit`], the batch may come in any order, as a language
+    /// server sends it: every edit is in the coordinates of the text as it is
+    /// now, sorted here by start and otherwise kept in the order given, so
+    /// that inserts at one position appear in that order. `\r\n` and a lone
+    /// `\r` in the new text become `\n`. Each edit is cut down to what it
+    /// actually changes, so a formatter that sends the whole file back moves
+    /// only the whitespace it changed, and a caret, a fold or a mark anchored
+    /// to anything else stays with it. A selection end inside what an edit
+    /// replaces is placed by the text around it — after the same number of
+    /// non-whitespace chars — rather than by its offset, and ends on a
+    /// grapheme boundary.
+    ///
+    /// The step is never merged with typing before or after it. Returns
+    /// whether the text changed; a batch that changes nothing leaves no step
+    /// to undo and the buffer as modified as it was.
+    ///
+    /// # Errors
+    ///
+    /// [`BatchError`] when an edit falls outside the text or two edits
+    /// overlap. Nothing is changed.
+    pub fn apply_batch(&mut self, edits: Vec<Edit>) -> Result<bool, BatchError> {
+        let batch = batch::prepare(&self.rope, edits)?;
+        if batch.pieces.is_empty() {
+            return Ok(false);
+        }
+        let mut after = self.selections.clone();
+        {
+            let carry = batch::Carry::new(&self.rope, &batch);
+            after.transform(|range| Range::new(carry.map(range.anchor), carry.map(range.head)));
+        }
+
+        let before = self.selections.clone();
+        let forward: Vec<Edit> = batch.pieces.into_iter().rev().collect();
+        let inverse = self.apply_revision(&forward);
+        // Carried by counting chars, an end can land inside a cluster the
+        // edit rebuilt — a combining mark or a joined emoji added after the
+        // char it was against — and goes to the end of that cluster, past
+        // the whole of what it was after.
+        after.transform(|range| Range::new(self.snap(range.anchor), self.snap(range.head)));
+        self.selections = after;
+        self.reveal();
+
+        self.history.commit();
+        let after = self.selections.clone();
+        self.history.push(Revision { inverse, forward, before, after, open: false });
+        Ok(true)
+    }
+
+    /// `pos`, or the end of the grapheme cluster it is inside.
+    fn snap(&self, pos: usize) -> usize {
+        if pos == 0 || pos >= self.len_chars() {
+            return pos.min(self.len_chars());
+        }
+        let start = self.prev_grapheme(pos + 1);
+        if start == pos { pos } else { self.next_grapheme(start) }
+    }
+
+    /// Apply the edits of one revision to the text, highest start first, and
+    /// return the edits that undo them, in the order undo applies them.
+    ///
+    /// `edits` are sorted descending by start and disjoint, and each is in the
+    /// coordinates of the text before any of them.
+    fn apply_revision(&mut self, edits: &[Edit]) -> Vec<Edit> {
         // One edit can be followed through a reparse; anything else means the
         // follower has to start again, and saying so is cheaper than being
         // subtly wrong about where the text moved.
@@ -455,10 +538,8 @@ impl Buffer {
             _ => Changed::Several,
         };
 
-        let before = self.selections.clone();
-
         let mut inverse = Vec::with_capacity(edits.len());
-        for edit in &edits {
+        for edit in edits {
             inverse.push(self.apply_to_rope(edit));
         }
         // Each inverse was taken in the coordinates of the text before the
@@ -472,15 +553,7 @@ impl Buffer {
             inverse.end = inverse.end.saturating_add_signed(shift);
             shift += edit.inserted().cast_signed() - edit.removed().cast_signed();
         }
-        // Lowest first for the mapping, which walks them in order once rather
-        // than once per edit: with five hundred carets, mapping every
-        // selection through every edit is a quarter of a million steps a key.
-        let ascending: Vec<Edit> = edits.iter().rev().cloned().collect();
-        self.selections.map_through_all(&ascending);
-        self.reveal();
-
-        let after = self.selections.clone();
-        self.record(edits, inverse, before, after);
+        inverse
     }
 
     /// Fold into the open revision when this continues a run of typing or

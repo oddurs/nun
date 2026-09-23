@@ -78,10 +78,9 @@ impl App {
         }
     }
 
-    /// The focused document was written to disk.
-    pub(super) fn lsp_saved(&mut self) {
+    /// A document was written to disk.
+    pub(super) fn lsp_saved(&mut self, id: DocId) {
         self.lsp_flush();
-        let id = self.doc().id;
         if let Some(lsp) = self.lsp.as_mut() {
             lsp.save(id);
         }
@@ -94,6 +93,9 @@ impl App {
             // Nothing asks a server anything yet. The features that do —
             // completion, hover, go to definition, rename — take their answers
             // from here, matching each by the id `request` returned.
+            Handled::Response(response) if self.formatting.asked(response.id) => {
+                self.format_answer(&response)
+            }
             Handled::Nothing | Handled::Response(_) => Outcome::Continue,
             Handled::Redraw => Outcome::Redraw,
             Handled::Notice(notice) => {

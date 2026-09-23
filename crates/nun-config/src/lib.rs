@@ -76,6 +76,13 @@ pub struct LspServer {
     /// Whether to start it at all. A default server that is not installed is
     /// skipped quietly anyway; this is for one that is installed and unwanted.
     pub enabled: bool,
+    /// Whether saving a file in this language has its server format it first.
+    ///
+    /// On by default only where the language has one formatter everybody
+    /// uses and its server applies it — rustfmt, gofmt. Elsewhere the server's
+    /// formatter is one opinion among several, and a save that quietly
+    /// rewrote a file to the wrong one would be worse than no formatting.
+    pub format_on_save: bool,
 }
 
 impl LspServer {
@@ -84,7 +91,13 @@ impl LspServer {
             command: command.to_string(),
             args: args.iter().map(|arg| (*arg).to_string()).collect(),
             enabled: true,
+            format_on_save: false,
         }
+    }
+
+    /// The same, formatting on save.
+    fn formatting(self) -> Self {
+        Self { format_on_save: true, ..self }
     }
 }
 
@@ -96,11 +109,11 @@ impl LspServer {
 fn default_servers() -> BTreeMap<String, LspServer> {
     let typescript = LspServer::new("typescript-language-server", &["--stdio"]);
     [
-        ("rust", LspServer::new("rust-analyzer", &[])),
+        ("rust", LspServer::new("rust-analyzer", &[]).formatting()),
         ("python", LspServer::new("pyright-langserver", &["--stdio"])),
         ("typescript", typescript.clone()),
         ("javascript", typescript),
-        ("go", LspServer::new("gopls", &[])),
+        ("go", LspServer::new("gopls", &[]).formatting()),
         ("c", LspServer::new("clangd", &[])),
         ("cpp", LspServer::new("clangd", &[])),
     ]
@@ -239,6 +252,7 @@ impl Loaded {
             if !server.enabled {
                 let _ = writeln!(out, "enabled = false");
             }
+            let _ = writeln!(out, "format_on_save = {}", server.format_on_save);
         }
 
         if !self.problems.is_empty() {
@@ -330,6 +344,7 @@ struct RawLsp {
     command: Option<String>,
     args: Option<Vec<String>>,
     enabled: Option<bool>,
+    format_on_save: Option<bool>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -430,7 +445,9 @@ impl RawConfig {
                     command: command.unwrap_or_else(|| existing.command.clone()),
                     ..existing.clone()
                 },
-                (None, Some(command)) => LspServer { command, args: Vec::new(), enabled: true },
+                (None, Some(command)) => {
+                    LspServer { command, args: Vec::new(), enabled: true, format_on_save: false }
+                }
                 (None, None) => {
                     loaded.problems.push(Problem {
                         path: path.to_path_buf(),
@@ -444,6 +461,7 @@ impl RawConfig {
             let server = LspServer {
                 args: raw.args.unwrap_or(server.args),
                 enabled: raw.enabled.unwrap_or(server.enabled),
+                format_on_save: raw.format_on_save.unwrap_or(server.format_on_save),
                 command: server.command,
             };
             if server.command.trim().is_empty() {

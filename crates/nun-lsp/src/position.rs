@@ -16,6 +16,7 @@
 //! never wrong; only a position on a line after such a `\r` can be.
 
 use lsp_types::{Position, PositionEncodingKind};
+use nun_core::Edit;
 use ropey::Rope;
 
 /// The unit a server counts offsets into a line in.
@@ -125,6 +126,26 @@ impl Encoding {
         let start = self.char_index(text, range.start);
         let end = self.char_index(text, range.end);
         start.min(end)..end.max(start)
+    }
+
+    /// A server's edits to `text` as buffer edits, in the order it sent them.
+    ///
+    /// Every range is converted against `text` as it stands — the protocol
+    /// puts all of one batch's edits in the coordinates of the text before
+    /// any of them — so this is called before the first is applied, and the
+    /// result goes whole to `Buffer::apply_batch`, which sorts it, joins
+    /// inserts at one position in this order, and turns the `\r\n` a server
+    /// may write into the `\n` a buffer holds. A range out of bounds is
+    /// clamped, as for [`Encoding::char_index`].
+    #[must_use]
+    pub fn edits(self, text: &Rope, edits: &[lsp_types::TextEdit]) -> Vec<Edit> {
+        edits
+            .iter()
+            .map(|edit| {
+                let range = self.char_range(text, edit.range);
+                Edit::replace(range.start, range.end, edit.new_text.clone())
+            })
+            .collect()
     }
 }
 
@@ -279,6 +300,26 @@ mod tests {
             let backwards = lsp_types::Range { start: range.end, end: range.start };
             assert_eq!(encoding.char_range(&text, backwards), 1..5, "{encoding:?}");
         }
+    }
+
+    #[test]
+    fn a_servers_edits_arrive_as_char_ranges_in_the_order_sent() {
+        // An emoji before each edit on its line: two UTF-16 units, one char.
+        let text = Rope::from_str("😀ab\n😀cd");
+        let edit = |line, from, to, new_text: &str| lsp_types::TextEdit {
+            range: lsp_types::Range { start: at(line, from), end: at(line, to) },
+            new_text: new_text.to_string(),
+        };
+        let edits = Encoding::Utf16
+            .edits(&text, &[edit(1, 3, 4, "D"), edit(0, 2, 3, "A\r\n"), edit(0, 2, 2, "0")]);
+        assert_eq!(
+            edits,
+            vec![Edit::replace(6, 7, "D"), Edit::replace(1, 2, "A\r\n"), Edit::insert(1, "0")],
+            "converted one by one against the text as it was, line endings and all"
+        );
+        let mut buffer = nun_core::Buffer::from_text("😀ab\n😀cd");
+        buffer.apply_batch(edits).unwrap();
+        assert_eq!(buffer.text().to_string(), "😀A\n0b\n😀cD");
     }
 
     #[test]
