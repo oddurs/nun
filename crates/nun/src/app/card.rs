@@ -10,13 +10,20 @@
 //! resting on something stays while the pointer is over that thing or over
 //! the card, and goes when it leaves both. One the keyboard opened stays
 //! until the next key or a click somewhere else. Either goes with Escape.
+//!
+//! Alt+Page Up and Alt+Page Down scroll a card, a page at a time, and keep
+//! it open; the wheel does the same over it. They are the only keys a card
+//! keeps for itself, they are bound to nothing else, and a card that
+//! overflows says so in its bottom row. Every button on a card already has
+//! a key of its own — F8 and Shift+F8 step, Code actions lists the fixes —
+//! so the buttons are not given more.
 //! A hover card is a pointer card whose opener is the text it is about
 //! rather than a hover target, so it stays while the pointer is on that text.
 //!
 //! A card's links are drawn as links and followed with a click, whatever the
 //! terminal; OSC 8 is added on top where it is wanted.
 
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use nun_ui::{Paragraph, Popover};
 use ratatui::buffer::Buffer as Cells;
 use ratatui::layout::Rect;
@@ -24,6 +31,12 @@ use ratatui::layout::Rect;
 use super::panes::DocId;
 use super::{App, Outcome, Target};
 use crate::commands::Command;
+
+/// What a card that does not fit says about its scroll keys.
+const SCROLL_HINT: &str = "Alt+PgUp/PgDn scrolls";
+
+/// Rows the wheel scrolls a card by.
+const WHEEL_ROWS: usize = 3;
 
 /// What a card is about.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -135,6 +148,7 @@ impl Card {
             .scrolled_to(self.scroll)
             .links(&self.links)
             .hyperlinks(self.hyperlinks)
+            .overflow_hint(SCROLL_HINT)
     }
 }
 
@@ -220,17 +234,24 @@ impl App {
 
     /// The wheel turned over the card.
     pub(super) fn card_scroll(&mut self, down: bool) -> Outcome {
-        let most = match (self.card.as_ref(), self.card_area()) {
-            (Some(card), Some(area)) => card.popover(&self.palette).most_scroll(area),
-            _ => return Outcome::Continue,
-        };
-        let Some(card) = self.card.as_mut() else { return Outcome::Continue };
-        let scroll = if down { (card.scroll + 3).min(most) } else { card.scroll.saturating_sub(3) };
+        self.card_scroll_by(down, |_| WHEEL_ROWS).unwrap_or(Outcome::Continue)
+    }
+
+    /// Scroll the card up or down by `rows`, which is given the rows of body
+    /// in view. `None` when there is no card on screen to scroll.
+    fn card_scroll_by(&mut self, down: bool, rows: impl FnOnce(usize) -> usize) -> Option<Outcome> {
+        let (card, area) = (self.card.as_ref()?, self.card_area()?);
+        let popover = card.popover(&self.palette);
+        let (most, rows) =
+            (popover.most_scroll(area), rows(usize::from(popover.body_height(area))));
+        let card = self.card.as_mut()?;
+        let scroll =
+            if down { (card.scroll + rows).min(most) } else { card.scroll.saturating_sub(rows) };
         if scroll == card.scroll {
-            return Outcome::Continue;
+            return Some(Outcome::Continue);
         }
         card.scroll = scroll;
-        Outcome::Redraw
+        Some(Outcome::Redraw)
     }
 
     /// A press on `target`, with a card open. `Some` when the card took it;
@@ -261,11 +282,23 @@ impl App {
         }
     }
 
-    /// A key, with a card open. Escape puts it away and is spent doing so;
-    /// any other key puts it away and then does what it does.
+    /// A key, with a card open. Alt+Page Up and Down scroll it a page,
+    /// keeping a row from the last in view, and leave it open. Escape puts it
+    /// away and is spent doing so; any other key puts it away and then does
+    /// what it does.
     pub(super) fn card_key(&mut self, event: &KeyEvent) -> Option<Outcome> {
         if self.card.is_none() || matches!(event.code, KeyCode::Modifier(_)) {
             return None;
+        }
+        let page = match (event.code, event.modifiers) {
+            (KeyCode::PageUp, KeyModifiers::ALT) => Some(false),
+            (KeyCode::PageDown, KeyModifiers::ALT) => Some(true),
+            _ => None,
+        };
+        if let Some(down) = page
+            && let Some(outcome) = self.card_scroll_by(down, |rows| rows.saturating_sub(1).max(1))
+        {
+            return Some(outcome);
         }
         self.close_card();
         (event.code == KeyCode::Esc).then_some(Outcome::Redraw)
@@ -293,5 +326,99 @@ impl App {
                 Outcome::Redraw
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use nun_core::Buffer;
+    use nun_theme::{Probe, Role, derive};
+    use nun_ui::Event;
+    use nun_ui::{Palette, Run};
+    use ratatui::buffer::Buffer as Cells;
+    use ratatui::layout::Rect;
+
+    use super::*;
+
+    /// An editor with a keyboard card up, saying `words` words about the
+    /// top left corner.
+    fn with_card(words: usize) -> App {
+        let mut app = App::new(
+            Buffer::from_text("one\ntwo\n"),
+            Palette::new(derive(&Probe::builtin_dark())),
+            crate::commands::defaults(crate::commands::KeySet::Full),
+        );
+        app.set_viewport(Rect::new(0, 0, 80, 24));
+        let body = vec![vec![Run::new("word ".repeat(words), Role::Text)]];
+        app.show_card(Card::new(Anchor::Screen(Rect::new(0, 0, 1, 1)), body, Vec::new(), None));
+        app
+    }
+
+    fn key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) -> Outcome {
+        app.handle(Event::Key(KeyEvent::new(code, modifiers)))
+    }
+
+    fn scroll(app: &App) -> usize {
+        app.card.as_ref().expect("the card is still up").scroll
+    }
+
+    fn most_scroll(app: &App) -> usize {
+        let card = app.card.as_ref().unwrap();
+        card.popover(&app.palette).most_scroll(app.card_area().unwrap())
+    }
+
+    fn bottom_row(app: &App) -> String {
+        let area = app.card_area().unwrap();
+        let mut cells = Cells::empty(app.viewport);
+        app.render(app.viewport, &mut cells);
+        (area.x..area.right()).map(|x| cells[(x, area.bottom() - 1)].symbol()).collect()
+    }
+
+    #[test]
+    fn alt_page_down_scrolls_a_keyboard_card_to_its_end_and_keeps_it_open() {
+        let mut app = with_card(600);
+        let most = most_scroll(&app);
+        assert!(most > 13, "more than a page to scroll: {most}");
+        assert!(bottom_row(&app).trim_end().ends_with(SCROLL_HINT), "says how to scroll");
+
+        assert_eq!(key(&mut app, KeyCode::PageDown, KeyModifiers::ALT), Outcome::Redraw);
+        assert_eq!(scroll(&app), 12, "a page, less the row kept in view");
+        while scroll(&app) < most {
+            assert_eq!(key(&mut app, KeyCode::PageDown, KeyModifiers::ALT), Outcome::Redraw);
+        }
+        assert_eq!(key(&mut app, KeyCode::PageDown, KeyModifiers::ALT), Outcome::Continue);
+        assert_eq!(scroll(&app), most, "stops at the end");
+
+        key(&mut app, KeyCode::PageUp, KeyModifiers::ALT);
+        assert_eq!(scroll(&app), most - 12);
+    }
+
+    #[test]
+    fn any_other_key_still_closes_the_card_and_does_what_it_does() {
+        let mut app = with_card(600);
+        key(&mut app, KeyCode::PageDown, KeyModifiers::ALT);
+        key(&mut app, KeyCode::Char('x'), KeyModifiers::NONE);
+        assert!(app.card.is_none());
+        assert_eq!(app.doc().buffer.line_text(0), "xone\n");
+
+        // Alt+Down is Add a caret below, and still is with a card up.
+        let mut app = with_card(600);
+        key(&mut app, KeyCode::Down, KeyModifiers::ALT);
+        assert!(app.card.is_none());
+        assert_eq!(app.doc().buffer.selections().len(), 2);
+
+        // Page Down with another modifier is not a card's.
+        let mut app = with_card(600);
+        key(&mut app, KeyCode::PageDown, KeyModifiers::ALT | KeyModifiers::SHIFT);
+        assert!(app.card.is_none());
+    }
+
+    #[test]
+    fn a_card_that_fits_says_nothing_about_scrolling() {
+        let mut app = with_card(3);
+        assert!(!bottom_row(&app).contains("Alt"));
+        assert_eq!(key(&mut app, KeyCode::PageDown, KeyModifiers::ALT), Outcome::Continue);
+        assert_eq!(scroll(&app), 0);
     }
 }
