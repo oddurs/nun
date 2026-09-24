@@ -220,6 +220,13 @@ pub enum SearchRow<'a> {
         /// The line as it would be written.
         text: &'a str,
     },
+    /// Something done to a file as a whole — created, moved or deleted — as
+    /// a sentence. It is part of what is applied and cannot be left out on
+    /// its own, so it carries the included mark and nothing to click.
+    Operation {
+        /// What is done, in words.
+        text: &'a str,
+    },
 }
 
 /// The search panel, drawn.
@@ -526,7 +533,10 @@ impl<'a> SearchView<'a> {
             SearchRow::File { state: HitState::Included | HitState::Excluded, .. } => {
                 FILE_MARKER_COL
             }
-            SearchRow::Hit { .. } | SearchRow::File { .. } | SearchRow::After { .. } => {
+            SearchRow::Hit { .. }
+            | SearchRow::File { .. }
+            | SearchRow::After { .. }
+            | SearchRow::Operation { .. } => {
                 return None;
             }
         };
@@ -895,7 +905,7 @@ impl SearchView<'_> {
             .iter()
             .filter_map(|row| match row {
                 SearchRow::Hit { line, .. } | SearchRow::After { line, .. } => Some(digits(*line)),
-                SearchRow::File { .. } => None,
+                SearchRow::File { .. } | SearchRow::Operation { .. } => None,
             })
             .max()
             .unwrap_or(MIN_GUTTER)
@@ -923,7 +933,31 @@ impl SearchView<'_> {
             SearchRow::After { line: number, text } => {
                 self.draw_after(cells, line, style, gutter, number, text);
             }
+            SearchRow::Operation { text } => self.draw_operation(cells, line, style, text),
         }
+    }
+
+    /// A file operation: the included mark where a file's tick goes, and the
+    /// sentence where its path goes.
+    fn draw_operation(&self, cells: &mut Cells, line: Rect, style: Style, text: &str) {
+        let ellipsis = self.palette.glyph(Glyph::Ellipsis);
+        if let Some(x) = line.x.checked_add(FILE_MARKER_COL)
+            && x < line.right()
+        {
+            let ink = style.patch(self.palette.ink(Role::Added));
+            clip::write(
+                cells,
+                x,
+                line.y,
+                1,
+                self.palette.glyph(Glyph::ReplaceIncluded),
+                ink,
+                ellipsis,
+            );
+        }
+        let x = line.x.saturating_add(3);
+        let room = line.right().saturating_sub(x);
+        clip::write(cells, x, line.y, room, text, style, ellipsis);
     }
 
     /// The marker in a row's gutter column, and the ink the row's text takes.

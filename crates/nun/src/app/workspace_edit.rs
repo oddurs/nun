@@ -8,9 +8,10 @@
 //! **Checking.** Either every file in an edit can be edited as it says or
 //! none is:
 //!
-//! - an edit that would create, move or delete a file is refused whole, since
-//!   nun does not do those (and says so when it starts the server, so a server
-//!   that listens will not send one);
+//! - a file operation — create, move, delete — that would overwrite anything,
+//!   that lies outside the open folder, that deletes a file that is open, or
+//!   whose steps cannot be traced back to the files as they are now, is
+//!   refused whole ([`files`] says exactly when);
 //! - an edit to a document at a version the editor no longer has is refused
 //!   whole, and so is one naming a version for a file that is not open, since
 //!   it describes text nobody can see;
@@ -20,14 +21,33 @@
 //!   text, or one whose lines end in a bare carriage return are refused whole
 //!   too.
 //!
+//! **Files created, moved and deleted.** A server may ask for these in among
+//! its text edits — rust-analyzer moves a module's file when the module is
+//! renamed. They are sorted out before anything is done ([`files`]): edits to
+//! files already there are made where those files are now, edits to a file
+//! the edit creates become what it is created holding, and then the
+//! operations run on the workspace worker, in the order the server listed
+//! them, through the same `FsHistory` the file tree uses — so a delete goes
+//! to the trash and nothing is ever overwritten. They are kept off the tree's
+//! own undo, since taking back the move alone would leave the files that name
+//! it pointing at nothing; each comes back with its reverse, kept with the
+//! rest of the edit. An open file that is moved follows its file, as it does
+//! for a move in the tree, and its server hears it closed under the old name
+//! and opened under the new. The server is not asked `willRenameFiles` and is
+//! not told `didRenameFiles`, since it asked for the move itself. It is told
+//! `didChangeWatchedFiles` of every file created, moved, deleted or written on
+//! disk, both ways: nun watches no files for it, and a server that leaves
+//! watching to its client would otherwise go on believing a module's file is
+//! where it was.
+//!
 //! **Straight in, or previewed.** A rename is always previewed: it writes
 //! files nobody has open, the second most destructive thing the editor does
 //! after a project-wide replace. A code action usually edits the one file it
 //! was asked about — an import added, a variable renamed where it stands — and
 //! is expected to happen the moment it is chosen. So an edit from a code
 //! action that touches exactly one file, and that file is open, goes straight
-//! into its buffer as one undo step; anything wider is previewed exactly as a
-//! rename is. So is an edit a server sends of its own accord, or one that
+//! into its buffer as one undo step; anything wider, or anything that creates,
+//! moves or deletes a file, is previewed exactly as a rename is. So is an edit a server sends of its own accord, or one that
 //! arrives after the text it was worked out for has changed: nobody chose
 //! that edit with the text in front of them. The rule is the one line in
 //! [`App::edit_workspace`].
@@ -38,7 +58,10 @@
 //! splice whose result is written or compared against, so the preview and the
 //! write cannot disagree. Each file carries a tick: clicking it leaves the file
 //! out. Leaving a file out usually breaks the build, but it is the person's
-//! project and the choice is theirs to make with their eyes open.
+//! project and the choice is theirs to make with their eyes open. A file
+//! operation has a row of its own, above the files, and no tick: the steps
+//! after it were worked out on the files as it leaves them, so it cannot be
+//! left out alone. Nor can the text of a file the edit creates.
 //!
 //! **Applying.** Open files are edited in their buffers, through
 //! `Buffer::apply_batch`, so each gets exactly one undo step and none of them
@@ -46,7 +69,8 @@
 //! previewed, and if one does not, every buffer is taken back and nothing is
 //! written. Files that are not open are written on the worker with
 //! `Job::Rewrite`, which writes a file only while it still holds the text that
-//! was previewed, and checks all of them before writing any.
+//! was previewed, and checks all of them before writing any. Once every one
+//! is written, the file operations run, stopping at the first that fails.
 //!
 //! **What undo means.** An editor undo is per buffer, and an edit across the
 //! project touches files that have no buffer. So a previewed edit keeps its
@@ -59,15 +83,19 @@
 //!   once and reported);
 //! - a file that was written is taken back by writing its old text over it —
 //!   the same guarded rewrite the other way round, so a file that has changed
-//!   since is not overwritten and the undo is refused, naming it.
+//!   since is not overwritten and the undo is refused, naming it;
+//! - a file operation is taken back by its reverse, last first, before any
+//!   file is rewritten: a move is moved back, a created file goes to the trash
+//!   provided it still holds what it was created with, and a deleted one comes
+//!   back out of the trash.
 //!
 //! Everything is checked before anything is taken back. Ctrl+Z in one open
 //! file still undoes that file's part alone, as it would any other edit.
 //!
 //! **When it goes wrong halfway.** A write can fail, or a file can change in
 //! the moment between its check and its write. Then the run stops there, and
-//! the status line names what was written, what was not and why, and what was
-//! never tried. What was written stays written and the undo takes back
+//! the status line names what was written and which operations happened,
+//! what stopped it and why, and what was never tried. What was written stays written and the undo takes back
 //! exactly that. A failure before anything reached the disk takes the open
 //! buffers back too, so nothing is left half done.
 //!
@@ -76,6 +104,8 @@
 //! never before, so the server hears what actually happened. It waits on its
 //! own thread meanwhile; nothing here waits on it.
 
+mod files;
+
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::ops::Range;
@@ -83,17 +113,20 @@ use std::path::{Path, PathBuf};
 
 use crossterm::event::{KeyCode, KeyEvent};
 use nun_core::Edit;
+use nun_lsp::types::notification::DidChangeWatchedFiles;
 use nun_lsp::types::{
-    DocumentChangeOperation, DocumentChanges, OneOf, ResourceOp, TextEdit, WorkspaceEdit,
+    DidChangeWatchedFilesParams, DocumentChangeOperation, DocumentChanges, FileChangeType,
+    FileEvent, OneOf, TextEdit, WorkspaceEdit,
 };
 use nun_lsp::{EditRequest, Encoding};
 use nun_ui::{Glyph, HitState, SearchRow, SearchView};
-use nun_workspace::{Job, Rewrite, Written};
+use nun_workspace::{Carried, FileOp, Job, Present, Rewrite, Written};
 use ratatui::buffer::Buffer as Cells;
 use ratatui::layout::Rect;
 use ratatui::widgets::Widget;
 use ropey::Rope;
 
+use self::files::{Decided, Sorted, Step, Wanted};
 use super::panes::DocId;
 use super::{App, Focus, Outcome, SidebarView, Target};
 
@@ -216,6 +249,14 @@ impl Subject {
         }
     }
 
+    /// Having done some of it: "Renamed only partly".
+    fn partly(&self) -> String {
+        match self {
+            Self::Rename { .. } => "Renamed only partly".into(),
+            Self::Action { .. } => format!("{} only partly", self.done()),
+        }
+    }
+
     /// What is said while the files it touches are read.
     fn reading(&self) -> String {
         match self {
@@ -265,13 +306,22 @@ enum Stage {
         files: Vec<FilePlan>,
         /// What the worker is reading, and the server's edits to each.
         disk: Vec<(PathBuf, Vec<TextEdit>)>,
+        /// The files it creates, moves and deletes, whose places the worker
+        /// is looking at.
+        sorted: Sorted,
         encoding: Encoding,
     },
     /// The edit has been applied to the open files, and the rest are being
-    /// written.
-    Applying { tag: u64, applied: Applied, planned: Vec<Rewrite> },
-    /// An edit is being taken back, and its files are being written.
-    Undoing { tag: u64, applied: Applied },
+    /// written. The file operations follow.
+    Applying { tag: u64, applied: Applied, planned: Vec<Rewrite>, ops: Vec<FileOp> },
+    /// Every file is written, and the file operations are being carried out.
+    Moving { tag: u64, applied: Applied },
+    /// An edit is being taken back, and its file operations reversed. The
+    /// files follow.
+    Unmoving { tag: u64, applied: Applied },
+    /// An edit is being taken back, and its files are being written. `did`
+    /// is what taking back its file operations did, in words.
+    Undoing { tag: u64, applied: Applied, did: Vec<String> },
 }
 
 /// Edits across the project, and everything the preview and the undo need of
@@ -293,13 +343,16 @@ pub(super) struct Edits {
     offer: Option<String>,
     /// Numbers the worker's jobs, so an answer finds its question.
     tags: u64,
+    /// The document that was in front of the person when the edit in hand
+    /// arrived, whose server hears about the files it changes on disk.
+    about: Option<DocId>,
 }
 
 impl Edits {
     /// Whether an edit is between its checking and its end: being read,
     /// written, or taken back.
     pub(super) const fn busy(&self) -> bool {
-        matches!(self.stage, Stage::Reading { .. } | Stage::Applying { .. } | Stage::Undoing { .. })
+        !matches!(self.stage, Stage::Idle)
     }
 
     fn tag(&mut self) -> u64 {
@@ -331,6 +384,8 @@ enum Where {
     Open { doc: DocId, before: Rope, edits: Vec<Edit>, after: Rope },
     /// On disk only: what was read, and what is to be written.
     Disk { before: String, after: String },
+    /// Nowhere yet: the edit creates it, holding this.
+    Created,
 }
 
 /// One changed line, before and after.
@@ -358,6 +413,8 @@ enum Line {
     Before(usize, usize),
     /// The same line as it will be.
     After(usize, usize),
+    /// A file operation, by index.
+    Op(usize),
 }
 
 /// The panel.
@@ -365,6 +422,9 @@ enum Line {
 struct Preview {
     subject: Subject,
     files: Vec<FilePlan>,
+    /// What the edit creates, moves and deletes, in order, each with how it
+    /// reads.
+    ops: Vec<(FileOp, String)>,
     collapsed: BTreeSet<usize>,
     rows: Vec<Line>,
     widest: u32,
@@ -374,7 +434,7 @@ struct Preview {
 }
 
 impl Preview {
-    fn new(subject: Subject, mut files: Vec<FilePlan>) -> Self {
+    fn new(subject: Subject, mut files: Vec<FilePlan>, ops: Vec<(FileOp, String)>) -> Self {
         files.sort_by(|a, b| a.label.cmp(&b.label));
         let widest = files
             .iter()
@@ -384,6 +444,7 @@ impl Preview {
         let mut preview = Self {
             subject,
             files,
+            ops,
             collapsed: BTreeSet::new(),
             rows: Vec::new(),
             widest,
@@ -396,7 +457,7 @@ impl Preview {
     }
 
     fn relist(&mut self) {
-        let mut rows = Vec::new();
+        let mut rows: Vec<Line> = (0..self.ops.len()).map(Line::Op).collect();
         for (at, file) in self.files.iter().enumerate() {
             rows.push(Line::File(at));
             if self.collapsed.contains(&at) {
@@ -425,6 +486,10 @@ impl Preview {
             format!("{places} {} in {files} {}", plural(places, "change"), plural(files, "file"));
         if left_out > 0 {
             let _ = write!(self.summary, ", {left_out} left out");
+        }
+        let ops = self.ops.len();
+        if ops > 0 {
+            let _ = write!(self.summary, ", {ops} file {}", plural(ops, "operation"));
         }
     }
 
@@ -457,6 +522,7 @@ impl Preview {
                     let change = &self.files[at].changes[index];
                     SearchRow::After { line: change.after_line, text: &change.after }
                 }
+                Line::Op(at) => SearchRow::Operation { text: &self.ops[at].1 },
             })
             .collect()
     }
@@ -464,6 +530,7 @@ impl Preview {
     fn file_of(&self, row: usize) -> Option<usize> {
         match *self.rows.get(row)? {
             Line::File(at) | Line::Before(at, _) | Line::After(at, _) => Some(at),
+            Line::Op(_) => None,
         }
     }
 }
@@ -476,6 +543,11 @@ struct Applied {
     buffers: Vec<Undoable>,
     /// The files it wrote, each as the rewrite that would take it back.
     disk: Vec<Rewrite>,
+    /// The file operations that take back the ones it carried out, in the
+    /// order to carry them out: the last one done, first.
+    files: Vec<FileOp>,
+    /// The document whose server hears about files changed on disk.
+    about: Option<DocId>,
 }
 
 /// One open file an edit changed.
@@ -485,6 +557,22 @@ struct Undoable {
     label: String,
     before: Rope,
     after: Rope,
+}
+
+/// File operations sorted by what became of them, while that is said.
+#[derive(Debug, Default)]
+struct Carrying {
+    /// What happened, in words.
+    did: Vec<String>,
+    /// What takes back each that happened, in the order they happened.
+    reverses: Vec<FileOp>,
+    /// What stopped the run, in words.
+    failed: Option<String>,
+    /// What never happened, in words.
+    untried: Vec<String>,
+    /// The operations that did not happen, the one that stopped the run
+    /// first.
+    left: Vec<FileOp>,
 }
 
 /// The edits a server wants made to one file.
@@ -522,8 +610,9 @@ impl App {
             self.edits_done(Err("another edit came first".into()));
         }
         self.edits.after = after;
+        self.edits.about = Some(self.doc().id);
         match self.plan(encoding, edit) {
-            Ok((files, disk)) if disk.is_empty() => {
+            Ok((files, disk, sorted)) if disk.is_empty() && sorted.ops.is_empty() => {
                 let mut files: Vec<FilePlan> =
                     files.into_iter().filter(|file| !file.changes.is_empty()).collect();
                 // The rule: an edit chosen with the text in front of the
@@ -531,11 +620,11 @@ impl App {
                 if straight && files.len() == 1 {
                     return self.apply_straight(&subject, files.remove(0));
                 }
-                self.preview_edit(subject, files)
+                self.preview_edit(subject, files, Vec::new())
             }
             Ok(_) if self.sidebar.is_none() => {
-                // The worker that would read the other files belongs to the
-                // folder, and there is none.
+                // The worker that would read the other files, and create,
+                // move and delete, belongs to the folder, and there is none.
                 self.message = Some(format!(
                     "Did not {}: it edits files that are not open, which needs a folder open.",
                     subject.verb()
@@ -543,12 +632,13 @@ impl App {
                 self.edits_done(Err("it edits files that are not open, and no folder is".into()));
                 Outcome::Redraw
             }
-            Ok((files, disk)) => {
+            Ok((files, disk, sorted)) => {
                 let tag = self.edits.tag();
                 let paths = disk.iter().map(|(path, _)| path.clone()).collect();
-                self.send_job(Job::Read { tag, paths });
+                let probe = sorted.probe.clone();
+                self.send_job(Job::Read { tag, paths, probe });
                 self.message = Some(subject.reading());
-                self.edits.stage = Stage::Reading { tag, subject, files, disk, encoding };
+                self.edits.stage = Stage::Reading { tag, subject, files, disk, sorted, encoding };
                 Outcome::Redraw
             }
             Err(why) => {
@@ -561,17 +651,22 @@ impl App {
 
     /// Check a server's edit, and work out what it does to every open file.
     ///
-    /// Returns those, and the files that are not open with the edits to each.
-    #[allow(clippy::type_complexity)] // Two lists, named in the comment.
+    /// Returns those; the files that are not open with the edits to each; and
+    /// the files it creates, moves and deletes, still to be checked against
+    /// what is on disk.
+    #[allow(clippy::type_complexity)] // Three lists, named in the comment.
     fn plan(
         &self,
         encoding: Encoding,
         edit: &WorkspaceEdit,
-    ) -> Result<(Vec<FilePlan>, Vec<(PathBuf, Vec<TextEdit>)>), String> {
+    ) -> Result<(Vec<FilePlan>, Vec<(PathBuf, Vec<TextEdit>)>, Sorted), String> {
         let lsp = self.lsp.as_ref().ok_or("the language server stopped")?;
+        let steps = flatten(edit, &|path| self.local(path))?;
+        let mut sorted = files::sort(steps, &|path| self.label(path))?;
+        self.may_touch(&sorted.ops)?;
         let mut open = Vec::new();
         let mut disk = Vec::new();
-        for file in flatten(edit)? {
+        for file in std::mem::take(&mut sorted.edits) {
             let label = self.label(&file.path);
             let Some(document) = self.docs.iter().find(|document| {
                 document.buffer.path().is_some_and(|open| super::same_file(open, &file.path))
@@ -622,13 +717,52 @@ impl App {
                 changes,
             });
         }
-        Ok((open, disk))
+        Ok((open, disk, sorted))
+    }
+
+    /// Refuse file operations outside the folder, and deletes of files that
+    /// are open: a buffer whose file has gone to the trash would put it
+    /// back at the next save, and nobody asked for that.
+    fn may_touch(&self, ops: &[Wanted]) -> Result<(), String> {
+        let root = self.workspace_root();
+        for op in ops {
+            for path in op.paths() {
+                if root.as_deref().is_none_or(|root| !path.starts_with(root) || path == root) {
+                    return Err(format!(
+                        "the server would create, move or delete {}, which is outside the folder",
+                        path.display()
+                    ));
+                }
+            }
+            if let Wanted::Delete { path, .. } = op
+                && let Some(open) = self
+                    .docs
+                    .iter()
+                    .filter_map(|document| document.buffer.path())
+                    .find(|open| open.starts_with(path))
+            {
+                return Err(format!(
+                    "the server would delete {}, which is open; close it first",
+                    self.label(open)
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// A path as the folder was opened, when it is inside it by either of
+    /// the names [`App::label`] knows it by; as it is otherwise.
+    fn local(&self, path: PathBuf) -> PathBuf {
+        match (self.workspace_root(), self.label(&path)) {
+            (Some(root), label) if Path::new(&label).is_relative() => root.join(label),
+            _ => path,
+        }
     }
 
     /// Make an edit to one open file there and then, as one undo step.
     fn apply_straight(&mut self, subject: &Subject, file: FilePlan) -> Outcome {
         let Where::Open { doc, edits, after, .. } = file.target else {
-            return self.preview_edit(subject.clone(), vec![file]);
+            return self.preview_edit(subject.clone(), vec![file], Vec::new());
         };
         let Some(document) = self.docs.iter_mut().find(|d| d.id == doc) else {
             self.edits_done(Err(format!("{} was closed", file.label)));
@@ -670,19 +804,22 @@ impl App {
         }
     }
 
-    /// The files that are not open have been read: preview everything.
+    /// The files that are not open have been read, and the places the edit
+    /// creates, moves and deletes looked at: preview everything.
     pub(super) fn edits_read(
         &mut self,
         tag: u64,
         read: Vec<(PathBuf, Result<String, String>)>,
+        probed: &[(PathBuf, Present)],
     ) -> Outcome {
-        let Stage::Reading { tag: asked, subject, mut files, disk, encoding } =
+        let Stage::Reading { tag: asked, subject, mut files, disk, sorted, encoding } =
             std::mem::take(&mut self.edits.stage)
         else {
             return Outcome::Continue;
         };
         if asked != tag {
-            self.edits.stage = Stage::Reading { tag: asked, subject, files, disk, encoding };
+            self.edits.stage =
+                Stage::Reading { tag: asked, subject, files, disk, sorted, encoding };
             return Outcome::Continue;
         }
         for ((path, text), (_, edits)) in read.into_iter().zip(disk) {
@@ -707,13 +844,95 @@ impl App {
                 }
             }
         }
+        let ops = match self.plan_ops(&sorted, probed, encoding, &mut files) {
+            Ok(ops) => ops,
+            Err(why) => {
+                self.message = Some(format!("Did not {}: {why}.", subject.verb()));
+                self.edits_done(Err(why));
+                return Outcome::Redraw;
+            }
+        };
         let files = files.into_iter().filter(|file| !file.changes.is_empty()).collect();
-        self.preview_edit(subject, files)
+        self.preview_edit(subject, files, ops)
+    }
+
+    /// Decide what the edit creates, moves and deletes, now that what is
+    /// there is known: each operation as the worker is to carry it out, with
+    /// how it reads. A file it creates with text in it is added to `files`.
+    fn plan_ops(
+        &self,
+        sorted: &Sorted,
+        probed: &[(PathBuf, Present)],
+        encoding: Encoding,
+        files: &mut Vec<FilePlan>,
+    ) -> Result<Vec<(FileOp, String)>, String> {
+        let decided = sorted.decide(probed, &|path| self.label(path))?;
+        let line_break = self.palette.glyph(Glyph::ReplaceLineBreak);
+        let mut ops = Vec::new();
+        for (at, decided) in decided.into_iter().enumerate() {
+            let op = match decided {
+                Decided::Skip => continue,
+                Decided::Create(path) => {
+                    let edits = sorted.created.iter().find(|(made, _)| *made == at);
+                    let label = self.label(&path);
+                    let (text, changes) = match edits {
+                        Some((_, edits)) => disk_plan("", encoding, edits, line_break)
+                            .map_err(|why| format!("{label}: {why}"))?,
+                        None => (String::new(), Vec::new()),
+                    };
+                    files.push(FilePlan {
+                        path: path.clone(),
+                        label,
+                        included: true,
+                        target: Where::Created,
+                        changes,
+                    });
+                    FileOp::Create { path, text }
+                }
+                Decided::Move(from, to) => FileOp::Move { from, to },
+                Decided::Delete(path) => FileOp::Delete { path },
+            };
+            let mut said = self.said(&op);
+            said[..1].make_ascii_uppercase();
+            ops.push((op, said));
+        }
+        Ok(ops)
+    }
+
+    /// A file operation as a clause: "move src/foo.rs to src/bar.rs".
+    fn said(&self, op: &FileOp) -> String {
+        match op {
+            FileOp::Create { path, .. } => format!("create {}", self.label(path)),
+            FileOp::Move { from, to } => {
+                format!("move {} to {}", self.label(from), self.label(to))
+            }
+            FileOp::Delete { path } => format!("delete {}", self.label(path)),
+            FileOp::Restore { path, .. } => format!("restore {}", self.label(path)),
+            FileOp::Discard { path, .. } => format!("remove {}", self.label(path)),
+        }
+    }
+
+    /// The same, done: "moved src/foo.rs to src/bar.rs".
+    fn did(&self, op: &FileOp) -> String {
+        match op {
+            FileOp::Create { path, .. } => format!("created {}", self.label(path)),
+            FileOp::Move { from, to } => {
+                format!("moved {} to {}", self.label(from), self.label(to))
+            }
+            FileOp::Delete { path } => format!("deleted {}", self.label(path)),
+            FileOp::Restore { path, .. } => format!("restored {}", self.label(path)),
+            FileOp::Discard { path, .. } => format!("removed {}", self.label(path)),
+        }
     }
 
     /// Show what the edit would do.
-    fn preview_edit(&mut self, subject: Subject, files: Vec<FilePlan>) -> Outcome {
-        if files.is_empty() {
+    fn preview_edit(
+        &mut self,
+        subject: Subject,
+        files: Vec<FilePlan>,
+        ops: Vec<(FileOp, String)>,
+    ) -> Outcome {
+        if files.is_empty() && ops.is_empty() {
             self.message = Some(subject.nothing());
             self.edits_done(Ok(()));
             return Outcome::Redraw;
@@ -727,7 +946,7 @@ impl App {
             return Outcome::Redraw;
         };
         sidebar.visible = true;
-        self.edits.preview = Some(Preview::new(subject, files));
+        self.edits.preview = Some(Preview::new(subject, files, ops));
         self.sidebar_view = SidebarView::EditPreview;
         self.focus = Focus::EditPreview;
         self.message = None;
@@ -775,7 +994,7 @@ impl App {
     /// Make the edit in every file that is ticked.
     pub(super) fn apply_edit_preview(&mut self) -> Outcome {
         let Some(preview) = self.edits.preview.take() else { return Outcome::Continue };
-        if !preview.files.iter().any(|file| file.included) {
+        if preview.ops.is_empty() && !preview.files.iter().any(|file| file.included) {
             let change = preview.subject.change().0;
             self.edits.preview = Some(preview);
             self.message =
@@ -798,7 +1017,8 @@ impl App {
             }
         }
 
-        let Preview { subject, files, .. } = preview;
+        let Preview { subject, files, ops, .. } = preview;
+        let ops: Vec<FileOp> = ops.into_iter().map(|(op, _)| op).collect();
         self.close_edit_preview();
         let mut buffers: Vec<Undoable> = Vec::new();
         let mut planned: Vec<Rewrite> = Vec::new();
@@ -829,29 +1049,47 @@ impl App {
                 Where::Disk { before, after } => {
                     planned.push(Rewrite { path: file.path, expect: before, text: after });
                 }
+                // Its text goes in with the operation that creates it.
+                Where::Created => {}
             }
         }
         self.follow_caret();
 
-        let applied = Applied { subject, buffers, disk: Vec::new() };
+        let about = self.edits.about;
+        let applied = Applied { subject, buffers, disk: Vec::new(), files: Vec::new(), about };
         if planned.is_empty() {
-            return self.applied_everywhere(applied, &[]);
+            return self.run_file_ops(applied, ops);
         }
         let tag = self.edits.tag();
         self.send_job(Job::Rewrite { tag, files: planned.clone() });
         self.message = Some(applied.subject.doing());
-        self.edits.stage = Stage::Applying { tag, applied, planned };
+        self.edits.stage = Stage::Applying { tag, applied, planned, ops };
+        Outcome::Redraw
+    }
+
+    /// Every file is written: create, move and delete what the edit says,
+    /// or, when it says nothing of that, it is done.
+    fn run_file_ops(&mut self, applied: Applied, ops: Vec<FileOp>) -> Outcome {
+        if ops.is_empty() {
+            let written: Vec<PathBuf> =
+                applied.disk.iter().map(|rewrite| rewrite.path.clone()).collect();
+            return self.applied_everywhere(applied, &written, &[]);
+        }
+        let tag = self.edits.tag();
+        self.send_job(Job::FileOps { tag, ops });
+        self.message = Some(applied.subject.doing());
+        self.edits.stage = Stage::Moving { tag, applied };
         Outcome::Redraw
     }
 
     /// The worker wrote, or took back, what it was asked to.
     pub(super) fn edits_rewritten(&mut self, tag: u64, files: &[(PathBuf, Written)]) -> Outcome {
         match std::mem::take(&mut self.edits.stage) {
-            Stage::Applying { tag: asked, applied, planned } if asked == tag => {
-                self.written(applied, &planned, files)
+            Stage::Applying { tag: asked, applied, planned, ops } if asked == tag => {
+                self.written(applied, &planned, files, ops)
             }
-            Stage::Undoing { tag: asked, applied } if asked == tag => {
-                self.written_back(applied, files)
+            Stage::Undoing { tag: asked, applied, did } if asked == tag => {
+                self.written_back(applied, files, &did)
             }
             other => {
                 self.edits.stage = other;
@@ -866,6 +1104,7 @@ impl App {
         mut applied: Applied,
         planned: &[Rewrite],
         files: &[(PathBuf, Written)],
+        ops: Vec<FileOp>,
     ) -> Outcome {
         let done: Vec<&Rewrite> = planned
             .iter()
@@ -885,6 +1124,8 @@ impl App {
             self.edits_done(Err(why));
             return Outcome::Redraw;
         }
+        let changed = done.iter().map(|rewrite| (rewrite.path.clone(), FileChangeType::CHANGED));
+        self.tell_servers(applied.about, changed.collect());
 
         applied.disk = done
             .iter()
@@ -896,19 +1137,19 @@ impl App {
             .collect();
         let paths: Vec<PathBuf> = done.iter().map(|rewrite| rewrite.path.clone()).collect();
         if done.len() == planned.len() {
-            return self.applied_everywhere(applied, &paths);
+            return self.run_file_ops(applied, ops);
         }
         let written: Vec<String> = paths.iter().map(|path| self.label(path)).collect();
-        let why = self.why_not(files);
-        let (partly, undo) = match &applied.subject {
-            Subject::Rename { .. } => ("Renamed only partly".to_string(), applied.subject.undo()),
-            subject @ Subject::Action { .. } => {
-                (format!("{} only partly", subject.done()), subject.undo())
-            }
-        };
+        let mut why = self.why_not(files);
+        if !ops.is_empty() {
+            let untried: Vec<String> = ops.iter().map(|op| self.said(op)).collect();
+            let _ = write!(why, "; not done: {}", untried.join(", "));
+        }
         let message = format!(
-            "{partly}: wrote {}, then stopped: {why}. {undo} takes back what was written.",
+            "{}: wrote {}, then stopped: {why}. {} takes back what was written.",
+            applied.subject.partly(),
             written.join(", "),
+            applied.subject.undo(),
         );
         self.reload_written(&paths);
         self.edits.last = Some(applied);
@@ -920,12 +1161,30 @@ impl App {
         Outcome::Redraw
     }
 
-    /// The edit is in: say so, and offer to take it back.
-    fn applied_everywhere(&mut self, applied: Applied, written: &[PathBuf]) -> Outcome {
+    /// The edit is in: say so, and offer to take it back. `did` is what it
+    /// created, moved and deleted, in words.
+    fn applied_everywhere(
+        &mut self,
+        applied: Applied,
+        written: &[PathBuf],
+        did: &[String],
+    ) -> Outcome {
         let untaken = self.reload_written(written);
         let files = applied.buffers.len() + applied.disk.len();
-        let mut message =
-            format!("{} in {files} {}.", applied.subject.done(), plural(files, "file"));
+        let mut message = applied.subject.done();
+        if files > 0 {
+            let _ = write!(message, " in {files} {}", plural(files, "file"));
+        }
+        match (files, did) {
+            (_, []) => {}
+            (0, did) => {
+                let _ = write!(message, ": {}", did.join(", "));
+            }
+            (_, did) => {
+                let _ = write!(message, ", and {}", did.join(", "));
+            }
+        }
+        message.push('.');
         let open = applied.buffers.len();
         if open > 0 {
             let _ = write!(
@@ -947,6 +1206,175 @@ impl App {
         self.undo_offer = true;
         self.last_undone = false;
         self.edits_done(Ok(()));
+        Outcome::Redraw
+    }
+
+    /// The worker created, moved and deleted what it was asked to, or took
+    /// that back, as far as it got.
+    pub(super) fn edits_carried(&mut self, tag: u64, ops: &[(FileOp, Carried)]) -> Outcome {
+        match std::mem::take(&mut self.edits.stage) {
+            Stage::Moving { tag: asked, applied } if asked == tag => self.moved(applied, ops),
+            Stage::Unmoving { tag: asked, applied } if asked == tag => {
+                self.moved_back(applied, ops)
+            }
+            other => {
+                self.edits.stage = other;
+                Outcome::Continue
+            }
+        }
+    }
+
+    /// Bring the tree and the open files up to date with the operations that
+    /// happened, and sort them into what happened, what stopped the run and
+    /// why, and what was never tried — each in words.
+    fn followed(&mut self, about: Option<DocId>, ops: &[(FileOp, Carried)]) -> Carrying {
+        let mut carrying = Carrying::default();
+        let mut events = Vec::new();
+        for (op, carried) in ops {
+            match carried {
+                Carried::Done(reverse) => {
+                    self.follow_file_op(op);
+                    events.extend(watched(op));
+                    carrying.did.push(self.did(op));
+                    carrying.reverses.push(reverse.clone());
+                }
+                Carried::Failed(why) => {
+                    carrying.failed = Some(format!("could not {}: {why}", self.said(op)));
+                    carrying.left.push(op.clone());
+                }
+                Carried::NotReached => {
+                    carrying.untried.push(self.said(op));
+                    carrying.left.push(op.clone());
+                }
+            }
+        }
+        self.tell_servers(about, events);
+        carrying
+    }
+
+    /// Tell the server of `about` — or, if that has closed, of the document
+    /// in front — that files changed on disk. nun does not watch files for a
+    /// server, so a server that trusts its client to say is otherwise never
+    /// told of a file the edit moved, or of one written that is not open.
+    fn tell_servers(&mut self, about: Option<DocId>, events: Vec<(PathBuf, FileChangeType)>) {
+        let doc = about.filter(|id| self.doc_by(*id).is_some()).unwrap_or(self.doc().id);
+        let changes: Vec<FileEvent> = events
+            .into_iter()
+            .filter_map(|(path, typ)| Some(FileEvent { uri: nun_lsp::uri::from_path(&path)?, typ }))
+            .collect();
+        if changes.is_empty() {
+            return;
+        }
+        if let Some(lsp) = self.lsp.as_mut() {
+            lsp.notify::<DidChangeWatchedFiles>(doc, DidChangeWatchedFilesParams { changes });
+        }
+    }
+
+    /// One file operation happened: the tree shows it, and an open file it
+    /// moved follows it, so the next save goes to the new place — and its
+    /// server knows it by the new name.
+    fn follow_file_op(&mut self, op: &FileOp) {
+        let (from, to) = match op {
+            FileOp::Move { from, to } => (Some(from), to),
+            FileOp::Create { path, .. }
+            | FileOp::Discard { path, .. }
+            | FileOp::Delete { path }
+            | FileOp::Restore { path, .. } => (None, path),
+        };
+        if let Some(sidebar) = self.sidebar.as_mut() {
+            for path in from.into_iter().chain([to]) {
+                if let Some(dir) = path.parent() {
+                    sidebar.tree.refresh_dir(dir);
+                }
+            }
+            sidebar.request_listings();
+            sidebar.sync_watches();
+        }
+        let Some(from) = from else { return };
+        let moved: Vec<(DocId, PathBuf)> = self
+            .docs
+            .iter()
+            .filter_map(|document| {
+                let rest = document.buffer.path()?.strip_prefix(from).ok()?;
+                let path = if rest.as_os_str().is_empty() { to.clone() } else { to.join(rest) };
+                Some((document.id, path))
+            })
+            .collect();
+        for (id, path) in moved {
+            if let Some(document) = self.docs.iter_mut().find(|document| document.id == id) {
+                document.buffer.set_path(path);
+            }
+            // What the edit changed in it is in the text it is opened with.
+            self.lsp_open(id);
+        }
+    }
+
+    /// The file operations ran, as far as they got.
+    fn moved(&mut self, mut applied: Applied, ops: &[(FileOp, Carried)]) -> Outcome {
+        let mut carrying = self.followed(applied.about, ops);
+        carrying.reverses.reverse();
+        applied.files = std::mem::take(&mut carrying.reverses);
+        let written: Vec<PathBuf> =
+            applied.disk.iter().map(|rewrite| rewrite.path.clone()).collect();
+        let Some(failed) = carrying.failed else {
+            return self.applied_everywhere(applied, &written, &carrying.did);
+        };
+        let mut why = failed;
+        if !carrying.untried.is_empty() {
+            let _ = write!(why, "; not done: {}", carrying.untried.join(", "));
+        }
+        if carrying.did.is_empty() && written.is_empty() {
+            // Nothing reached the disk, so nothing is left half done.
+            let back = self.take_back_buffers(&applied.subject, &applied.buffers);
+            self.message = Some(format!(
+                "Did not {}: {why}. Nothing was changed.{back}",
+                applied.subject.verb()
+            ));
+            self.edits_done(Err(why));
+            return Outcome::Redraw;
+        }
+        let mut did: Vec<String> = Vec::new();
+        if !written.is_empty() {
+            let names: Vec<String> = written.iter().map(|path| self.label(path)).collect();
+            did.push(format!("wrote {}", names.join(", ")));
+        }
+        did.extend(carrying.did);
+        let message = format!(
+            "{}: {}, then stopped: {why}. {} takes back what was done.",
+            applied.subject.partly(),
+            did.join("; "),
+            applied.subject.undo(),
+        );
+        self.reload_written(&written);
+        self.edits.last = Some(applied);
+        self.edits.offer = Some(message.clone());
+        self.message = Some(message);
+        self.undo_offer = true;
+        self.last_undone = false;
+        self.edits_done(Err(format!("only partly: {why}")));
+        Outcome::Redraw
+    }
+
+    /// The file operations were taken back, as far as that got. The files
+    /// follow once all of them are.
+    fn moved_back(&mut self, mut applied: Applied, ops: &[(FileOp, Carried)]) -> Outcome {
+        let carrying = self.followed(applied.about, ops);
+        applied.files = carrying.left;
+        let Some(failed) = carrying.failed else {
+            return self.rewrite_back(applied, carrying.did);
+        };
+        let what = applied.subject.what();
+        self.message = Some(if carrying.did.is_empty() {
+            format!("Did not take {what} back: {failed}. Nothing was changed.")
+        } else {
+            format!(
+                "Took {what} back only partly: {}, then stopped: {failed}. {} again tries the \
+                 rest.",
+                carrying.did.join(", "),
+                applied.subject.undo(),
+            )
+        });
+        self.edits.last = Some(applied);
         Outcome::Redraw
     }
 
@@ -1037,37 +1465,60 @@ impl App {
                 return Outcome::Redraw;
             }
         }
+        let tag = self.edits.tag();
+        if !applied.files.is_empty() {
+            self.send_job(Job::FileOps { tag, ops: applied.files.clone() });
+            self.message = Some(format!("Taking back {}…", applied.subject.named()));
+            self.edits.stage = Stage::Unmoving { tag, applied };
+            return Outcome::Redraw;
+        }
+        self.rewrite_back(applied, Vec::new())
+    }
+
+    /// Every file operation is taken back, which did `did`: put the files'
+    /// old text back.
+    fn rewrite_back(&mut self, applied: Applied, did: Vec<String>) -> Outcome {
         if applied.disk.is_empty() {
-            return self.taken_back(&applied, &[]);
+            return self.taken_back(&applied, &[], &did);
         }
         let tag = self.edits.tag();
         self.send_job(Job::Rewrite { tag, files: applied.disk.clone() });
         self.message = Some(format!("Taking back {}…", applied.subject.named()));
-        self.edits.stage = Stage::Undoing { tag, applied };
+        self.edits.stage = Stage::Undoing { tag, applied, did };
         Outcome::Redraw
     }
 
     /// The written files have been put back, as far as that got.
-    fn written_back(&mut self, mut applied: Applied, files: &[(PathBuf, Written)]) -> Outcome {
+    fn written_back(
+        &mut self,
+        mut applied: Applied,
+        files: &[(PathBuf, Written)],
+        did: &[String],
+    ) -> Outcome {
         let restored: Vec<PathBuf> = files
             .iter()
             .filter(|(_, written)| *written == Written::Written)
             .map(|(path, _)| path.clone())
             .collect();
+        let changed = restored.iter().map(|path| (path.clone(), FileChangeType::CHANGED));
+        self.tell_servers(applied.about, changed.collect());
         if restored.len() == applied.disk.len() {
-            return self.taken_back(&applied, &restored);
+            return self.taken_back(&applied, &restored, did);
         }
         let _ = self.reload_written(&restored);
         let why = self.why_not(files);
         let what = applied.subject.what();
-        if restored.is_empty() {
+        let mut done = did.to_vec();
+        if !restored.is_empty() {
+            let names: Vec<String> = restored.iter().map(|path| self.label(path)).collect();
+            done.push(format!("restored {}", names.join(", ")));
+        }
+        if done.is_empty() {
             self.message = Some(format!("Did not take {what} back: {why}. Nothing was changed."));
         } else {
-            let names: Vec<String> = restored.iter().map(|path| self.label(path)).collect();
             self.message = Some(format!(
-                "Took {what} back only partly: restored {}, then stopped: {why}. {} again \
-                 tries the rest.",
-                names.join(", "),
+                "Took {what} back only partly: {}, then stopped: {why}. {} again tries the rest.",
+                done.join("; "),
                 applied.subject.undo(),
             ));
         }
@@ -1077,16 +1528,20 @@ impl App {
         Outcome::Redraw
     }
 
-    /// Every file has its old text back on disk: undo the buffers too.
-    fn taken_back(&mut self, applied: &Applied, restored: &[PathBuf]) -> Outcome {
+    /// Every file has its old text back on disk, and taking back the file
+    /// operations did `did`: undo the buffers too.
+    fn taken_back(&mut self, applied: &Applied, restored: &[PathBuf], did: &[String]) -> Outcome {
         let kept = self.take_back_buffers(&applied.subject, &applied.buffers);
         let _ = self.reload_written(restored);
         let files = applied.buffers.len() + restored.len();
-        self.message = Some(format!(
-            "Took back {} in {files} {}.{kept}",
-            applied.subject.named(),
-            plural(files, "file")
-        ));
+        let mut message = format!("Took back {}", applied.subject.named());
+        if files > 0 {
+            let _ = write!(message, " in {files} {}", plural(files, "file"));
+        }
+        if !did.is_empty() {
+            let _ = write!(message, "{} {}", if files > 0 { ", and" } else { ":" }, did.join(", "));
+        }
+        self.message = Some(format!("{message}.{kept}"));
         self.edits.offer = None;
         Outcome::Redraw
     }
@@ -1261,6 +1716,14 @@ impl App {
     fn toggle_edit_file(&mut self, row: usize) -> Outcome {
         let Some(preview) = self.edits.preview.as_mut() else { return Outcome::Continue };
         let Some(at) = preview.file_of(row) else { return Outcome::Continue };
+        if matches!(preview.files[at].target, Where::Created) {
+            self.message = Some(format!(
+                "{} is new, and its text comes with creating it; it cannot be left out on its \
+                 own.",
+                preview.files[at].label
+            ));
+            return Outcome::Redraw;
+        }
         preview.files[at].included = !preview.files[at].included;
         preview.relist();
         Outcome::Redraw
@@ -1276,6 +1739,13 @@ impl App {
                     preview.collapsed.insert(at);
                 }
                 preview.relist();
+                Outcome::Redraw
+            }
+            // Nothing to open: the file is not there yet, or moves.
+            Line::Op(_) => Outcome::Redraw,
+            Line::Before(at, _) | Line::After(at, _)
+                if matches!(preview.files[at].target, Where::Created) =>
+            {
                 Outcome::Redraw
             }
             Line::Before(at, index) | Line::After(at, index) => {
@@ -1369,8 +1839,24 @@ impl App {
                     let change = &preview.files[at].changes[index];
                     format!("{}+ {}", change.line, change.after)
                 }
+                Line::Op(at) => format!("{{{}}}", preview.ops[at].1),
             })
             .collect()
+    }
+}
+
+/// What a server watching files would hear of a file operation.
+fn watched(op: &FileOp) -> Vec<(PathBuf, FileChangeType)> {
+    match op {
+        FileOp::Create { path, .. } | FileOp::Restore { path, .. } => {
+            vec![(path.clone(), FileChangeType::CREATED)]
+        }
+        FileOp::Delete { path } | FileOp::Discard { path, .. } => {
+            vec![(path.clone(), FileChangeType::DELETED)]
+        }
+        FileOp::Move { from, to } => {
+            vec![(from.clone(), FileChangeType::DELETED), (to.clone(), FileChangeType::CREATED)]
+        }
     }
 }
 
@@ -1379,75 +1865,62 @@ fn plural(count: usize, word: &str) -> String {
     if count == 1 { word.to_string() } else { format!("{word}s") }
 }
 
-/// A server's edit as one list of edits per file, in either of the two forms
-/// it can come in, or the reason it cannot be done as a whole.
-fn flatten(edit: &WorkspaceEdit) -> Result<Vec<FileEdits>, String> {
-    let mut files: Vec<FileEdits> = Vec::new();
-    let mut add = |uri: &nun_lsp::types::Uri,
-                   version: Option<i32>,
-                   edits: Vec<TextEdit>|
-     -> Result<(), String> {
-        let path = nun_lsp::uri::to_path(uri)
-            .ok_or_else(|| format!("the server edits {}, which is not a file", uri.as_str()))?;
-        if files.iter().any(|file| file.path == path) {
-            // Two lists for one file are applied one after the other, the
-            // second in the coordinates the first leaves. Nothing sends that
-            // in practice, and getting it subtly wrong would be worse than
-            // refusing it plainly.
-            return Err(format!("the server edits {} twice over", path.display()));
-        }
-        if !edits.is_empty() {
-            files.push(FileEdits { path, version, edits });
-        }
-        Ok(())
+/// A server's edit as its steps in order, in either of the two forms it can
+/// come in, with every path as `local` makes it, or the reason it cannot be
+/// done as a whole.
+fn flatten(edit: &WorkspaceEdit, local: &impl Fn(PathBuf) -> PathBuf) -> Result<Vec<Step>, String> {
+    let path = |uri: &nun_lsp::types::Uri| {
+        nun_lsp::uri::to_path(uri)
+            .map(local)
+            .ok_or_else(|| format!("the server edits {}, which is not a file", uri.as_str()))
     };
+    let text = |edit: &nun_lsp::types::TextDocumentEdit| -> Result<Step, String> {
+        let edits = edit
+            .edits
+            .iter()
+            .map(|edit| match edit {
+                OneOf::Left(edit) => edit.clone(),
+                OneOf::Right(annotated) => annotated.text_edit.clone(),
+            })
+            .collect();
+        let path = path(&edit.text_document.uri)?;
+        Ok(Step::Edit(FileEdits { path, version: edit.text_document.version, edits }))
+    };
+    let mut steps = Vec::new();
     // Where both are given the protocol prefers the versioned form.
-    if let Some(changes) = &edit.document_changes {
-        let edits: Vec<&nun_lsp::types::TextDocumentEdit> = match changes {
-            DocumentChanges::Edits(edits) => edits.iter().collect(),
-            DocumentChanges::Operations(operations) => {
-                let mut edits = Vec::new();
-                for operation in operations {
-                    match operation {
-                        DocumentChangeOperation::Edit(edit) => edits.push(edit),
-                        DocumentChangeOperation::Op(op) => return Err(refused(op)),
-                    }
-                }
-                edits
+    match (&edit.document_changes, &edit.changes) {
+        (Some(DocumentChanges::Edits(edits)), _) => {
+            for edit in edits {
+                steps.push(text(edit)?);
             }
-        };
-        for edit in edits {
-            let text_edits = edit
-                .edits
-                .iter()
-                .map(|edit| match edit {
-                    OneOf::Left(edit) => edit.clone(),
-                    OneOf::Right(annotated) => annotated.text_edit.clone(),
-                })
-                .collect();
-            add(&edit.text_document.uri, edit.text_document.version, text_edits)?;
         }
-    } else if let Some(changes) = &edit.changes {
-        for (uri, edits) in changes {
-            add(uri, None, edits.clone())?;
+        (Some(DocumentChanges::Operations(operations)), _) => {
+            for operation in operations {
+                steps.push(match operation {
+                    DocumentChangeOperation::Edit(edit) => text(edit)?,
+                    DocumentChangeOperation::Op(op) => {
+                        Step::Op(Wanted::of(op, local).ok_or_else(|| {
+                            "the server creates, moves or deletes something that is not a file"
+                                .to_string()
+                        })?)
+                    }
+                });
+            }
         }
+        (None, Some(changes)) => {
+            for (uri, edits) in changes {
+                steps.push(Step::Edit(FileEdits {
+                    path: path(uri)?,
+                    version: None,
+                    edits: edits.clone(),
+                }));
+            }
+        }
+        (None, None) => {}
     }
-    Ok(files)
-}
-
-/// Why a file operation in an edit is refused, naming it.
-fn refused(op: &ResourceOp) -> String {
-    let (what, uri) = match op {
-        ResourceOp::Create(create) => ("create", &create.uri),
-        ResourceOp::Rename(rename) => ("rename", &rename.old_uri),
-        ResourceOp::Delete(delete) => ("delete", &delete.uri),
-    };
-    let name = nun_lsp::uri::to_path(uri)
-        .map_or_else(|| uri.as_str().to_string(), |path| path.display().to_string());
-    format!(
-        "the server would also {what} {name}, and nun does not create, move or delete files as \
-         part of an edit"
-    )
+    // A file with nothing to change in it is not one to preview or check.
+    steps.retain(|step| !matches!(step, Step::Edit(file) if file.edits.is_empty()));
+    Ok(steps)
 }
 
 /// `text` with every line ending as `\n`: what a buffer holds.
@@ -1712,11 +2185,14 @@ mod tests {
             }])),
             ..WorkspaceEdit::default()
         };
-        let plain = flatten(&changes).unwrap();
-        let with = flatten(&versioned).unwrap();
-        assert_eq!(plain[0].path, PathBuf::from("/p/a.rs"));
-        assert_eq!(plain[0].edits, with[0].edits);
-        assert_eq!((plain[0].version, with[0].version), (None, Some(3)));
+        let file = |edit| match flatten(edit, &|path| path).unwrap().remove(0) {
+            Step::Edit(file) => file,
+            Step::Op(op) => panic!("{op:?}"),
+        };
+        let (plain, with) = (file(&changes), file(&versioned));
+        assert_eq!(plain.path, PathBuf::from("/p/a.rs"));
+        assert_eq!(plain.edits, with.edits);
+        assert_eq!((plain.version, with.version), (None, Some(3)));
     }
 
     #[test]
@@ -1735,7 +2211,9 @@ mod tests {
             ])),
                 ..WorkspaceEdit::default()
             };
-        assert!(flatten(&twice).unwrap_err().contains("twice"));
+        let steps = flatten(&twice, &|path| path).unwrap();
+        let label = |path: &Path| path.display().to_string();
+        assert!(files::sort(steps, &label).unwrap_err().contains("twice"));
     }
 
     #[test]

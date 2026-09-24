@@ -101,7 +101,7 @@ impl Sidebar {
 
     /// Ask for every listing the tree is waiting for and has not been asked
     /// for yet.
-    fn request_listings(&mut self) {
+    pub(super) fn request_listings(&mut self) {
         let show = self.tree.show_ignored();
         for dir in self.tree.wanted() {
             if self.requested.insert(dir.clone()) {
@@ -117,7 +117,7 @@ impl Sidebar {
 
     /// Watch exactly the directories that are expanded — the ones whose
     /// changes would show — and nothing else.
-    fn sync_watches(&mut self) {
+    pub(super) fn sync_watches(&mut self) {
         let Some(watcher) = &self.watcher else { return };
         let wanted: BTreeSet<PathBuf> = self.tree.expanded_dirs().into_iter().collect();
         for gone in self.watched.difference(&wanted) {
@@ -567,7 +567,8 @@ impl App {
                 Outcome::Redraw
             }
             Done::Replaced { report, change } => self.replace_done(&report, change.as_ref()),
-            Done::Read { tag, files } => self.edits_read(tag, files),
+            Done::Read { tag, files, probed } => self.edits_read(tag, files, &probed),
+            Done::FileOps { tag, ops } => self.edits_carried(tag, &ops),
             Done::Rewritten { tag, files } => self.edits_rewritten(tag, &files),
             Done::Failed(error) => {
                 self.message = Some(error);
