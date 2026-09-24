@@ -41,7 +41,9 @@ pub(super) struct Keeping {
     /// What was last sent, so an unchanged session is not written again.
     sent: Option<State>,
     sent_folds: Option<Folds>,
-    /// Panels of kinds this build does not draw, carried through.
+    /// Panels as the session file had them, so kinds this build does not
+    /// draw are carried through. The terminal's is replaced by what it is
+    /// now.
     panels: BTreeMap<String, toml::Table>,
 }
 
@@ -53,7 +55,8 @@ impl App {
         self.keeping.writer = Some(writer);
     }
 
-    /// Put back the panes, tabs, carets and scroll `state` describes.
+    /// Put back the panes, tabs, carets and scroll `state` describes, and
+    /// the terminal panel's tabs and directories.
     ///
     /// Call it before the parser and the language servers are attached, which
     /// then open every document it restored. A file that has gone since is
@@ -61,6 +64,9 @@ impl App {
     /// editor is left as it is.
     pub fn restore_session(&mut self, state: &State) {
         self.keeping.panels.clone_from(&state.panels);
+        if let Some(table) = state.panels.get(super::panel::KIND) {
+            self.restore_terminal(table);
+        }
         let mut gone = Vec::new();
         let mut seen = BTreeSet::new();
         let mut restored: Vec<(Vec<Document>, usize)> = Vec::new();
@@ -178,8 +184,19 @@ impl App {
             focus: index_of(self.panes.focus()),
             layout: node(self.panes.layout(), &index_of),
             panes,
-            panels: self.keeping.panels.clone(),
+            panels: self.panels_snapshot(),
         }
+    }
+
+    /// Each kind of panel's table: the terminal's as it is now, and the
+    /// rest as they were read.
+    fn panels_snapshot(&self) -> BTreeMap<String, toml::Table> {
+        let mut tables = self.keeping.panels.clone();
+        tables.remove(super::panel::KIND);
+        if let Some(table) = self.terminal_snapshot() {
+            tables.insert(super::panel::KIND.to_string(), table);
+        }
+        tables
     }
 
     /// Something changed: write the session down once things settle.
@@ -615,6 +632,26 @@ mod tests {
         let mut again = editor(Buffer::new());
         again.restore_session(&state);
         assert_eq!(paths(&again), [["a.rs", "b.rs"]]);
+    }
+
+    #[test]
+    fn the_terminal_panel_comes_back_even_when_no_file_does() {
+        let dir = folder(&[("a.rs", "a\n")]);
+        let root = dir.path().canonicalize().unwrap();
+        let mut state = round_trip(&opened(&dir, &["a.rs"]), &root);
+        assert!(state.panels.is_empty(), "no terminal, no table: {state:?}");
+        fs::remove_file(dir.path().join("a.rs")).unwrap();
+        let text = format!(
+            "visible = true\nactive = 0\n[[tabs]]\nfocus = 0\ndirs = [{:?}]\n",
+            root.to_str().unwrap()
+        );
+        state.panels.insert("terminal".into(), toml::from_str(&text).unwrap());
+        state.panels.insert("future".into(), toml::from_str("x = 1").unwrap());
+
+        let mut again = editor(Buffer::new());
+        again.restore_session(&state);
+        // Kept until shells can be started, and written down the same.
+        assert_eq!(again.snapshot(&root).panels, state.panels);
     }
 
     #[test]
