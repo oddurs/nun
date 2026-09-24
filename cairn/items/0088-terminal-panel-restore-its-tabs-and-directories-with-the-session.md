@@ -2,13 +2,15 @@
 id: 88
 title: 'Terminal panel: restore its tabs and directories with the session'
 type: feature
-status: backlog
+status: done
 milestone: m5
+assignee: Oddur Sigurdsson
 depends_on:
 - 41
 - 43
 created: 2026-09-23
-updated: 2026-09-23
+updated: 2026-09-24
+closed_at: 2026-09-24
 priority: p2
 effort: s
 area: ui
@@ -33,6 +35,17 @@ restored, because there is no honest way to bring them back.
 
 ## Acceptance criteria
 
-- [ ] The panel's visibility, height, tabs and splits come back after a restart
-- [ ] Each shell starts in the directory it was last in, where the shell reported one
-- [ ] A session file with no terminal table restores as it did before
+- [x] The panel's visibility, height, tabs and splits come back after a restart
+- [x] Each shell starts in the directory it was last in, where the shell reported one
+- [x] A session file with no terminal table restores as it did before
+
+## Notes
+
+- The panel's table is `[panels.terminal]`: `visible`, `height` (only once
+  dragged), `active`, and `[[tabs]]` each with `focus` and `dirs`. Written
+  from `crates/nun/src/app/panel/keep.rs`.
+- Shells are started once the panel is attached, after `restore_session`;
+  until then the table is kept and written back unchanged.
+- A directory that has gone since starts its shell where a new one would,
+  with a notice. Scrollback is never written: it holds whatever went past in
+  a shell, secrets included, and the session file outlives it.

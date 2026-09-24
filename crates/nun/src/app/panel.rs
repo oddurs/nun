@@ -42,6 +42,10 @@ use super::{App, Focus, Outcome, Target};
 use crate::clipboard;
 use crate::commands::Command;
 
+mod keep;
+
+pub(super) use keep::KIND;
+
 /// The fewest rows the panel takes, header included.
 const MIN_HEIGHT: u16 = 4;
 
@@ -136,6 +140,9 @@ pub(super) struct Panel {
     start: Option<PathBuf>,
     /// What to run instead of the person's shell.
     program: Option<Vec<String>>,
+    /// The panel as the last session left it, until shells can be started
+    /// to put it back.
+    kept: Option<keep::Kept>,
     drag: Option<Drag>,
     /// The cell the pointer is over, in a terminal: which, row and column.
     pointer: Option<(Id, u16, u16)>,
@@ -216,6 +223,7 @@ impl App {
     pub fn attach_terminal(&mut self, dir: PathBuf, post: Arc<dyn Fn(Event) + Send + Sync>) {
         self.panel.start = Some(dir);
         self.panel.post = Some(post);
+        self.start_kept();
     }
 
     /// Hang up every shell, all at once, and wait until each has gone.
@@ -562,16 +570,37 @@ impl App {
 
     /// Start a shell, in a tab of its own or beside the one being used.
     fn spawn_terminal(&mut self, beside: bool) -> Outcome {
-        let Some(post) = self.panel.post.clone() else {
-            self.message = Some("The terminal is not available here.".into());
-            return Outcome::Redraw;
-        };
         let cwd = self
             .panel
             .start
             .clone()
             .or_else(|| std::env::current_dir().ok())
             .unwrap_or_else(|| PathBuf::from("/"));
+        let id = match self.start_shell(cwd) {
+            Ok(id) => id,
+            Err(message) => {
+                self.message = Some(message);
+                return Outcome::Redraw;
+            }
+        };
+        if let Some(group) = self.panel.groups.get_mut(self.panel.active).filter(|_| beside) {
+            group.focus = (group.focus + 1).min(group.terms.len());
+            group.terms.insert(group.focus, id);
+        } else {
+            self.panel.groups.push(Group { terms: vec![id], focus: 0 });
+            self.panel.active = self.panel.groups.len() - 1;
+        }
+        self.panel.visible = true;
+        self.focus = Focus::Terminal;
+        Outcome::Redraw
+    }
+
+    /// Start a shell in `cwd` and keep track of it, in no tab yet. `Err`
+    /// says why it could not be started.
+    fn start_shell(&mut self, cwd: PathBuf) -> Result<Id, String> {
+        let Some(post) = self.panel.post.clone() else {
+            return Err("The terminal is not available here.".into());
+        };
         // A first guess at the size; the layout fits it before the shell
         // has drawn anything worth keeping.
         let size = Size::new(self.viewport.width.max(2), (self.viewport.height / 3).max(2));
@@ -593,24 +622,12 @@ impl App {
         let report = Arc::new(move |report| post(Event::Term(report)));
         let pty = match Pty::spawn(id, &spec, report) {
             Ok(pty) => pty,
-            Err(error) => {
-                self.message = Some(format!("Could not start a shell: {error}"));
-                return Outcome::Redraw;
-            }
+            Err(error) => return Err(format!("Could not start a shell: {error}")),
         };
         self.panel.next_id += 1;
         let emulator = Emulator::new(size, nun_term::emulator::SCROLLBACK);
         self.panel.terms.push(Terminal { id, pty: Some(pty), emulator, name, cwd });
-        if let Some(group) = self.panel.groups.get_mut(self.panel.active).filter(|_| beside) {
-            group.focus = (group.focus + 1).min(group.terms.len());
-            group.terms.insert(group.focus, id);
-        } else {
-            self.panel.groups.push(Group { terms: vec![id], focus: 0 });
-            self.panel.active = self.panel.groups.len() - 1;
-        }
-        self.panel.visible = true;
-        self.focus = Focus::Terminal;
-        Outcome::Redraw
+        Ok(id)
     }
 
     /// Run one of the panel's commands.
