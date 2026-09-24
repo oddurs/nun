@@ -2,12 +2,14 @@
 id: 90
 title: 'Terminal panel: detect true colour, and answer pixel-size queries'
 type: feature
-status: backlog
+status: done
 milestone: m5
+assignee: Oddur Sigurdsson
 depends_on:
 - 41
 created: 2026-09-23
-updated: 2026-09-23
+updated: 2026-09-24
+closed_at: 2026-09-24
 priority: p3
 effort: m
 area: ui
@@ -32,6 +34,15 @@ straight away rather than guess.
 
 ## Acceptance criteria
 
-- [ ] `COLORTERM` inside the panel matches what the outer terminal was found to support
-- [ ] Where 24-bit colour is missing, exact colours are visibly downsampled
-- [ ] Pixel-size queries are answered or refused at once, never left to time out
+- [x] `COLORTERM` inside the panel matches what the outer terminal was found to support
+- [x] Where 24-bit colour is missing, exact colours are visibly downsampled
+- [x] Pixel-size queries are answered or refused at once, never left to time out
+
+## Notes
+
+Where the outer terminal never gave a cell size, `CSI 14 t` is answered
+with zero and `CSI 16 t` is left unanswered, as xterm leaves a window
+operation it will not do. A zero cell is not a refusal to timg: it believes
+it and divides by it. chafa, yazi and notcurses end their questions with the
+device attributes, which are answered at once, so they do not wait; timg
+gives up on its own after 50 ms and keeps its default.

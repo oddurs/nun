@@ -183,9 +183,83 @@ impl Oklch {
     }
 }
 
+/// The levels each channel of the xterm 256-colour cube takes.
+const CUBE: [u8; 6] = [0x00, 0x5f, 0x87, 0xaf, 0xd7, 0xff];
+
+impl Rgb {
+    /// The nearest of the fixed colours of the xterm 256-colour palette —
+    /// the 6×6×6 cube and the 24 greys, indices 16 to 255 — judged in Oklab,
+    /// so the nearest is the one that looks nearest.
+    ///
+    /// The first sixteen are never chosen: they are the terminal's own
+    /// palette, and could be any colour at all.
+    #[must_use]
+    pub fn nearest_indexed(self) -> u8 {
+        let level = |channel: u8| {
+            (0u8..6)
+                .min_by_key(|&index| channel.abs_diff(CUBE[usize::from(index)]))
+                .unwrap_or_default()
+        };
+        let (r, g, b) = (level(self.r), level(self.g), level(self.b));
+        let cube = (
+            16 + 36 * r + 6 * g + b,
+            Self::new(CUBE[usize::from(r)], CUBE[usize::from(g)], CUBE[usize::from(b)]),
+        );
+        // Greys run from 8 to 238 in steps of 10.
+        let mean = (u16::from(self.r) + u16::from(self.g) + u16::from(self.b)) / 3;
+        let step = u8::try_from((mean.saturating_sub(3) / 10).min(23)).unwrap_or(23);
+        let value = 8 + 10 * step;
+        let grey = (232 + step, Self::new(value, value, value));
+        let here = Oklch::from(self);
+        let far = |other: Self| here.distance(Oklch::from(other));
+        if far(grey.1) < far(cube.1) { grey.0 } else { cube.0 }
+    }
+}
+
+impl Oklch {
+    /// How far apart two colours look: the straight-line distance in Oklab.
+    #[must_use]
+    pub fn distance(self, other: Self) -> f64 {
+        let (a, b) = (self.c * self.h.cos(), self.c * self.h.sin());
+        let (x, y) = (other.c * other.h.cos(), other.c * other.h.sin());
+        (self.l - other.l).hypot(a - x).hypot(b - y)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_colour_in_the_cube_is_itself() {
+        assert_eq!(Rgb::new(0xff, 0x00, 0x00).nearest_indexed(), 196);
+        assert_eq!(Rgb::new(0x5f, 0x87, 0xaf).nearest_indexed(), 16 + 36 + 12 + 3);
+        assert_eq!(Rgb::new(0xff, 0xff, 0xff).nearest_indexed(), 231);
+    }
+
+    #[test]
+    fn a_grey_between_the_cube_levels_goes_to_the_grey_ramp() {
+        assert_eq!(Rgb::new(0x80, 0x80, 0x80).nearest_indexed(), 244);
+        assert_eq!(Rgb::new(0x12, 0x12, 0x12).nearest_indexed(), 233);
+    }
+
+    #[test]
+    fn the_terminals_own_sixteen_are_never_chosen() {
+        for value in [0u8, 1, 50, 128, 200, 255] {
+            for rgb in
+                [Rgb::new(value, 0, 0), Rgb::new(0, value, value), Rgb::new(value, value, value)]
+            {
+                assert!(rgb.nearest_indexed() >= 16, "{}", rgb.to_hex());
+            }
+        }
+    }
+
+    #[test]
+    fn a_colour_stays_close_to_its_own_hue() {
+        // An orange, nowhere near a cube corner, stays orange.
+        let index = Rgb::new(0xe0, 0x80, 0x30).nearest_indexed();
+        assert!((166..=215).contains(&index), "{index}");
+    }
 
     #[track_caller]
     fn assert_round_trips(rgb: Rgb) {

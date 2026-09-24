@@ -30,6 +30,15 @@
 //! wrong for Alacritty, which draws both; a person who knows better says
 //! `undercurl = "on"`.
 //!
+//! The same round trip asks one more thing, because it shares the parser:
+//! whether the terminal draws 24-bit colour. A third DECRQSS, after setting
+//! an exact foreground, is answered with that colour by a terminal that
+//! keeps it (kitty, Ghostty, foot, iTerm2, Windows Terminal), and with an
+//! indexed one by a terminal that approximated it. It is set in the
+//! semicolon form, because that is the form nun draws in. XTGETTCAP asks terminfo's
+//! `RGB` and `Tc` besides, which `WezTerm` answers. What nun makes of
+//! silence is the binary's business; this only says what was heard.
+//!
 //! Like the other probes this is free of I/O: it says what to write and
 //! parses what comes back. The replies arrive before the device-attributes
 //! sentinel the keyboard probe waits for, so asking costs no extra wait.
@@ -44,8 +53,9 @@
 pub const UNDERLINE_QUERY: &str = concat!(
     "\x1b[0m\x1b[4:3m\x1bP$qm\x1b\\",
     "\x1b[0m\x1b[58:2::1:2:3m\x1bP$qm\x1b\\",
+    "\x1b[0m\x1b[38;2;1;2;3m\x1bP$qm\x1b\\",
     "\x1b[0m",
-    "\x1bP+q536d756c78;536574756c63\x1b\\",
+    "\x1bP+q536d756c78;536574756c63;524742;5463\x1b\\",
     "\x1b[>0q",
 );
 
@@ -53,6 +63,10 @@ pub const UNDERLINE_QUERY: &str = concat!(
 const SMULX: &str = "536d756c78";
 /// `Setulc`, hex-encoded.
 const SETULC: &str = "536574756c63";
+/// `RGB`, hex-encoded: terminfo's word for direct colour.
+const RGB: &str = "524742";
+/// `Tc`, hex-encoded: tmux's older word for the same.
+const TC: &str = "5463";
 
 /// The longest DCS payload kept. Replies are a few dozen bytes; the bound only
 /// stops a terminal that never terminates one from growing memory.
@@ -124,6 +138,9 @@ pub struct UnderlineProbe {
     /// What its terminfo says of the curl and of the colour.
     smulx: Terminfo,
     setulc: Terminfo,
+    /// What its terminfo says of 24-bit colour, under either name.
+    rgb: Terminfo,
+    tc: Terminfo,
     /// Its name and version, from XTVERSION.
     version: Option<String>,
 }
@@ -234,6 +251,10 @@ impl UnderlineProbe {
                     self.smulx = found;
                 } else if name == SETULC {
                     self.setulc = found;
+                } else if name == RGB {
+                    self.rgb = found;
+                } else if name == TC {
+                    self.tc = found;
                 }
             }
         } else if let Some(name) = payload.strip_prefix(">|") {
@@ -287,6 +308,44 @@ impl UnderlineProbe {
         Underlines {
             curly: curly.supported(),
             colour: curly != Evidence::Misread && self.colour().supported(),
+        }
+    }
+
+    /// Whether exact, 24-bit colours are drawn as they are, and how that
+    /// was found out. [`Evidence::Misread`] means the terminal kept an
+    /// approximation of the colour it was sent, not the colour.
+    #[must_use]
+    pub fn direct_colour(&self) -> Evidence {
+        // Believed only with all three states in: the replies are told
+        // apart by their order alone, so one missing would shift the rest.
+        if self.states.len() == 3
+            && let Some(Some(params)) = self.states.get(2)
+        {
+            // The colour sent, in either form and with or without a colour
+            // space: kitty drops the empty one, iTerm2 fills it in.
+            let direct = |param: &String| {
+                param.starts_with("38:2:") && param.ends_with(":1:2:3")
+                    || param == "38" && params.join(";").contains("38;2;1;2;3")
+            };
+            if params.iter().any(direct) {
+                return Evidence::Echoed;
+            }
+            // Any other colour is one it came up with instead.
+            let other = |param: &String| {
+                param.starts_with("38:")
+                    || param == "38"
+                    || param.len() == 2 && (param.starts_with('3') || param.starts_with('9'))
+            };
+            if params.iter().any(other) {
+                return Evidence::Misread;
+            }
+            // Otherwise it left the colour out of its report; terminfo
+            // decides.
+        }
+        match (self.rgb, self.tc) {
+            (Terminfo::Has, _) | (_, Terminfo::Has) => Evidence::Terminfo,
+            (Terminfo::Lacks, Terminfo::Lacks) => Evidence::Absent,
+            _ => Evidence::Silent,
         }
     }
 
@@ -402,6 +461,65 @@ mod tests {
     }
 
     #[test]
+    fn a_terminal_that_keeps_an_exact_colour_draws_24_bit_colour() {
+        // Ghostty's reply, from its source.
+        let heard = probe(b"\x1bP1$r0;4:3m\x1b\\\x1bP1$r0m\x1b\\\x1bP1$r0;38:2::1:2:3m\x1b\\");
+        assert_eq!(heard.direct_colour(), Evidence::Echoed);
+    }
+
+    #[test]
+    fn every_way_of_writing_the_colour_back_is_understood() {
+        for kept in ["0;38:2:1:2:3", "38:2:1:1:2:3", "38:2::1:2:3", "0;38;2;1;2;3"] {
+            let reply = format!("\x1bP1$r0m\x1b\\\x1bP1$r0m\x1b\\\x1bP1$r{kept}m\x1b\\");
+            assert_eq!(probe(reply.as_bytes()).direct_colour(), Evidence::Echoed, "{kept}");
+        }
+    }
+
+    #[test]
+    fn a_colour_that_came_back_different_was_approximated() {
+        let heard = probe(b"\x1bP1$r0m\x1b\\\x1bP1$r0m\x1b\\\x1bP1$r0;38:2::0:0:0m\x1b\\");
+        assert_eq!(heard.direct_colour(), Evidence::Misread);
+    }
+
+    #[test]
+    fn a_state_reply_missing_is_not_read_as_the_colours() {
+        // Two replies, the curl's and the underline colour's, and not the
+        // third: the second is never taken for it.
+        let heard = probe(b"\x1bP1$r0;4:3m\x1b\\\x1bP1$r0;38:2::1:2:3m\x1b\\");
+        assert_eq!(heard.direct_colour(), Evidence::Silent);
+    }
+
+    #[test]
+    fn a_terminal_that_kept_an_approximation_does_not() {
+        let heard = probe(b"\x1bP1$r0m\x1b\\\x1bP1$r0m\x1b\\\x1bP1$r0;38:5:16m\x1b\\");
+        assert_eq!(heard.direct_colour(), Evidence::Misread);
+        let heard = probe(b"\x1bP1$r0m\x1b\\\x1bP1$r0m\x1b\\\x1bP1$r0;38;5;16m\x1b\\");
+        assert_eq!(heard.direct_colour(), Evidence::Misread);
+        let heard = probe(b"\x1bP1$r0m\x1b\\\x1bP1$r0m\x1b\\\x1bP1$r0;30m\x1b\\");
+        assert_eq!(heard.direct_colour(), Evidence::Misread);
+    }
+
+    #[test]
+    fn terminfo_answers_for_a_terminal_that_cannot_report_its_state() {
+        // WezTerm: no DECRQSS, and `RGB` and `Tc` in its terminfo.
+        let heard = probe(
+            b"\x1bP0$r\x1b\\\x1bP0$r\x1b\\\x1bP0$r\x1b\\\
+              \x1bP1+r524742=382F382F38\x1b\\\x1bP1+r5463=31\x1b\\",
+        );
+        assert_eq!(heard.direct_colour(), Evidence::Terminfo);
+        // kitty says no to `RGB` and yes to `Tc`.
+        let heard = probe(b"\x1bP0+r524742\x1b\\\x1bP1+r5463\x1b\\");
+        assert_eq!(heard.direct_colour(), Evidence::Terminfo);
+        let heard = probe(b"\x1bP0+r524742\x1b\\\x1bP0+r5463\x1b\\");
+        assert_eq!(heard.direct_colour(), Evidence::Absent);
+    }
+
+    #[test]
+    fn silence_about_colour_is_silence() {
+        assert_eq!(UnderlineProbe::new().direct_colour(), Evidence::Silent);
+    }
+
+    #[test]
     fn the_version_reply_is_kept_for_the_report() {
         let probe = probe(b"\x1bP>|kitty(0.39.1)\x1b\\");
         assert_eq!(probe.version(), Some("kitty(0.39.1)"));
@@ -435,7 +553,8 @@ mod tests {
     fn the_query_restores_the_attributes_it_sets() {
         let reset = UNDERLINE_QUERY.rfind("\x1b[0m").unwrap();
         let curl = UNDERLINE_QUERY.find("\x1b[4:3m").unwrap();
-        assert!(curl < reset, "the curl is set, then put back");
+        let colour = UNDERLINE_QUERY.find("\x1b[38;2").unwrap();
+        assert!(curl < reset && colour < reset, "the curl and colour are set, then put back");
         assert!(!UNDERLINE_QUERY.contains("\x1b[K"), "nothing on the user's screen is erased");
     }
 }

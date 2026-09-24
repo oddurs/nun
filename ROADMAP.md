@@ -73,13 +73,12 @@
 
 ## m5 — Git and terminal
 
-`########··` 75% · 9 of 12 done · due 2026-12-03
+`#########·` 83% · 10 of 12 done · due 2026-12-03
 
 ### backlog
 
 - [ ] [`0039`](https://github.com/oddurs/nun/blob/main/cairn/items/0039-gutter-marks-and-hunk-actions.md) Gutter marks and hunk actions <sup>feature · p0</sup>
 - [ ] [`0040`](https://github.com/oddurs/nun/blob/main/cairn/items/0040-diff-view.md) Diff view <sup>feature · p2</sup>
-- [ ] [`0090`](https://github.com/oddurs/nun/blob/main/cairn/items/0090-terminal-panel-detect-true-colour-and-answer-pixel-size-queries.md) Terminal panel: detect true colour, and answer pixel-size queries <sup>feature · p3</sup>
 
 ### done
 
@@ -92,6 +91,7 @@
 - [x] [`0087`](https://github.com/oddurs/nun/blob/main/cairn/items/0087-lsp-tell-servers-about-files-that-change-on-disk.md) LSP: tell servers about files that change on disk <sup>feature · p2</sup>
 - [x] [`0088`](https://github.com/oddurs/nun/blob/main/cairn/items/0088-terminal-panel-restore-its-tabs-and-directories-with-the-session.md) Terminal panel: restore its tabs and directories with the session <sup>feature · p2</sup>
 - [x] [`0089`](https://github.com/oddurs/nun/blob/main/cairn/items/0089-terminal-panel-copy-through-osc-52-where-the-system-clipboard-cannot.md) Terminal panel: copy through OSC 52 where the system clipboard cannot <sup>feature · p2</sup>
+- [x] [`0090`](https://github.com/oddurs/nun/blob/main/cairn/items/0090-terminal-panel-detect-true-colour-and-answer-pixel-size-queries.md) Terminal panel: detect true colour, and answer pixel-size queries <sup>feature · p3</sup>
 
 ## perf — Fast on anything
 

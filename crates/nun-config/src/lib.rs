@@ -162,6 +162,20 @@ pub enum Undercurl {
     Off,
 }
 
+/// Whether to draw exact colours as they are, or as the nearest of the
+/// 256-colour palette.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Truecolor {
+    /// Ask the terminal, and draw exact colours only if it says it can.
+    #[default]
+    Auto,
+    /// Draw them whatever the terminal says: for one that has 24-bit colour
+    /// and cannot say so, such as Alacritty over ssh.
+    On,
+    /// Always the nearest of the 256.
+    Off,
+}
+
 /// Where a copy from the terminal panel goes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Clipboard {
@@ -255,6 +269,8 @@ pub struct Config {
     pub undercurl: Undercurl,
     /// Where a copy goes.
     pub clipboard: Clipboard,
+    /// Draw exact colours as they are.
+    pub truecolor: Truecolor,
     /// Longest gap between presses that still makes a double or triple click,
     /// in milliseconds. `None` uses the platform's usual value.
     pub double_click_ms: Option<u64>,
@@ -298,6 +314,7 @@ impl Default for Config {
             keyboard_enhancement: true,
             undercurl: Undercurl::Auto,
             clipboard: Clipboard::Auto,
+            truecolor: Truecolor::Auto,
             double_click_ms: None,
             hover_delay_ms: 400,
             hyperlinks: true,
@@ -330,6 +347,13 @@ impl Config {
                     "on" => Undercurl::On,
                     "off" => Undercurl::Off,
                     _ => Undercurl::Auto,
+                };
+            }
+            ("ui.truecolor", Value::Text(word)) => {
+                self.truecolor = match word.as_str() {
+                    "on" => Truecolor::On,
+                    "off" => Truecolor::Off,
+                    _ => Truecolor::Auto,
                 };
             }
             ("ui.clipboard", Value::Text(word)) => {
@@ -394,6 +418,7 @@ impl Config {
             "theme.polarity" => word(format!("{:?}", self.polarity)),
             "ui.undercurl" => word(format!("{:?}", self.undercurl)),
             "ui.clipboard" => word(format!("{:?}", self.clipboard)),
+            "ui.truecolor" => word(format!("{:?}", self.truecolor)),
             "ui.mouse" => Some(self.mouse.to_string()),
             "ui.alternate_screen" => Some(self.alternate_screen.to_string()),
             "ui.keyboard_enhancement" => Some(self.keyboard_enhancement.to_string()),
@@ -713,6 +738,7 @@ impl Loaded {
             "ui.lightbulb",
             "ui.undercurl",
             "ui.clipboard",
+            "ui.truecolor",
             "ui.hover_delay_ms",
         ] {
             let name = key.trim_start_matches("ui.");

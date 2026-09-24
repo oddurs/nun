@@ -12,12 +12,17 @@ const PATIENCE: Duration = Duration::from_secs(10);
 
 /// Start `script` under `sh`, and a channel of what it reports.
 fn run(script: &str, size: Size) -> (Pty, Receiver<Report>) {
+    run_as(script, size, |spec| spec)
+}
+
+/// The same, with the spec changed by `adjust` first.
+fn run_as(script: &str, size: Size, adjust: impl FnOnce(Spec) -> Spec) -> (Pty, Receiver<Report>) {
     let (sender, receiver) = mpsc::channel();
     let report = Arc::new(move |report| {
         let _ = sender.send(report);
     });
     let cwd = std::env::temp_dir();
-    let spec = Spec::program("/bin/sh", &["-c", script], cwd, size);
+    let spec = adjust(Spec::program("/bin/sh", &["-c", script], cwd, size));
     let pty = Pty::spawn(7, &spec, report).expect("a pty opens");
     (pty, receiver)
 }
@@ -56,6 +61,23 @@ fn the_program_is_told_its_size_and_its_terminal() {
     let out = until(&pty, &reports, "tmux=");
     assert!(out.contains("23 81"), "{out:?}");
     assert!(out.contains("term=xterm-256color tmux=none"), "{out:?}");
+}
+
+#[test]
+fn true_colour_is_claimed_only_where_the_outer_terminal_has_it() {
+    let script = "echo \"colorterm=${COLORTERM-unset}.\"";
+    let (pty, reports) = run(script, Size::new(80, 24));
+    assert!(until(&pty, &reports, "colorterm=").contains("colorterm=truecolor."));
+    let (pty, reports) = run_as(script, Size::new(80, 24), Spec::without_truecolor);
+    let out = until(&pty, &reports, "colorterm=");
+    assert!(out.contains("colorterm=unset."), "not even the outer terminal's: {out:?}");
+}
+
+#[test]
+fn a_cell_size_makes_a_size_in_pixels() {
+    let size = Size::new(80, 24).with_cell(Some((9, 18)));
+    assert_eq!(size.pixels(), (720, 432));
+    assert_eq!(Size::new(80, 24).with_cell(None).pixels(), (0, 0), "unknown is zero");
 }
 
 #[test]

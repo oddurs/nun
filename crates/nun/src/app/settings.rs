@@ -7,8 +7,8 @@
 //!   at startup and drawn from the next frame.
 //! - **keys** — the keymap is built again, over the key set the terminal
 //!   negotiated at startup.
-//! - **ui** — the pointer and hover settings, `undercurl` and `clipboard`
-//!   apply at once.
+//! - **ui** — the pointer and hover settings, `undercurl`, `truecolor` and
+//!   `clipboard` apply at once; `truecolor` to terminals started after.
 //!   `mouse`, `alternate_screen` and `keyboard_enhancement` are how the
 //!   terminal was entered, so they say they will apply at the next start.
 //! - **lsp** — a language whose server changed has its documents moved to
@@ -61,6 +61,9 @@ pub struct Live {
     said_editorconfig: BTreeSet<String>,
     /// Underlines to switch the screen to, for the main loop.
     underlines: Option<Underlines>,
+    /// Whether to switch the screen to exact colours or away from them, for
+    /// the main loop.
+    truecolor: Option<bool>,
 }
 
 impl App {
@@ -107,6 +110,21 @@ impl App {
             startup.and_then(|startup| startup.underlines.version()),
             set,
         )
+    }
+
+    /// Whether exact colours are drawn as they are: what the terminal said,
+    /// unless `ui.truecolor` says otherwise. Yes before anything is known.
+    pub(super) fn truecolor(&self) -> bool {
+        match (&self.settings.loaded, &self.settings.startup) {
+            (Some(loaded), Some(startup)) => crate::truecolor(loaded, startup).0,
+            _ => true,
+        }
+    }
+
+    /// Whether the screen should switch to drawing exact colours, or away
+    /// from it, once.
+    pub fn take_truecolor(&mut self) -> Option<bool> {
+        self.settings.truecolor.take()
     }
 
     /// Underlines the screen should switch to, once.
@@ -168,6 +186,10 @@ impl App {
                 .is_none_or(|old| crate::underlines(old, &startup.underlines) != underlines)
             {
                 self.settings.underlines = Some(underlines);
+            }
+            let truecolor = crate::truecolor(loaded, &startup).0;
+            if old.as_ref().is_none_or(|old| crate::truecolor(old, &startup).0 != truecolor) {
+                self.settings.truecolor = Some(truecolor);
             }
             self.say_new_problems(&crate::all_problems(loaded, &startup, set));
         }
@@ -484,6 +506,8 @@ mod tests {
             kitty_keyboard: Some(true),
             underlines: UnderlineProbe::new(),
             attributes: vec![62, 22],
+            cell: None,
+            colorterm: false,
         }
     }
 
@@ -570,6 +594,20 @@ mod tests {
         app.handle(settings(&Files { user: Some(user("[ui]\nmouse = false\n")), project: None }));
         let said = app.shown_message().unwrap_or_default().to_string();
         assert!(said.contains("next time nun starts"), "{said}");
+    }
+
+    #[test]
+    fn truecolor_goes_to_the_screen_once_and_to_terminals_started_after() {
+        let (mut app, _dir) = editor("a.txt", "x", &Files::default());
+        assert!(!app.truecolor(), "a terminal that said nothing gets 256");
+        assert_eq!(app.take_truecolor(), None);
+        app.handle(settings(&Files {
+            user: Some(user("[ui]\ntruecolor = \"on\"\n")),
+            project: None,
+        }));
+        assert_eq!(app.take_truecolor(), Some(true));
+        assert_eq!(app.take_truecolor(), None);
+        assert!(app.truecolor());
     }
 
     #[test]

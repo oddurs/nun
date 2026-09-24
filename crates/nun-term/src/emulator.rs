@@ -7,6 +7,17 @@
 //! reads or writes a file descriptor: [`Emulator::feed`] takes bytes and hands
 //! back the [`Effect`]s they asked for, and whoever owns the pty carries them
 //! out.
+//!
+//! Three questions about size are answered at once: `CSI 18 t` (the screen
+//! in cells), `CSI 14 t` (in pixels) and `CSI 16 t` (a cell in pixels). The
+//! pixels are the cells of the terminal nun is drawn in, from [`Size::cell`].
+//! Where that terminal never said, nothing is guessed: `CSI 14 t` is answered
+//! with zero, as alacritty answers it, which chafa, yazi and notcurses take
+//! for "not known". `CSI 16 t` is not answered at all, as xterm leaves a
+//! window operation it will not do: timg believes a zero cell and divides by
+//! it. The programs that ask it end their questions with the device
+//! attributes, which are answered at once, so none of them waits on it but
+//! timg, which gives up on its own after 50 ms and keeps its default.
 
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -240,6 +251,7 @@ pub struct Emulator {
     size: Size,
     title: Option<String>,
     cwd: Cwd,
+    cell_query: CellQuery,
 }
 
 impl std::fmt::Debug for Emulator {
@@ -269,14 +281,30 @@ impl Emulator {
             size,
             title: None,
             cwd: Cwd::default(),
+            cell_query: CellQuery::default(),
         }
     }
 
     /// Parse what the program wrote, and say what it asked for.
     pub fn feed(&mut self, bytes: &[u8], answers: Answers) -> Vec<Effect> {
         self.cwd.scan(bytes);
-        self.parser.advance(&mut self.term, bytes);
-        self.effects(answers)
+        // The parser ignores `CSI 16 t`, so it is answered here, in its
+        // place among the other replies: a program that asks it and then
+        // for the device attributes reads the answers in that order.
+        let mut effects = Vec::new();
+        let mut start = 0;
+        for end in self.cell_query.scan(bytes) {
+            self.parser.advance(&mut self.term, &bytes[start..end]);
+            effects.extend(self.effects(answers));
+            let (width, height) = self.size.cell;
+            if width > 0 && height > 0 {
+                effects.push(Effect::Reply(format!("\x1b[6;{height};{width}t").into_bytes()));
+            }
+            start = end;
+        }
+        self.parser.advance(&mut self.term, &bytes[start..]);
+        effects.extend(self.effects(answers));
+        effects
     }
 
     /// The directory the shell last said it was in, with OSC 7, if it has.
@@ -323,6 +351,12 @@ impl Emulator {
                     }
                 }
                 Event::ClipboardStore(_, text) => effects.push(Effect::Copy(text)),
+                // Formatted here rather than by the request's own closure,
+                // which multiplies in `u16` and would overflow.
+                Event::TextAreaSizeRequest(_) => {
+                    let (width, height) = self.size.pixels();
+                    effects.push(Effect::Reply(format!("\x1b[4;{height};{width}t").into_bytes()));
+                }
                 Event::Title(title) => self.title = Some(title),
                 Event::ResetTitle => self.title = None,
                 Event::Bell => effects.push(Effect::Bell),
@@ -631,6 +665,36 @@ impl Cwd {
     }
 }
 
+/// Watches the output for `CSI 16 t`, the question the parser leaves
+/// unanswered: how big a cell is in pixels. It can arrive split across
+/// reads.
+#[derive(Debug, Default)]
+struct CellQuery {
+    /// How much of it has been matched.
+    matched: usize,
+}
+
+impl CellQuery {
+    const QUERY: &[u8] = b"\x1b[16t";
+
+    /// Where in `bytes` each whole query ends.
+    fn scan(&mut self, bytes: &[u8]) -> Vec<usize> {
+        let mut ends = Vec::new();
+        for (at, &byte) in bytes.iter().enumerate() {
+            if byte == Self::QUERY[self.matched] {
+                self.matched += 1;
+                if self.matched == Self::QUERY.len() {
+                    self.matched = 0;
+                    ends.push(at + 1);
+                }
+            } else {
+                self.matched = usize::from(byte == 0x1b);
+            }
+        }
+        ends
+    }
+}
+
 /// The directory an OSC 7 body names: a `file:` URL whose host is this
 /// machine or empty, percent-decoded. A directory on another host — the
 /// shell is over ssh — is not one paths here are relative to.
@@ -816,6 +880,52 @@ mod tests {
         assert_eq!(emulator.feed(b"\x07", ANSWERS), [Effect::Bell]);
         emulator.feed(b"\x1b]2;cargo test\x07", ANSWERS);
         assert_eq!(emulator.title(), Some("cargo test"));
+    }
+
+    fn replies(effects: &[Effect]) -> Vec<String> {
+        effects
+            .iter()
+            .filter_map(|effect| match effect {
+                Effect::Reply(bytes) => Some(String::from_utf8_lossy(bytes).into_owned()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn size_questions_are_answered_in_cells_and_pixels_in_the_order_asked() {
+        let mut emulator = screen(80, 24);
+        emulator.resize(Size::new(80, 24).with_cell(Some((9, 18))));
+        let effects = emulator.feed(b"\x1b[18t\x1b[16t\x1b[14t\x1b[c", ANSWERS);
+        let said = replies(&effects);
+        assert_eq!(said[..3], ["\x1b[8;24;80t", "\x1b[6;18;9t", "\x1b[4;432;720t"]);
+        assert!(said[3].starts_with("\x1b[?"), "the attributes come last: {said:?}");
+    }
+
+    #[test]
+    fn where_the_size_is_not_known_nothing_is_guessed() {
+        let mut emulator = screen(80, 24);
+        let said = replies(&emulator.feed(b"\x1b[16t\x1b[14t\x1b[c", ANSWERS));
+        assert_eq!(said[0], "\x1b[4;0;0t", "zero is not known, to 14t");
+        assert!(said[1].starts_with("\x1b[?"), "16t unanswered, the sentinel at once: {said:?}");
+        assert_eq!(said.len(), 2);
+    }
+
+    #[test]
+    fn a_pixel_question_split_across_reads_is_still_answered() {
+        let mut emulator = screen(80, 24);
+        emulator.resize(Size::new(80, 24).with_cell(Some((9, 18))));
+        assert!(emulator.feed(b"ab\x1b[1", ANSWERS).is_empty());
+        assert_eq!(replies(&emulator.feed(b"6tcd", ANSWERS)), ["\x1b[6;18;9t"]);
+        assert_eq!(row(&emulator, 0), "abcd", "and draws nothing");
+    }
+
+    #[test]
+    fn a_big_screen_in_pixels_does_not_overflow() {
+        let mut emulator = screen(80, 24);
+        emulator.resize(Size::new(2000, 1000).with_cell(Some((40, 80))));
+        let said = replies(&emulator.feed(b"\x1b[14t", ANSWERS));
+        assert_eq!(said, ["\x1b[4;65535;65535t"]);
     }
 
     #[test]
