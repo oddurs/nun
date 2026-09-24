@@ -11,6 +11,10 @@
 //! leaves the program blocked on a full pty, exactly as it would be under a
 //! slow terminal. The reader parks rather than spins, and is unparked by the
 //! main thread, so there is no lock anywhere between the two.
+//!
+//! With `NUN_TERM_LOG` set to a path, both threads append every byte they
+//! move to that file, with the time and the direction: what a program was
+//! sent and what it wrote, for finding out which side lost a key.
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -25,6 +29,9 @@ use std::time::{Duration, Instant};
 use alacritty_terminal::event::WindowSize;
 use alacritty_terminal::tty;
 use rustix::process::{Pid, Signal, WaitId, WaitIdOptions};
+
+/// The variable naming the file the bytes are logged to.
+const LOG: &str = "NUN_TERM_LOG";
 
 /// Which terminal, as the reports from it name it.
 pub type Id = u32;
@@ -297,9 +304,14 @@ impl Pty {
 
         let (sender, receiver) = mpsc::channel::<Vec<u8>>();
         let mut output = master.try_clone()?;
+        let started = Instant::now();
         thread::Builder::new().name(format!("nun-term-{id}-write")).spawn(move || {
+            let mut log = Log::open(id, started);
+            log.note(&format!("started pid {}", pid.as_raw_nonzero()));
             for bytes in receiver {
-                if output.write_all(&bytes).is_err() {
+                log.bytes("sent", &bytes);
+                if let Err(error) = output.write_all(&bytes) {
+                    log.note(&format!("writing failed, and no more will be sent: {error}"));
                     break;
                 }
             }
@@ -309,7 +321,7 @@ impl Pty {
         let reader = thread::Builder::new().name(format!("nun-term-{id}-read")).spawn({
             let unread = Arc::clone(&guard.unread);
             let closed = Arc::clone(&guard.closed);
-            move || read(id, master, &unread, &closed, &*report)
+            move || read(id, master, &unread, &closed, &*report, Log::open(id, started))
         })?;
         guard.reader = reader.thread().clone();
         Ok(guard)
@@ -411,6 +423,7 @@ fn read(
     unread: &AtomicUsize,
     closed: &AtomicBool,
     report: &dyn Fn(Report),
+    mut log: Log,
 ) {
     let mut buffer = vec![0; CHUNK];
     loop {
@@ -426,16 +439,55 @@ fn read(
             Ok(0) => break,
             Ok(_) if closed.load(Ordering::Acquire) => {}
             Ok(read) => {
+                log.bytes("got", &buffer[..read]);
                 unread.fetch_add(read, Ordering::AcqRel);
                 report(Report::Output { id, bytes: buffer[..read].to_vec() });
             }
             Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
             // EIO is how a pty says the other side has closed.
-            Err(_) => break,
+            Err(error) => {
+                log.note(&format!("reading ended: {error}"));
+                break;
+            }
         }
     }
     if !closed.load(Ordering::Acquire) {
         report(Report::Exited { id });
+    }
+}
+
+/// Where one thread logs the bytes it moves, when `NUN_TERM_LOG` asks for
+/// it. Each thread opens the file for itself, to append to, and writes each
+/// record whole, so the two interleave by record and share nothing.
+struct Log {
+    id: Id,
+    started: Instant,
+    file: Option<File>,
+}
+
+impl Log {
+    fn open(id: Id, started: Instant) -> Self {
+        let file = std::env::var_os(LOG)
+            .filter(|path| !path.is_empty())
+            .and_then(|path| std::fs::OpenOptions::new().create(true).append(true).open(path).ok());
+        Self { id, started, file }
+    }
+
+    /// `bytes`, going the way `way` says, escaped onto one line.
+    fn bytes(&mut self, way: &str, bytes: &[u8]) {
+        if self.file.is_some() {
+            self.note(&format!("{way} {}", bytes.escape_ascii()));
+        }
+    }
+
+    fn note(&mut self, what: &str) {
+        let Some(file) = &mut self.file else { return };
+        let millis = self.started.elapsed().as_millis();
+        let record = format!("{millis:>8} term {} {what}\n", self.id);
+        // A log that cannot be written is not worth stopping the terminal for.
+        if file.write_all(record.as_bytes()).is_err() {
+            self.file = None;
+        }
     }
 }
 

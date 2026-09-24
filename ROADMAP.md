@@ -73,7 +73,11 @@
 
 ## m5 — Git and terminal
 
-`##########` 100% · 12 of 12 done · due 2026-12-03
+`##########` 92% · 12 of 13 done · due 2026-12-03
+
+### backlog
+
+- [ ] [`cc837ecb`](https://github.com/oddurs/nun/blob/main/cairn/items/cc837ecb-1b28-42d2-a734-61b108f0bdfc-typed-keys-never-reach-zsh-in-the-terminal-panel.md) Typed keys never reach zsh in the terminal panel <sup>bug · p2</sup>
 
 ### done
 
