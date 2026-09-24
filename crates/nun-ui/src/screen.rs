@@ -49,6 +49,18 @@ impl Screen {
         self.terminal.clear()
     }
 
+    /// Draw exact colours as they are, or as their nearest in the
+    /// 256-colour palette, from now on; and draw every cell again at the
+    /// next frame, as [`Screen::set_underlines`] does.
+    ///
+    /// # Errors
+    ///
+    /// If the terminal cannot be cleared.
+    pub fn set_truecolor(&mut self, truecolor: bool) -> io::Result<()> {
+        self.terminal.backend_mut().set_truecolor(truecolor);
+        self.terminal.clear()
+    }
+
     /// Draw one frame.
     ///
     /// Only the cells that differ from the previous frame are written, so an

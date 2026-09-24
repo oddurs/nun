@@ -181,6 +181,12 @@ pub const SETTINGS: &[Setting] = &[
         "Draw diagnostics with a curly, coloured underline.",
     ),
     setting(
+        "ui.truecolor",
+        Kind::OneOf(&["auto", "on", "off"]),
+        Scope::User,
+        "Draw exact colours as they are, or as the nearest of 256; auto asks the terminal.",
+    ),
+    setting(
         "ui.clipboard",
         Kind::OneOf(&["auto", "system", "osc52"]),
         Scope::User,

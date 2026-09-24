@@ -13,6 +13,14 @@
 //! [`Underlines::colour`] allows. That makes this the single place where what
 //! the terminal can do meets the bytes it is sent — widgets say what they want
 //! and never ask.
+//!
+//! Colour depth is the same kind of fact. Every colour nun draws in is exact —
+//! the ramp is derived in RGB, and a program in the terminal panel asks for
+//! exact colours too — and a terminal without 24-bit colour misreads or
+//! approximates them in ways of its own. Where the terminal was found not to
+//! have it, each exact colour is written as the nearest of the 256-colour
+//! palette's fixed colours instead ([`Rgb::nearest_indexed`]), so what is
+//! drawn is approximated the same way everywhere and never misread.
 
 use std::io::{self, Write};
 
@@ -27,6 +35,8 @@ use ratatui::backend::{Backend, ClearType, IntoCrossterm, WindowSize};
 use ratatui::buffer::Cell;
 use ratatui::layout::{Position, Size};
 use ratatui::style::{Color, Modifier};
+
+use nun_theme::Rgb;
 
 use crate::underline::Underlines;
 
@@ -44,12 +54,30 @@ enum Line {
 pub struct NunBackend<W: Write> {
     writer: W,
     underlines: Underlines,
+    /// Whether the terminal draws 24-bit colour.
+    truecolor: bool,
 }
 
 impl<W: Write> NunBackend<W> {
     /// Draw to `writer`, with the underlines the terminal said it has.
     pub const fn new(writer: W, underlines: Underlines) -> Self {
-        Self { writer, underlines }
+        Self { writer, underlines, truecolor: true }
+    }
+
+    /// Draw exact colours as they are, or as their nearest in the 256-colour
+    /// palette: whether the terminal draws 24-bit colour changed.
+    pub const fn set_truecolor(&mut self, truecolor: bool) {
+        self.truecolor = truecolor;
+    }
+
+    /// A colour as this terminal can draw it.
+    fn drawable(&self, colour: Color) -> Color {
+        match colour {
+            Color::Rgb(r, g, b) if !self.truecolor => {
+                Color::Indexed(Rgb::new(r, g, b).nearest_indexed())
+            }
+            colour => colour,
+        }
     }
 
     /// Draw with `underlines` from now on: the configuration changed.
@@ -159,17 +187,18 @@ impl<W: Write> Backend for NunBackend<W> {
                 line = wanted_line;
             }
             if cell.fg != fg || cell.bg != bg {
+                let (text, ground) = (self.drawable(cell.fg), self.drawable(cell.bg));
                 queue!(
                     self.writer,
                     SetColors(crossterm::style::Colors::new(
-                        cell.fg.into_crossterm(),
-                        cell.bg.into_crossterm()
+                        text.into_crossterm(),
+                        ground.into_crossterm()
                     ))
                 )?;
                 fg = cell.fg;
                 bg = cell.bg;
             }
-            let wanted_colour = self.underline_colour_of(cell, line);
+            let wanted_colour = self.drawable(self.underline_colour_of(cell, line));
             if wanted_colour != underline_colour {
                 write_underline_colour(&mut self.writer, wanted_colour)?;
                 underline_colour = wanted_colour;
@@ -426,6 +455,27 @@ mod tests {
         let jump = out.find("\x1b[2;1H").unwrap_or_else(|| panic!("no jump: {out:?}"));
         assert!(out[..jump].ends_with(LINK_CLOSE), "{out:?}");
         assert!(out.ends_with(&format!("b{LINK_CLOSE}\x1b[39m\x1b[49m\x1b[0m")), "{out:?}");
+    }
+
+    #[test]
+    fn a_terminal_without_24_bit_colour_is_sent_the_nearest_of_its_256() {
+        let mut cells = Cells::empty(Rect::new(0, 0, 1, 1));
+        cells[(0, 0)].set_char('x').set_fg(Color::Rgb(0xff, 0, 0)).set_bg(Color::Indexed(4));
+        let mut backend = NunBackend::new(Vec::new(), Underlines::FULL);
+        backend.set_truecolor(false);
+        backend.draw(Cells::empty(cells.area).diff(&cells).into_iter()).unwrap();
+        let out = String::from_utf8(backend.writer().clone()).unwrap();
+        assert!(out.contains("38;5;196"), "{out:?}");
+        assert!(out.contains("48;5;4"), "indexed colours are left alone: {out:?}");
+        assert!(!out.contains("38;2"), "{out:?}");
+
+        let mut backend = NunBackend::new(Vec::new(), Underlines::FULL);
+        backend.set_truecolor(false);
+        let content = marked();
+        backend.draw(Cells::empty(content.area).diff(&content).into_iter()).unwrap();
+        let out = String::from_utf8(backend.writer().clone()).unwrap();
+        assert!(out.contains("\x1b[58:5:"), "the underline colour too: {out:?}");
+        assert!(!out.contains(";2;") && !out.contains(":2:"), "{out:?}");
     }
 
     #[test]

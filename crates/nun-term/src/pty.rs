@@ -107,13 +107,18 @@ pub enum Report {
     },
 }
 
-/// A terminal's size, in cells.
+/// A terminal's size, in cells, and a cell's size in pixels where that is
+/// known.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Size {
     /// Columns.
     pub cols: u16,
     /// Rows.
     pub rows: u16,
+    /// A cell's width and height in pixels: the cells of the terminal nun
+    /// is drawn in, since those are the ones the panel's are drawn with.
+    /// Zero where that terminal did not say.
+    pub cell: (u16, u16),
 }
 
 impl Size {
@@ -121,11 +126,31 @@ impl Size {
     /// room at all divides by it.
     #[must_use]
     pub fn new(cols: u16, rows: u16) -> Self {
-        Self { cols: cols.max(1), rows: rows.max(1) }
+        Self { cols: cols.max(1), rows: rows.max(1), cell: (0, 0) }
     }
 
+    /// The same, with cells `cell` pixels wide and high, if that is known.
+    #[must_use]
+    pub fn with_cell(self, cell: Option<(u16, u16)>) -> Self {
+        Self { cell: cell.unwrap_or((0, 0)), ..self }
+    }
+
+    /// The whole screen in pixels, width then height: zero where a cell's
+    /// size is not known.
+    #[must_use]
+    pub fn pixels(self) -> (u16, u16) {
+        (self.cols.saturating_mul(self.cell.0), self.rows.saturating_mul(self.cell.1))
+    }
+
+    /// As the pty layer takes it. It multiplies the cell by the screen in
+    /// `u16`, so the cell is kept to what fits.
     fn window(self) -> WindowSize {
-        WindowSize { num_lines: self.rows, num_cols: self.cols, cell_width: 0, cell_height: 0 }
+        WindowSize {
+            num_lines: self.rows,
+            num_cols: self.cols,
+            cell_width: self.cell.0.min(u16::MAX / self.cols),
+            cell_height: self.cell.1.min(u16::MAX / self.rows),
+        }
     }
 }
 
@@ -147,7 +172,8 @@ pub struct Spec {
 impl Spec {
     /// The person's shell — `$SHELL`, or `/bin/sh` without one — in `cwd`,
     /// told it is in an xterm-compatible terminal with true colour, and not
-    /// in whichever terminal nun itself is running in.
+    /// in whichever terminal nun itself is running in. See
+    /// [`Spec::without_truecolor`] for a terminal that has none.
     #[must_use]
     pub fn shell(cwd: PathBuf, size: Size) -> Self {
         let shell = std::env::var("SHELL")
@@ -182,6 +208,22 @@ impl Spec {
             ],
             size,
         }
+    }
+}
+
+impl Spec {
+    /// The same, not told it has 24-bit colour: the terminal nun is drawn in
+    /// was not found to have it, so exact colours would be approximated
+    /// anyway, and a program that knows it picks its own approximation.
+    /// `COLORTERM` is unset, not merely left out, so the outer terminal's
+    /// does not leak in.
+    #[must_use]
+    pub fn without_truecolor(mut self) -> Self {
+        self.env.retain(|(name, _)| name != "COLORTERM");
+        if self.program == "/usr/bin/env" {
+            self.args.splice(0..0, ["-u".to_string(), "COLORTERM".to_string()]);
+        }
+        self
     }
 }
 
@@ -328,11 +370,14 @@ impl Pty {
             return Ok(());
         }
         let Some(child) = &self.child else { return Ok(()) };
+        // The pixels too, which image viewers read before they think of
+        // asking.
+        let (width, height) = size.pixels();
         let window = rustix::termios::Winsize {
             ws_row: size.rows,
             ws_col: size.cols,
-            ws_xpixel: 0,
-            ws_ypixel: 0,
+            ws_xpixel: width,
+            ws_ypixel: height,
         };
         rustix::termios::tcsetwinsize(child.file(), window)?;
         self.size = size;

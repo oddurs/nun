@@ -156,6 +156,9 @@ pub(super) struct Panel {
     had_focus: Option<Id>,
     /// Escapes waiting to be written to the terminal nun is drawn on.
     escapes: Vec<String>,
+    /// A cell's size in pixels on the terminal nun is drawn on, when it is
+    /// known: what a program in the panel is told its cells are.
+    cell: Option<(u16, u16)>,
     /// Where copies are sent, to be made one at a time, in order.
     #[cfg(not(test))]
     copier: Option<std::sync::mpsc::Sender<clipboard::Job>>,
@@ -224,6 +227,12 @@ impl App {
         self.panel.start = Some(dir);
         self.panel.post = Some(post);
         self.start_kept();
+    }
+
+    /// A cell of the terminal nun is drawn on is `cell` pixels wide and
+    /// high, or nobody knows. The terminals are told at the next layout.
+    pub fn set_cell_pixels(&mut self, cell: Option<(u16, u16)>) {
+        self.panel.cell = cell;
     }
 
     /// Hang up every shell, all at once, and wait until each has gone.
@@ -381,7 +390,7 @@ impl App {
             // under it is underlined, and a program that asked for motion
             // is told of it.
             hits.push(super::cells(area), Target::TermScreen(id), true);
-            let size = Size::new(area.width, area.height);
+            let size = Size::new(area.width, area.height).with_cell(self.panel.cell);
             if let Some(term) = self.panel.term_mut(id) {
                 term.emulator.resize(size);
                 if let Some(pty) = term.pty.as_mut() {
@@ -603,7 +612,8 @@ impl App {
         };
         // A first guess at the size; the layout fits it before the shell
         // has drawn anything worth keeping.
-        let size = Size::new(self.viewport.width.max(2), (self.viewport.height / 3).max(2));
+        let size = Size::new(self.viewport.width.max(2), (self.viewport.height / 3).max(2))
+            .with_cell(self.panel.cell);
         let spec = match &self.panel.program {
             Some(command_line) => {
                 let args: Vec<&str> = command_line[1..].iter().map(String::as_str).collect();
@@ -611,6 +621,7 @@ impl App {
             }
             None => Spec::shell(cwd.clone(), size),
         };
+        let spec = if self.truecolor() { spec } else { spec.without_truecolor() };
         let name = spec
             .args
             .iter()
@@ -1355,6 +1366,8 @@ mod tests {
             kitty_keyboard: Some(true),
             underlines: nun_ui::UnderlineProbe::new(),
             attributes: vec![62, 22, 52],
+            cell: None,
+            colorterm: false,
         };
         rig.app.attach_settings(loaded, startup, crate::commands::KeySet::Basic, None);
         rig.app.copy("beta".into());

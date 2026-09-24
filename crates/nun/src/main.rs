@@ -16,7 +16,7 @@ use std::time::Instant;
 
 use app::{App, Outcome};
 use commands::KeySet;
-use nun_config::{Loaded, Polarity, Undercurl};
+use nun_config::{Loaded, Polarity, Truecolor, Undercurl};
 use nun_core::{Buffer, LoadReport};
 use nun_theme::{Probe, Ramp, Rgb, Role, Source, derive, derive_with_polarity};
 use nun_ui::{
@@ -239,12 +239,7 @@ fn edit(path: &Path, lsp_log: Option<&Path>, no_session: bool) -> io::Result<()>
         app.hint(hint.message());
     }
 
-    let underlines = underlines(&settings, &startup.underlines);
-    let mut screen = Screen::open(capabilities(&settings, set), underlines).map_err(|error| {
-        // The usual cause is no tty at all — piped input, or a CI runner — and
-        // the platform's own message for that is "Device not configured".
-        io::Error::new(error.kind(), format!("nun needs an interactive terminal ({error})"))
-    })?;
+    let (mut screen, cells) = open_screen(&mut app, &settings, &startup, set)?;
     let events = Events::start()?;
 
     start_reloader(&mut app, &events, root.clone(), settings, startup, set);
@@ -314,6 +309,10 @@ fn edit(path: &Path, lsp_log: Option<&Path>, no_session: bool) -> io::Result<()>
             // A failure costs one frame drawn twice, not the session.
             let _ = screen.set_underlines(underlines);
         }
+        if let Some(truecolor) = app.take_truecolor() {
+            // As for the underlines.
+            let _ = screen.set_truecolor(truecolor);
+        }
         for escape in app.take_escapes() {
             // The copy was only ever said to have been sent: a terminal that
             // cannot be written to has not been sent it, and the next frame
@@ -329,6 +328,7 @@ fn edit(path: &Path, lsp_log: Option<&Path>, no_session: bool) -> io::Result<()>
             }
             Outcome::Redraw => {
                 app.set_viewport(screen.area()?);
+                app.set_cell_pixels(cells.cell_pixels());
                 screen.draw(AppView(&app))?;
             }
             Outcome::Continue => {}
@@ -342,6 +342,27 @@ fn edit(path: &Path, lsp_log: Option<&Path>, no_session: bool) -> io::Result<()>
     screen.close();
     wind_down(&mut app, ctrl_click);
     Ok(())
+}
+
+/// Enter the terminal, drawing as it said it can. Also what the terminal
+/// said, kept to measure a cell again at each frame: a change of font
+/// changes it, and comes as a resize.
+fn open_screen(
+    app: &mut App,
+    settings: &Loaded,
+    startup: &terminal::Startup,
+    set: KeySet,
+) -> io::Result<(Screen, terminal::Startup)> {
+    let underlines = underlines(settings, &startup.underlines);
+    let mut screen = Screen::open(capabilities(settings, set), underlines).map_err(|error| {
+        // The usual cause is no tty at all — piped input, or a CI runner — and
+        // the platform's own message for that is "Device not configured".
+        io::Error::new(error.kind(), format!("nun needs an interactive terminal ({error})"))
+    })?;
+    screen.set_truecolor(truecolor(settings, startup).0)?;
+    let cells = startup.clone();
+    app.set_cell_pixels(cells.cell_pixels());
+    Ok((screen, cells))
 }
 
 /// Watch and read the settings files on a thread of their own; a change comes
@@ -637,6 +658,16 @@ fn underlines(settings: &Loaded, probe: &UnderlineProbe) -> Underlines {
     }
 }
 
+/// Whether to draw exact colours as they are, and why: what the terminal
+/// said, unless the config says otherwise.
+fn truecolor(settings: &Loaded, startup: &terminal::Startup) -> (bool, &'static str) {
+    match settings.config.truecolor {
+        Truecolor::Auto => startup.truecolor(),
+        Truecolor::On => (true, "ui.truecolor = \"on\" in the config"),
+        Truecolor::Off => (false, "ui.truecolor = \"off\" in the config"),
+    }
+}
+
 /// What `nun --capabilities` prints: what the terminal said about itself, and
 /// what nun is doing about it.
 fn capabilities_report(settings: &Loaded, startup: &terminal::Startup) -> String {
@@ -687,6 +718,14 @@ fn capabilities_report(settings: &Loaded, startup: &terminal::Startup) -> String
         std::env::var_os(name).is_some()
     });
     let _ = writeln!(out, "{}", clipboard::describe(settings.config.clipboard, place));
+    let (on, why) = truecolor(settings, startup);
+    let drawn = if on { "as they are" } else { "as the nearest of 256" };
+    let _ = writeln!(out, "24-bit colour: {} ({why}); exact colours are drawn {drawn}", yes(on));
+    let cell = match startup.cell_pixels() {
+        Some((width, height)) => format!("{width}x{height} pixels"),
+        None => "not known; the panel tells programs so rather than guess".to_string(),
+    };
+    let _ = writeln!(out, "cell size: {cell}");
     out
 }
 
@@ -1006,6 +1045,8 @@ mod tests {
             kitty_keyboard: Some(false),
             underlines,
             attributes: vec![1, 2],
+            cell: None,
+            colorterm: false,
         };
         let report = capabilities_report(&Loaded::defaults(), &startup);
         assert!(report.contains("terminal: tmux 3.5a"), "{report}");
