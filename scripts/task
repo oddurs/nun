@@ -5,6 +5,20 @@
 # stack-specific lives here and nowhere else, so the two can never drift.
 set -eu
 
+# Every worktree of this repository builds into one target directory, beside
+# the primary checkout. A worktree per unit of work is the workflow, and each
+# one compiling its own copy of tree-sitter, tokio and gix filled a disk with
+# five agents running at once. Sharing keeps dependencies built once; cargo's
+# lock on the directory queues concurrent builds rather than racing them. An
+# explicit CARGO_TARGET_DIR still wins.
+if [ -z "${CARGO_TARGET_DIR:-}" ]; then
+    _common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
+    if [ -n "$_common" ]; then
+        CARGO_TARGET_DIR="$(dirname "$_common")/target"
+        export CARGO_TARGET_DIR
+    fi
+fi
+
 usage() {
     cat <<'USAGE'
 Usage: scripts/task <target>
