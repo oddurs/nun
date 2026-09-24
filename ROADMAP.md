@@ -82,8 +82,11 @@
 - [ ] [`0040`](https://github.com/oddurs/nun/blob/main/cairn/items/0040-diff-view.md) Diff view <sup>feature · p2</sup>
 - [ ] [`0041`](https://github.com/oddurs/nun/blob/main/cairn/items/0041-integrated-terminal-panel.md) Integrated terminal panel <sup>feature · p1</sup>
 - [ ] [`0043`](https://github.com/oddurs/nun/blob/main/cairn/items/0043-session-restore.md) Session restore <sup>feature · p2</sup>
-- [ ] [`0075`](https://github.com/oddurs/nun/blob/main/cairn/items/0075-format-on-save-per-project.md) Format on save per project <sup>feature · p2</sup>
 - [ ] [`0087`](https://github.com/oddurs/nun/blob/main/cairn/items/0087-lsp-tell-servers-about-files-that-change-on-disk.md) LSP: tell servers about files that change on disk <sup>feature · p2</sup>
+
+### in progress
+
+- [ ] [`0075`](https://github.com/oddurs/nun/blob/main/cairn/items/0075-format-on-save-per-project.md) Format on save per project <sup>feature · p2</sup>
 
 ### done
 

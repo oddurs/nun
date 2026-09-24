@@ -2,12 +2,14 @@
 id: 75
 title: Format on save per project
 type: feature
-status: backlog
+status: done
 milestone: m5
+assignee: Oddur Sigurdsson
 depends_on:
 - 42
 created: 2026-09-22
-updated: 2026-09-22
+updated: 2026-09-23
+closed_at: 2026-09-23
 priority: p2
 area: lsp
 effort: s
@@ -35,6 +37,6 @@ the effective config.
 
 ## Acceptance criteria
 
-- [ ] A trusted project `.nun.toml` can turn format on save on or off per language
-- [ ] An untrusted one cannot, and the trust prompt names the change
-- [ ] `nun config` says which layer the value came from
+- [x] A trusted project `.nun.toml` can turn format on save on or off per language
+- [x] An untrusted one cannot, and the trust prompt names the change
+- [x] `nun config` says which layer the value came from
