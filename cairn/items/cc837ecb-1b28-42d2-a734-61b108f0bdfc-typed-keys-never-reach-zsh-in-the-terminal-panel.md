@@ -2,7 +2,7 @@
 id: cc837ecb-1b28-42d2-a734-61b108f0bdfc
 title: Typed keys never reach zsh in the terminal panel
 type: bug
-status: backlog
+status: dropped
 milestone: m5
 created: 2026-09-24
 updated: 2026-09-24
@@ -74,3 +74,7 @@ the panel was open with "F6 to the editor" showing, so that is not this bug.
   process that inherited the pty fds. On macOS, `openpty` sets CLOEXEC
   non-atomically (rustix-openpty), so a process spawned on another thread
   in that window (LSP, git) could inherit the fds.
+
+## 2026-09-24
+
+Not a bug. The three failed runs were misread captures: starship's four-line prompt scrolls the echoed command and its output out of a six-row panel, and in the plain-zsh run the capture was cut to the last five screen lines, which held only the fresh prompt. A fresh prompt after Enter is what a command that ran looks like. The load test (22 trials) found zsh running the command every time by the byte log. The regression test and NUN_TERM_LOG from #70 stay. The first-launch F6 loss under load is a separate observation, not this bug.
