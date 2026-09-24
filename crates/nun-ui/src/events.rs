@@ -35,6 +35,15 @@ pub enum Event {
     Found(nun_workspace::Found),
     /// A language server said something, or answered.
     Lsp(nun_lsp::Event),
+    /// A program in the terminal panel wrote something, or ended.
+    Term(nun_term::Report),
+    /// Text was put on the clipboard, or could not be.
+    Copied {
+        /// How much.
+        chars: usize,
+        /// Why it could not be, when it could not.
+        problem: Option<String>,
+    },
     /// Something changed inside a watched directory, or watching one failed.
     Files {
         /// The directory whose contents changed.

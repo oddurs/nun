@@ -1,0 +1,21 @@
+[package]
+name = "nun-term"
+description = "The integrated terminal for nun: a shell in a pty, and the screen it draws"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+alacritty_terminal = { version = "0.26.0", default-features = false }
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1.4", features = ["std", "process", "system", "termios"] }
+
+[dev-dependencies]
+proptest = "1.11.0"

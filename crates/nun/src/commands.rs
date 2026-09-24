@@ -127,6 +127,19 @@ pub enum Command {
     CodeActions,
     /// Ask again whether to trust the project's `.nun.toml`.
     ReviewProjectSettings,
+    /// Open the terminal panel, go to it, or come back from it to the
+    /// editor. The one key a terminal does not send to its program.
+    ToggleTerminal,
+    /// Start another terminal, in a tab of its own.
+    NewTerminal,
+    /// Start another terminal beside the one being used.
+    SplitTerminal,
+    /// Go to the next terminal.
+    NextTerminal,
+    /// Close the terminal being used, ending what runs in it.
+    CloseTerminal,
+    /// Put the terminal panel away, leaving its shells running.
+    HideTerminal,
 }
 
 impl Command {
@@ -185,6 +198,12 @@ impl Command {
         Self::ShowHover,
         Self::CodeActions,
         Self::ReviewProjectSettings,
+        Self::ToggleTerminal,
+        Self::NewTerminal,
+        Self::SplitTerminal,
+        Self::NextTerminal,
+        Self::CloseTerminal,
+        Self::HideTerminal,
     ];
 
     /// The name used in `[keys]` in `nun.toml`.
@@ -244,6 +263,12 @@ impl Command {
             Self::ShowHover => "lsp.hover",
             Self::CodeActions => "lsp.code_actions",
             Self::ReviewProjectSettings => "config.review_project",
+            Self::ToggleTerminal => "terminal.toggle",
+            Self::NewTerminal => "terminal.new",
+            Self::SplitTerminal => "terminal.split",
+            Self::NextTerminal => "terminal.next",
+            Self::CloseTerminal => "terminal.close",
+            Self::HideTerminal => "terminal.hide",
         }
     }
 
@@ -304,6 +329,12 @@ impl Command {
             Self::ShowHover => "Show hover",
             Self::CodeActions => "Code actions",
             Self::ReviewProjectSettings => "Review the project's settings",
+            Self::ToggleTerminal => "Terminal: open, or go between it and the editor",
+            Self::NewTerminal => "Terminal: new",
+            Self::SplitTerminal => "Terminal: split",
+            Self::NextTerminal => "Terminal: next",
+            Self::CloseTerminal => "Terminal: close",
+            Self::HideTerminal => "Terminal: hide the panel",
         }
     }
 
@@ -421,6 +452,17 @@ const BASIC: &[(&str, Command)] = &[
     // is the same key after the prefix every terminal can send.
     ("ctrl+k .", Command::CodeActions),
     ("ctrl+k t", Command::ReviewProjectSettings),
+    // A single key, because it is the one key taken from a program in the
+    // terminal: a chord's first key is one some program wants. F6 is VS
+    // Code's key for moving between the editor and its panels. Shells, pagers
+    // and editors have no use for it; htop's sort is also `<` and `>`, and
+    // mc's move is the one thing lost, to be rebound by anyone who needs it.
+    ("f6", Command::ToggleTerminal),
+    ("ctrl+k shift+t", Command::NewTerminal),
+    ("ctrl+k shift+v", Command::SplitTerminal),
+    ("ctrl+k tab", Command::NextTerminal),
+    ("ctrl+k shift+x", Command::CloseTerminal),
+    ("ctrl+k `", Command::HideTerminal),
 ];
 
 /// Bindings that need the Kitty keyboard protocol, added over [`BASIC`].
@@ -458,6 +500,8 @@ const FULL: &[(&str, Command)] = &[
     ("ctrl+k ctrl+i", Command::ShowHover),
     ("ctrl+.", Command::CodeActions),
     ("cmd+.", Command::CodeActions),
+    // VS Code's. A legacy terminal sends Ctrl+` as NUL, which is Ctrl+Space.
+    ("ctrl+`", Command::ToggleTerminal),
 ];
 
 /// The default bindings for `set`.
@@ -504,7 +548,15 @@ pub fn reference() -> String {
     let basic = defaults(KeySet::Basic);
     let shown = |keymap: &Keymap<Command>, command: Command| {
         let sequences = keymap.sequences_for(&command);
-        sequences.iter().map(|keys| format!("`{}`", Sequence(keys))).collect::<Vec<_>>().join(", ")
+        sequences
+            .iter()
+            .map(|keys| {
+                // A key that is itself a backtick needs a longer fence.
+                let keys = Sequence(keys).to_string();
+                if keys.contains('`') { format!("`` {keys} ``") } else { format!("`{keys}`") }
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
     };
 
     let mut out = String::new();
@@ -522,6 +574,14 @@ pub fn reference() -> String {
          then does what it does. iTerm2 sends them only when Option counts as Alt\n\
          for function keys, and Terminal.app keeps Page Up and Down for itself; the\n\
          wheel scrolls a card in every terminal.\n\n\
+         While a terminal in the panel has the keyboard, every key goes to the\n\
+         program in it — Esc, Ctrl+C, Ctrl+P, the arrows — except the one key\n\
+         bound on its own to `terminal.toggle`, which comes back to the editor.\n\
+         Only a single key can be that: the first key of a chord is one some\n\
+         program wants. Cmd bindings still work there, since no program can be\n\
+         sent Cmd. The panel's header names the key while the terminal has it.\n\
+         On a Mac keyboard F6 is Do Not Disturb unless the function keys are set\n\
+         to be standard, so it may be Fn+F6; a click on the editor comes back too.\n\n\
          Add or replace bindings in `~/.config/nun/nun.toml`; the defaults you do not\n\
          mention stay as they are:\n\n\
          ```toml\n[keys]\n\"ctrl+k ctrl+s\" = \"file.save\"\n```\n\n\

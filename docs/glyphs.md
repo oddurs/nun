@@ -64,6 +64,7 @@ In use: `default`.
 | `diagnostic.error` | `✕` | U+2715 | 1 | `x` | Before the count of errors |
 | `diagnostic.warning` | `▲` | U+25B2 | 1, 2 in CJK | `!` | Before the count of warnings |
 | `diagnostic.info` | `●` | U+25CF | 1, 2 in CJK | `i` | Before the count of information and hints, which are counted together |
+| `status.terminal` | `❯` | U+276F | 1 | `$` | The status line's button that opens the terminal panel, or goes to it |
 
 ## File tree
 
@@ -112,6 +113,15 @@ In use: `default`.
 | `card.quote` | `│` | U+2502 | 1, 2 in CJK | `\|` | The bar beside a quote in a card's markdown |
 | `card.task.done` | `☑` | U+2611 | 1 | `x` | A ticked task in a card's markdown |
 | `card.task.open` | `☐` | U+2610 | 1 | `_` | An unticked task in a card's markdown |
+
+## Terminal
+
+| Role | Glyph | Code points | Cells | ascii | Description |
+|---|---|---|---|---|---|
+| `terminal.new` | `+` | U+002B | 1 | `+` | Starts another terminal, in a tab of its own |
+| `terminal.split` | `◫` | U+25EB | 1 | `\|` | Starts another terminal beside the one being used |
+| `terminal.close` | `×` | U+00D7 | 1, 2 in CJK | `x` | Closes the terminal being used, ending what runs in it |
+| `terminal.hide` | `▾` | U+25BE | 1 | `v` | Puts the panel away, leaving its shells running |
 
 ## Everywhere
 

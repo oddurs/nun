@@ -18,6 +18,7 @@ nun-core = { version = "0.1.0", path = "../nun-core" }
 nun-input = { version = "0.1.0", path = "../nun-input" }
 nun-lsp = { version = "0.1.0", path = "../nun-lsp" }
 nun-syntax = { version = "0.1.0", path = "../nun-syntax" }
+nun-term = { version = "0.1.0", path = "../nun-term" }
 nun-theme = { version = "0.1.0", path = "../nun-theme" }
 nun-ui = { version = "0.1.0", path = "../nun-ui" }
 nun-workspace = { version = "0.1.0", path = "../nun-workspace" }
@@ -31,4 +32,4 @@ proptest = "1.11.0"
 tempfile = "3.27.0"
 
 [target.'cfg(unix)'.dependencies]
-rustix = { version = "1.1.4", features = ["std", "event", "termios"] }
+rustix = { version = "1.1.4", features = ["std", "event", "process", "termios"] }

@@ -56,7 +56,7 @@ impl App {
             area.x + beside,
             area.y,
             area.width.saturating_sub(beside),
-            area.height.saturating_sub(1),
+            area.height.saturating_sub(1 + self.panel_rows(area.height)),
         )
     }
 
