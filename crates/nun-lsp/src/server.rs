@@ -1056,11 +1056,13 @@ fn initialize_params(root: &Path) -> Value {
                 "executeCommand": {},
                 // Versioned edits, so an edit computed against text that has
                 // moved on is refused rather than applied in the wrong place.
-                // No resource operations: an edit that would create, move or
-                // delete files is refused whole, so servers are told not to.
+                // Files are created, moved and deleted, never over anything
+                // that is there. A failure partway stops the edit where it is
+                // and keeps what was done before it, which is "abort"; the
+                // person can then take the whole of it back.
                 "workspaceEdit": {
                     "documentChanges": true,
-                    "resourceOperations": [],
+                    "resourceOperations": ["create", "rename", "delete"],
                     "failureHandling": "abort",
                 },
             },

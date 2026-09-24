@@ -1681,7 +1681,7 @@ mod tests {
                         .collect();
                     format!("{line}: {} <{picked}>", text.trim())
                 }
-                SearchRow::After { .. } => unreachable!(),
+                SearchRow::After { .. } | SearchRow::Operation { .. } => unreachable!(),
             })
             .collect()
     }

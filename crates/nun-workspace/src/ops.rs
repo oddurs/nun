@@ -514,7 +514,7 @@ impl FsHistory {
     }
 
     /// Move `path` into a fresh slot in the trash and return where it went.
-    fn trash_into(&mut self, path: &Path) -> Result<PathBuf, OpError> {
+    pub(crate) fn trash_into(&mut self, path: &Path) -> Result<PathBuf, OpError> {
         if fs::symlink_metadata(path).is_err() {
             return Err(OpError::Missing(path.to_path_buf()));
         }
@@ -637,7 +637,7 @@ fn exchange(file: &Path, kept: &Path) -> Exchanged {
 }
 
 /// Bring an entry back out of its trash slot to `path`, then drop the slot.
-fn restore(trashed: Option<&Path>, path: &Path) -> Result<(), OpError> {
+pub(crate) fn restore(trashed: Option<&Path>, path: &Path) -> Result<(), OpError> {
     let Some(trashed) = trashed else { return Err(OpError::Missing(path.to_path_buf())) };
     relocate(trashed, path)?;
     if let Some(slot) = trashed.parent() {
@@ -649,7 +649,7 @@ fn restore(trashed: Option<&Path>, path: &Path) -> Result<(), OpError> {
 
 /// Rename `from` to `to` without overwriting anything, across filesystems if
 /// need be.
-fn relocate(from: &Path, to: &Path) -> Result<(), OpError> {
+pub(crate) fn relocate(from: &Path, to: &Path) -> Result<(), OpError> {
     if fs::symlink_metadata(from).is_err() {
         return Err(OpError::Missing(from.to_path_buf()));
     }
@@ -733,7 +733,7 @@ fn symlink(_target: &Path, link: &Path) -> io::Result<()> {
     ))
 }
 
-fn io_error(path: &Path, error: io::Error) -> OpError {
+pub(crate) fn io_error(path: &Path, error: io::Error) -> OpError {
     match error.kind() {
         io::ErrorKind::AlreadyExists => OpError::Exists(path.to_path_buf()),
         _ => OpError::Io { path: path.to_path_buf(), source: error },

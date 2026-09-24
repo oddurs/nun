@@ -965,3 +965,25 @@ fn a_file_that_is_in_or_out_has_a_mark_at_the_edge_that_can_be_clicked() {
     assert!(SearchView::marker_area(area, &rows, 1, 0).is_some());
     assert_eq!(SearchView::marker_area(area, &rows, 2, 0), None, "a plain file has none");
 }
+
+#[test]
+fn a_file_operation_row_is_ticked_named_in_words_and_offers_nothing_to_click() {
+    let rows = [
+        SearchRow::Operation { text: "Move foo.rs to bar.rs" },
+        SearchRow::File { path: "lib.rs", hits: 1, collapsed: false, state: HitState::Included },
+    ];
+    let palette = palette();
+    let mut harness = Harness::new(28, 7);
+    harness.draw(SearchView::new("foo", &rows, &palette));
+    let text = harness.to_text();
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines[usize::from(FIRST)], "✓  Move foo.rs to bar.rs", "{text}");
+    assert_eq!(
+        harness.cells()[(0, FIRST)].fg,
+        harness.cells()[(0, FIRST + 1)].fg,
+        "the same tick as an included file"
+    );
+    let area = Rect::new(0, 0, 28, 7);
+    assert_eq!(SearchView::marker_area(area, &rows, 0, 0), None, "it cannot be left out");
+    assert!(SearchView::marker_area(area, &rows, 1, 0).is_some());
+}

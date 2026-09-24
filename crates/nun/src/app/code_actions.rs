@@ -968,7 +968,7 @@ done
             let resolved = fs::canonicalize(dir.path()).unwrap();
             let fill = |text: &str| {
                 let mut text = text.to_string();
-                for name in ["main.rs", "other.rs"] {
+                for name in ["main.rs", "other.rs", "new.rs"] {
                     let uri = nun_lsp::uri::from_path(&resolved.join(name)).unwrap();
                     text = text.replace(&format!("{{{name}}}"), uri.as_str());
                 }
@@ -1291,6 +1291,39 @@ done
         t.until(|app| !app.edits.busy());
         assert_eq!(t.text(), MAIN);
         assert_eq!(fs::read_to_string(t.dir.path().join("other.rs")).unwrap(), "fn other() {}\n");
+    }
+
+    #[test]
+    fn a_fix_that_creates_a_file_is_previewed_rather_than_made_at_once_and_undoes_whole() {
+        let edit = format!(
+            r#","edit":{{"documentChanges":[{{"kind":"create","uri":"{{new.rs}}"}},{{"textDocument":{{"uri":"{{new.rs}}","version":null}},"edits":[{}]}},{{"textDocument":{{"uri":"{{main.rs}}","version":null}},"edits":[{}]}}]}}"#,
+            edit(0, 0, 0, "pub fn x() {}"),
+            edit(0, 16, 17, "_x"),
+        );
+        let actions = format!("[{}]", action("Move it out", "quickfix", &edit));
+        let mut t = Tester::new(&Says { actions: &actions, ..Says::default() });
+        t.card();
+        t.until(Tester::has_fixes);
+        t.click_on(Target::CardButton(0));
+        t.until(App::edit_previewing);
+        assert_eq!(t.app.edit_preview_rows()[0], "{Create new.rs}");
+        assert_eq!(t.text(), MAIN, "one open file, but it makes another: previewed");
+
+        t.click_on(Target::EditPreview(crate::app::workspace_edit::Spot::Action(0)));
+        t.until(|app| !app.edits.busy());
+        let new = t.dir.path().join("new.rs");
+        assert_eq!(fs::read_to_string(&new).unwrap(), "pub fn x() {}");
+        assert_eq!(t.text(), "fn main() { let _x = 1; }\n");
+        let message = t.app.message().unwrap();
+        assert!(
+            message.starts_with("Applied “Move it out” in 1 file, and created new.rs."),
+            "{message}"
+        );
+
+        t.app.run(Command::UndoRename);
+        t.until(|app| !app.edits.busy());
+        assert!(!new.exists(), "into the trash");
+        assert_eq!(t.text(), MAIN);
     }
 
     #[test]

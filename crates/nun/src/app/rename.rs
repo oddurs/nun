@@ -345,18 +345,15 @@ done
 
     impl Tester {
         /// `rename` may name files as `{a.rs}`, which becomes that file's
-        /// URI — the resolved one, as a server would say it.
+        /// URI — the resolved one, as a server would say it — whether or not
+        /// it is there.
         fn new(files: &[(&str, &str)], caps: &str, prepare: &str, rename: &str) -> Self {
             let dir = tempfile::tempdir().unwrap();
             for (name, text) in files {
                 fs::write(dir.path().join(name), text).unwrap();
             }
             let resolved = fs::canonicalize(dir.path()).unwrap();
-            let mut rename = rename.to_string();
-            for (name, _) in files {
-                let uri = nun_lsp::uri::from_path(&resolved.join(name)).unwrap();
-                rename = rename.replace(&format!("{{{name}}}"), uri.as_str());
-            }
+            let rename = uris(rename, &resolved);
 
             let (buffer, _) = Buffer::load(dir.path().join(files[0].0)).unwrap();
             let mut app = App::new(
@@ -484,6 +481,34 @@ done
         fn settled(&mut self) {
             self.until(|app| !app.edits.busy());
         }
+    }
+
+    /// `text` with every `{name}` in it — a name of letters, digits, dots
+    /// and slashes — made the URI of that name under `root`.
+    fn uris(text: &str, root: &std::path::Path) -> String {
+        let named = |inside: &str| {
+            inside.contains('.')
+                && inside.chars().all(|ch| ch.is_ascii_alphanumeric() || "._/".contains(ch))
+        };
+        let mut out = String::new();
+        let mut rest = text;
+        while let Some(open) = rest.find('{') {
+            out.push_str(&rest[..open]);
+            let after = &rest[open + 1..];
+            match after.find('}') {
+                Some(close) if named(&after[..close]) => {
+                    let uri = nun_lsp::uri::from_path(&root.join(&after[..close])).unwrap();
+                    out.push_str(uri.as_str());
+                    rest = &after[close + 1..];
+                }
+                _ => {
+                    out.push('{');
+                    rest = after;
+                }
+            }
+        }
+        out.push_str(rest);
+        out
     }
 
     /// Whether a question to the server or the worker is still out.
@@ -638,20 +663,255 @@ done
         assert_eq!(t.app.buffer().text().to_string(), MAIN);
     }
 
+    /// `documentChanges` of the steps given, each already JSON.
+    fn steps(steps: &[String]) -> String {
+        format!(r#"{{"documentChanges":[{}]}}"#, steps.join(","))
+    }
+
+    /// Edits to a file, as a step.
+    fn edits_to(name: &str, edits: &[String]) -> String {
+        format!(
+            r#"{{"textDocument":{{"uri":"{{{name}}}","version":null}},"edits":[{}]}}"#,
+            edits.join(",")
+        )
+    }
+
+    fn move_file(from: &str, to: &str) -> String {
+        format!(r#"{{"kind":"rename","oldUri":"{{{from}}}","newUri":"{{{to}}}"}}"#)
+    }
+
+    const LIB: &str = "mod foo;\nfn main() { foo::f(); }\n";
+    const FOO: &str = "pub fn f() {}\n";
+
+    /// A module renamed as rust-analyzer renames one: the files that name it
+    /// edited, its file moved — and here an edit to it under its new name,
+    /// which some servers send.
+    fn module_rename() -> String {
+        steps(&[
+            edits_to("lib.rs", &[edit(0, 4, 7, "bar"), edit(1, 12, 15, "bar")]),
+            move_file("foo.rs", "bar.rs"),
+            edits_to("bar.rs", &[edit(0, 7, 8, "g")]),
+        ])
+    }
+
     #[test]
-    fn an_edit_that_would_create_a_file_is_refused_whole() {
-        let rename = format!(
-            r#"{{"documentChanges":[{{"textDocument":{{"uri":"{{main.rs}}","version":null}},"edits":[{}]}},{{"kind":"create","uri":"{{main.rs}}.new"}}]}}"#,
-            edit(0, 3, 6, "dog"),
+    fn a_rename_that_moves_a_file_previews_the_move_carries_it_out_and_undoes_it() {
+        let lib_placeholder = r#"{"range":{"start":{"line":0,"character":4},"end":{"line":0,"character":7}},"placeholder":"foo"}"#;
+        let mut t = Tester::new(
+            &[("lib.rs", LIB), ("foo.rs", FOO)],
+            PREPARES,
+            lib_placeholder,
+            &module_rename(),
         );
+        t.ask(4);
+        t.name("bar");
+        assert_eq!(
+            t.rows(),
+            [
+                "{Move foo.rs to bar.rs}",
+                "[foo.rs]",
+                "1- pub fn f() {}",
+                "1+ pub fn g() {}",
+                "[lib.rs]",
+                "1- mod foo;",
+                "1+ mod bar;",
+                "2- fn main() { foo::f(); }",
+                "2+ fn main() { bar::f(); }",
+            ],
+        );
+        assert!(t.path("foo.rs").exists(), "nothing is moved before it is applied");
+
+        t.key(KeyCode::Enter);
+        t.settled();
+        assert!(!t.path("foo.rs").exists());
+        assert_eq!(t.read("bar.rs"), "pub fn g() {}\n", "edited, then moved");
+        assert_eq!(t.app.buffer().text().to_string(), "mod bar;\nfn main() { bar::f(); }\n");
+        let message = t.app.message().unwrap().to_string();
+        assert!(
+            message.starts_with("Renamed foo to bar in 2 files, and moved foo.rs to bar.rs."),
+            "{message}"
+        );
+
+        t.app.run(Command::UndoRename);
+        t.settled();
+        assert_eq!(t.read("foo.rs"), FOO);
+        assert!(!t.path("bar.rs").exists());
+        assert_eq!(t.app.buffer().text().to_string(), LIB);
+        let message = t.app.message().unwrap().to_string();
+        assert!(message.contains("and moved bar.rs to foo.rs"), "{message}");
+    }
+
+    #[test]
+    fn an_open_file_that_is_moved_follows_its_file_and_comes_back_with_the_undo() {
+        let mut t = Tester::new(
+            &[("foo.rs", FOO), ("lib.rs", LIB)],
+            PREPARES,
+            PLACEHOLDER,
+            &module_rename(),
+        );
+        t.ask(7);
+        t.name("bar");
+        t.key(KeyCode::Enter);
+        t.settled();
+        let path = t.app.buffer().path().unwrap().to_path_buf();
+        assert_eq!(path, t.path("bar.rs"), "the buffer follows");
+        assert_eq!(t.app.buffer().text().to_string(), "pub fn g() {}\n");
+        assert!(t.app.buffer().is_modified(), "edited, and not saved");
+        assert_eq!(t.read("bar.rs"), FOO, "moved as it was on disk");
+        assert_eq!(t.read("lib.rs"), "mod bar;\nfn main() { bar::f(); }\n");
+        t.until(|app| {
+            app.lsp
+                .as_ref()
+                .and_then(|lsp| lsp.identifier(app.doc().id))
+                .is_some_and(|id| id.uri.as_str().ends_with("/bar.rs"))
+        });
+
+        t.app.run(Command::UndoRename);
+        t.settled();
+        assert_eq!(t.app.buffer().path().unwrap(), t.path("foo.rs"));
+        assert_eq!(t.app.buffer().text().to_string(), FOO);
+        assert_eq!(t.read("lib.rs"), LIB);
+    }
+
+    #[test]
+    fn a_create_and_a_delete_are_previewed_carried_out_and_taken_back() {
+        let rename = steps(&[
+            edits_to("main.rs", &[edit(0, 3, 6, "dog")]),
+            r#"{"kind":"create","uri":"{new.rs}"}"#.to_string(),
+            edits_to("new.rs", &[edit(0, 0, 0, "fn dog() {}\\n")]),
+            r#"{"kind":"delete","uri":"{other.rs}"}"#.to_string(),
+        ]);
         let mut t =
             Tester::new(&[("main.rs", MAIN), ("other.rs", OTHER)], PREPARES, PLACEHOLDER, &rename);
         t.ask(4);
         t.name("dog");
-        let message = t.app.message().unwrap();
-        assert!(message.contains("would also create"), "{message}");
-        assert!(!t.app.edit_previewing());
+        let rows = t.rows();
+        assert_eq!(rows[..2], ["{Create new.rs}", "{Delete other.rs}"], "{rows:?}");
+        assert!(rows.contains(&"[new.rs]".to_string()), "its text shown: {rows:?}");
+        assert!(rows.contains(&"1+ fn dog() {}↵".to_string()), "{rows:?}");
+
+        // Its text cannot be left out apart from the file.
+        let row = rows.iter().position(|row| row == "[new.rs]").unwrap();
+        t.click_on(Target::EditPreview(Spot::Mark(row)));
+        assert!(t.rows().contains(&"[new.rs]".to_string()));
+
+        t.key(KeyCode::Enter);
+        t.settled();
+        assert_eq!(t.read("new.rs"), "fn dog() {}\n");
+        assert!(!t.path("other.rs").exists());
+        let trashed = fs::read_dir(t.path(".trash")).unwrap().count();
+        assert_eq!(trashed, 1, "deleted into the trash");
+
+        t.app.run(Command::UndoRename);
+        t.settled();
+        assert!(!t.path("new.rs").exists());
+        assert_eq!(t.read("other.rs"), OTHER);
         assert_eq!(t.app.buffer().text().to_string(), MAIN);
+    }
+
+    #[test]
+    fn nothing_is_overwritten_whatever_the_server_says() {
+        for options in ["", r#","options":{"overwrite":true}"#] {
+            let rename = steps(&[
+                edits_to("main.rs", &[edit(0, 3, 6, "dog")]),
+                format!(r#"{{"kind":"create","uri":"{{other.rs}}"{options}}}"#),
+            ]);
+            let mut t = Tester::new(
+                &[("main.rs", MAIN), ("other.rs", OTHER)],
+                PREPARES,
+                PLACEHOLDER,
+                &rename,
+            );
+            t.ask(4);
+            t.name("dog");
+            let message = t.app.message().unwrap().to_string();
+            assert!(message.starts_with("Did not rename cat: the server would"), "{message}");
+            assert!(!t.app.edit_previewing());
+            assert_eq!(t.read("other.rs"), OTHER);
+            assert_eq!(t.app.buffer().text().to_string(), MAIN);
+        }
+    }
+
+    #[test]
+    fn a_create_told_to_leave_what_is_there_alone_leaves_it_alone() {
+        let rename = steps(&[
+            edits_to("main.rs", &[edit(0, 3, 6, "dog")]),
+            r#"{"kind":"create","uri":"{other.rs}","options":{"ignoreIfExists":true}}"#.to_string(),
+        ]);
+        let mut t =
+            Tester::new(&[("main.rs", MAIN), ("other.rs", OTHER)], PREPARES, PLACEHOLDER, &rename);
+        t.ask(4);
+        t.name("dog");
+        assert!(!t.rows().iter().any(|row| row.starts_with('{')), "{:?}", t.rows());
+        t.key(KeyCode::Enter);
+        t.settled();
+        assert_eq!(t.read("other.rs"), OTHER);
+    }
+
+    #[test]
+    fn deleting_a_file_that_is_open_is_refused() {
+        let rename = steps(&[r#"{"kind":"delete","uri":"{main.rs}"}"#.to_string()]);
+        let mut t =
+            Tester::new(&[("main.rs", MAIN), ("other.rs", OTHER)], PREPARES, PLACEHOLDER, &rename);
+        t.ask(4);
+        t.name("dog");
+        assert!(t.app.message().unwrap().contains("which is open"), "{:?}", t.app.message());
+        assert!(t.path("main.rs").exists());
+    }
+
+    #[test]
+    fn a_file_operation_outside_the_folder_is_refused() {
+        let rename =
+            steps(&[r#"{"kind":"create","uri":"file:///tmp/nun-0078-outside.rs"}"#.to_string()]);
+        let mut t =
+            Tester::new(&[("main.rs", MAIN), ("other.rs", OTHER)], PREPARES, PLACEHOLDER, &rename);
+        t.ask(4);
+        t.name("dog");
+        assert!(t.app.message().unwrap().contains("outside the folder"), "{:?}", t.app.message());
+    }
+
+    #[test]
+    fn a_failure_partway_says_exactly_which_operations_happened_and_undo_takes_them_back() {
+        let rename = steps(&[
+            edits_to("other.rs", &[edit(0, 11, 14, "dog")]),
+            move_file("a.rs", "b.rs"),
+            r#"{"kind":"create","uri":"{c.rs}"}"#.to_string(),
+            r#"{"kind":"delete","uri":"{d.rs}"}"#.to_string(),
+        ]);
+        let mut t = Tester::new(
+            &[("main.rs", MAIN), ("other.rs", OTHER), ("a.rs", "a\n"), ("d.rs", "d\n")],
+            PREPARES,
+            PLACEHOLDER,
+            &rename,
+        );
+        t.ask(4);
+        t.name("dog");
+        assert!(t.rows().contains(&"{Create c.rs}".to_string()));
+        // Something takes the name between the preview and the apply.
+        fs::write(t.path("c.rs"), "mine\n").unwrap();
+        t.key(KeyCode::Enter);
+        t.settled();
+        let message = t.app.message().unwrap().to_string();
+        assert!(
+            message.starts_with(
+                "Renamed only partly: wrote other.rs; moved a.rs to b.rs, then stopped: could not \
+                 create c.rs: "
+            ),
+            "{message}"
+        );
+        assert!(message.contains("already exists; not done: delete d.rs."), "{message}");
+        assert_eq!(t.read("c.rs"), "mine\n", "not overwritten");
+        assert!(t.path("d.rs").exists(), "not tried");
+        assert!(t.app.edit_undo_offered());
+
+        // A message this long leaves no room for the status line's button;
+        // the palette's Undo rename is the same thing.
+        t.app.run(Command::UndoRename);
+        t.settled();
+        assert_eq!(t.read("a.rs"), "a\n");
+        assert!(!t.path("b.rs").exists());
+        assert_eq!(t.read("other.rs"), OTHER);
+        assert_eq!(t.read("c.rs"), "mine\n", "never ours to take back");
     }
 
     #[test]

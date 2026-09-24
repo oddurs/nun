@@ -16,6 +16,7 @@ use std::thread;
 use crate::ops::{Change, FsHistory};
 use crate::project;
 use crate::replace::{Recorded, Replacer, Report};
+use crate::resource::{self, Carried, FileOp, Present};
 use crate::rewrite::{self, Rewrite, Written};
 use crate::search::{self, Match};
 use crate::tree::{Entry, list_dir};
@@ -82,12 +83,16 @@ pub enum Job {
         searched_at: std::time::SystemTime,
     },
     /// Read files as text, for a caller that will work out what to write
-    /// into them. `tag` comes back with the answer.
+    /// into them, and say what is at some other paths. `tag` comes back with
+    /// the answer.
     Read {
         /// Which request this is, so its answer can be recognised.
         tag: u64,
         /// The files, by full path.
         paths: Vec<PathBuf>,
+        /// Paths to say what is at, without reading them: where files are
+        /// to be created, moved from or to, or deleted.
+        probe: Vec<PathBuf>,
     },
     /// Write whole files, provided each still holds what it was read as —
     /// see [`rewrite::rewrite`]. Not recorded in the undo history: the caller
@@ -98,6 +103,16 @@ pub enum Job {
         tag: u64,
         /// The files, in the order to write them.
         files: Vec<Rewrite>,
+    },
+    /// Create, move and delete files, in order, stopping at the first that
+    /// fails — see [`FsHistory::carry_out`]. Not recorded in the undo
+    /// history: each comes back with its reverse, for the caller to send
+    /// when it wants it taken back.
+    FileOps {
+        /// Which request this is, so its answer can be recognised.
+        tag: u64,
+        /// The operations, in the order to carry them out.
+        ops: Vec<FileOp>,
     },
     /// Undo the last operation.
     Undo,
@@ -185,6 +200,8 @@ pub enum Done {
         tag: u64,
         /// Each file beside its text, or why it could not be read as text.
         files: Vec<(PathBuf, Result<String, String>)>,
+        /// Each path probed beside what is there.
+        probed: Vec<(PathBuf, Present)>,
     },
     /// A rewrite ran, as far as it got.
     Rewritten {
@@ -192,6 +209,13 @@ pub enum Done {
         tag: u64,
         /// Each file beside what became of it, in the order they were given.
         files: Vec<(PathBuf, Written)>,
+    },
+    /// File operations ran, as far as they got.
+    FileOps {
+        /// The tag the job was sent with.
+        tag: u64,
+        /// Each operation beside what became of it, in the order given.
+        ops: Vec<(FileOp, Carried)>,
     },
     /// What to call the project, from [`Job::ProjectName`].
     ProjectName {
@@ -317,8 +341,18 @@ impl Worker {
                     .collect();
                 return Done::Lines { generation, lines };
             }
-            Job::Read { tag, paths } => {
-                return Done::Read { tag, files: rewrite::read_texts(&paths) };
+            Job::Read { tag, paths, probe } => {
+                let probed = probe
+                    .into_iter()
+                    .map(|path| {
+                        let present = resource::probe(&path);
+                        (path, present)
+                    })
+                    .collect();
+                return Done::Read { tag, files: rewrite::read_texts(&paths), probed };
+            }
+            Job::FileOps { tag, ops } => {
+                return Done::FileOps { tag, ops: self.history.carry_out(&ops) };
             }
             Job::Rewrite { tag, files } => {
                 return Done::Rewritten { tag, files: rewrite::rewrite(&files) };
@@ -852,10 +886,19 @@ mod rewrite_tests {
         std::fs::write(&path, "cat").unwrap();
         let (jobs, receiver) = worker(&dir.path().join(".trash"));
 
-        jobs.send(Job::Read { tag: 7, paths: vec![path.clone()] });
+        let gone = dir.path().join("gone.rs");
+        jobs.send(Job::Read {
+            tag: 7,
+            paths: vec![path.clone()],
+            probe: vec![dir.path().to_path_buf(), gone.clone()],
+        });
         assert_eq!(
             next(&receiver),
-            Done::Read { tag: 7, files: vec![(path.clone(), Ok("cat".to_string()))] }
+            Done::Read {
+                tag: 7,
+                files: vec![(path.clone(), Ok("cat".to_string()))],
+                probed: vec![(dir.path().to_path_buf(), Present::Dir), (gone, Present::Missing)],
+            }
         );
 
         let files = vec![Rewrite { path: path.clone(), expect: "cat".into(), text: "dog".into() }];
@@ -865,5 +908,22 @@ mod rewrite_tests {
             Done::Rewritten { tag: 8, files: vec![(path.clone(), Written::Written)] }
         );
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "dog");
+
+        let to = dir.path().join("b.rs");
+        jobs.send(Job::FileOps {
+            tag: 9,
+            ops: vec![FileOp::Move { from: path.clone(), to: to.clone() }],
+        });
+        let undo = FileOp::Move { from: to.clone(), to: path.clone() };
+        assert_eq!(
+            next(&receiver),
+            Done::FileOps {
+                tag: 9,
+                ops: vec![(FileOp::Move { from: path, to: to.clone() }, Carried::Done(undo))],
+            }
+        );
+        assert!(to.exists());
+        jobs.send(Job::Undo);
+        assert_eq!(next(&receiver), Done::Nothing { redo: false }, "not on the tree's undo");
     }
 }

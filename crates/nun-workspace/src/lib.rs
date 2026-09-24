@@ -27,6 +27,9 @@
 //! - [`Rewrite`] writes whole files whose new text was worked out elsewhere —
 //!   a language server's rename — and only while each still holds what it was
 //!   read as. It is a [`Job`] too, and its undo is the same job the other way.
+//! - [`FileOp`] creates, moves and deletes files for the same kind of edit,
+//!   through [`FsHistory`] but off its undo stack: each comes back with its
+//!   own reverse, for the caller to take back beside the files it rewrote.
 //! - [`project_name`] says what to call the project: its GitHub repository,
 //!   read from git's own config files, or else its folder. It reads files, so
 //!   the editor asks for it as a [`Job`].
@@ -45,6 +48,7 @@ pub mod ops;
 mod order;
 pub mod project;
 pub mod replace;
+pub mod resource;
 pub mod rewrite;
 pub mod search;
 pub mod tree;
@@ -57,6 +61,7 @@ pub use ops::{Change, FsHistory, OpError, Operation, default_trash_dir};
 pub use order::compare_names;
 pub use project::{folder_name, project_name};
 pub use replace::{Outcome, Recorded, Replacer, Report, Skipped, preview};
+pub use resource::{Carried, FileOp, Present};
 pub use rewrite::{Rewrite, Written};
 pub use search::{MOST_FILES, Match, list_files, search};
 pub use tree::{Entry, FileTree, Kind, Row, list_dir};

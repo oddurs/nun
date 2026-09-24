@@ -2,10 +2,12 @@
 id: 78
 title: 'Rename: carry out file operations a server asks for'
 type: feature
-status: backlog
+status: done
 milestone: m5
+assignee: Oddur Sigurdsson
 created: 2026-09-23
 updated: 2026-09-23
+closed_at: 2026-09-23
 priority: p2
 effort: m
 area: lsp
@@ -30,7 +32,7 @@ renamed file follow it, as they do for a rename in the tree.
 
 ## Acceptance criteria
 
-- [ ] A rename that moves a file previews the move and carries it out
-- [ ] Create and delete are previewed and carried out, never overwriting
-- [ ] Undo rename takes back the file operations with the text edits
-- [ ] A failure partway says exactly which operations happened
+- [x] A rename that moves a file previews the move and carries it out
+- [x] Create and delete are previewed and carried out, never overwriting
+- [x] Undo rename takes back the file operations with the text edits
+- [x] A failure partway says exactly which operations happened
