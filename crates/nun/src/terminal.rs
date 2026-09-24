@@ -31,6 +31,21 @@ pub struct Startup {
     pub kitty_keyboard: Option<bool>,
     /// What it said about underlines, and its name if it gave one.
     pub underlines: UnderlineProbe,
+    /// The parameters of its device-attributes reply: what it says it can
+    /// do. Empty when it did not answer.
+    pub attributes: Vec<u16>,
+}
+
+impl Startup {
+    /// Whether it said it accepts a copy through OSC 52, with parameter 52
+    /// in its device attributes. Nothing else it can say means that: its
+    /// terminfo `Ms` says only that it knows the sequence, not that it lets
+    /// a program use it.
+    #[must_use]
+    pub fn takes_osc52(&self) -> bool {
+        // The first is the conformance level, not a feature.
+        self.attributes.get(1..).is_some_and(|features| features.contains(&52))
+    }
 }
 
 /// Ask the terminal for its palette and its keyboard protocol in one round
@@ -47,6 +62,7 @@ pub fn probe(timeout: Duration) -> Startup {
         palette: fallback.clone(),
         kitty_keyboard: None,
         underlines: UnderlineProbe::new(),
+        attributes: Vec::new(),
     };
 
     // A probe needs a terminal on stdin to answer it, and one on stdout to
@@ -111,6 +127,7 @@ fn probe_in_raw_mode(timeout: Duration, fallback: &Probe) -> Option<Startup> {
         palette: colours.finish(fallback),
         kitty_keyboard: keyboard.supported(),
         underlines,
+        attributes: keyboard.attributes().to_vec(),
     })
 }
 

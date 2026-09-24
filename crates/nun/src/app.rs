@@ -900,7 +900,7 @@ impl App {
             Event::Disk(news) => self.disk_news(news),
             Event::Config(news) => self.config_news(news),
             Event::Term(report) => self.terminal_report(report),
-            Event::Copied { chars, problem } => self.copied(chars, problem),
+            Event::Copied { chars, outcome } => self.copied(chars, outcome),
             Event::Focus(true) => Outcome::Continue,
             // The pointer may be anywhere by the time focus comes back.
             Event::Focus(false) => {

@@ -2,12 +2,14 @@
 id: 89
 title: 'Terminal panel: copy through OSC 52 where the system clipboard cannot'
 type: feature
-status: backlog
+status: done
 milestone: m5
+assignee: Oddur Sigurdsson
 depends_on:
 - 41
 created: 2026-09-23
-updated: 2026-09-23
+updated: 2026-09-24
+closed_at: 2026-09-24
 priority: p2
 effort: m
 area: ui
@@ -31,5 +33,5 @@ Under tmux it also names the `set-clipboard on` setting.
 
 ## Acceptance criteria
 
-- [ ] Over ssh, in a terminal that says it accepts OSC 52, a selection reaches the local clipboard
-- [ ] Where support cannot be detected, the setting decides, and the message says what was done
+- [x] Over ssh, in a terminal that says it accepts OSC 52, a selection reaches the local clipboard
+- [x] Where support cannot be detected, the setting decides, and the message says what was done

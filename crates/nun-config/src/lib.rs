@@ -162,6 +162,21 @@ pub enum Undercurl {
     Off,
 }
 
+/// Where a copy from the terminal panel goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Clipboard {
+    /// A clipboard program, unless nun is running over ssh or there is none;
+    /// then the terminal nun runs in, through OSC 52, if it said it accepts
+    /// that.
+    #[default]
+    Auto,
+    /// Only a clipboard program on the machine nun runs on.
+    System,
+    /// Only the terminal nun runs in, through OSC 52, whatever it said: for
+    /// a terminal that accepts it and cannot say so, such as Alacritty.
+    Osc52,
+}
+
 /// How to start the language server for one language: `[lsp.<language>]`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LspServer {
@@ -238,6 +253,8 @@ pub struct Config {
     pub keyboard_enhancement: bool,
     /// Draw diagnostics with a curly, coloured underline.
     pub undercurl: Undercurl,
+    /// Where a copy goes.
+    pub clipboard: Clipboard,
     /// Longest gap between presses that still makes a double or triple click,
     /// in milliseconds. `None` uses the platform's usual value.
     pub double_click_ms: Option<u64>,
@@ -280,6 +297,7 @@ impl Default for Config {
             alternate_screen: true,
             keyboard_enhancement: true,
             undercurl: Undercurl::Auto,
+            clipboard: Clipboard::Auto,
             double_click_ms: None,
             hover_delay_ms: 400,
             hyperlinks: true,
@@ -312,6 +330,13 @@ impl Config {
                     "on" => Undercurl::On,
                     "off" => Undercurl::Off,
                     _ => Undercurl::Auto,
+                };
+            }
+            ("ui.clipboard", Value::Text(word)) => {
+                self.clipboard = match word.as_str() {
+                    "system" => Clipboard::System,
+                    "osc52" => Clipboard::Osc52,
+                    _ => Clipboard::Auto,
                 };
             }
             ("ui.mouse", Value::Bool(on)) => self.mouse = *on,
@@ -368,6 +393,7 @@ impl Config {
             "editor.tab_width" => Some(self.tab_width.to_string()),
             "theme.polarity" => word(format!("{:?}", self.polarity)),
             "ui.undercurl" => word(format!("{:?}", self.undercurl)),
+            "ui.clipboard" => word(format!("{:?}", self.clipboard)),
             "ui.mouse" => Some(self.mouse.to_string()),
             "ui.alternate_screen" => Some(self.alternate_screen.to_string()),
             "ui.keyboard_enhancement" => Some(self.keyboard_enhancement.to_string()),
@@ -686,6 +712,7 @@ impl Loaded {
             "ui.hyperlinks",
             "ui.lightbulb",
             "ui.undercurl",
+            "ui.clipboard",
             "ui.hover_delay_ms",
         ] {
             let name = key.trim_start_matches("ui.");

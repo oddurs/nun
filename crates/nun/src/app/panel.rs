@@ -32,13 +32,14 @@ use nun_lsp::Encoding;
 use nun_lsp::types as lsp;
 use nun_term::{Answers, Effect, Emulator, Id, Pick, Pty, Report, Size, Spec, input, links};
 use nun_theme::Role;
-use nun_ui::{Event, Glyph, Tab, TabStrip, TerminalView};
+use nun_ui::{CopyOutcome, Event, Glyph, Tab, TabStrip, TerminalView};
 use ratatui::buffer::Buffer as Cells;
 use ratatui::layout::Rect;
 use ratatui::widgets::Widget as _;
 
 use super::navigation::{Open, Place};
 use super::{App, Focus, Outcome, Target};
+use crate::clipboard;
 use crate::commands::Command;
 
 /// The fewest rows the panel takes, header included.
@@ -146,6 +147,11 @@ pub(super) struct Panel {
     /// Whether a terminal had the keyboard as of the last event, to tell a
     /// program that asked when that changes.
     had_focus: Option<Id>,
+    /// Escapes waiting to be written to the terminal nun is drawn on.
+    escapes: Vec<String>,
+    /// Where copies are sent, to be made one at a time, in order.
+    #[cfg(not(test))]
+    copier: Option<std::sync::mpsc::Sender<clipboard::Job>>,
     /// What the tests would have put on the clipboard.
     #[cfg(test)]
     copied: Vec<String>,
@@ -1022,39 +1028,65 @@ impl App {
 
     // ── the clipboard ───────────────────────────────────────────────────────
 
-    /// Put `text` on the system clipboard, on a thread of its own, which
-    /// says how that went once it knows: nothing is said to have been copied
-    /// before it has been.
+    /// Copy `text`, on the clipboard's thread, which says how that went
+    /// once it knows: nothing is said to have been copied before it has
+    /// been, and a copy sent through the terminal is said to have been sent.
+    /// See [`crate::clipboard`] for where it goes.
     #[cfg(not(test))]
     fn copy(&mut self, text: String) {
-        let Some(post) = self.panel.post.clone() else { return };
-        std::thread::spawn(move || {
-            let chars = text.chars().count();
-            let tried = clipboard_commands();
-            let copied = tried.iter().any(|argv| pipe_to(argv, &text));
-            let problem = (!copied).then(|| {
-                let names: Vec<&str> = tried.iter().map(|argv| argv[0]).collect();
-                format!("no clipboard program took it (tried {})", names.join(", "))
-            });
-            post(Event::Copied { chars, problem });
-        });
+        if text.is_empty() {
+            return;
+        }
+        let place = self.clipboard_place(|name| std::env::var_os(name).is_some());
+        let setting = self.clipboard_setting();
+        if self.panel.copier.is_none() {
+            let Some(post) = self.panel.post.clone() else { return };
+            self.panel.copier = clipboard::worker(post);
+        }
+        let sent = self
+            .panel
+            .copier
+            .as_ref()
+            .is_some_and(|copier| copier.send(clipboard::Job { text, setting, place }).is_ok());
+        if !sent {
+            self.message = Some("Could not copy: the clipboard's thread would not start.".into());
+        }
     }
 
     #[cfg(test)]
     fn copy(&mut self, text: String) {
+        if text.is_empty() {
+            return;
+        }
         let chars = text.chars().count();
+        let place = self.clipboard_place(|_| false);
+        let outcome = clipboard::copy(&text, self.clipboard_setting(), place, &clipboard::Faked);
         self.panel.copied.push(text);
-        self.copied(chars, None);
+        self.copied(chars, outcome);
     }
 
-    /// The clipboard took `chars` characters, or did not, for `problem`.
-    pub(super) fn copied(&mut self, chars: usize, problem: Option<String>) -> Outcome {
-        self.message = Some(match (problem, chars) {
-            (Some(problem), _) => format!("Could not copy: {problem}."),
-            (None, 1) => "Copied 1 character.".to_string(),
-            (None, chars) => format!("Copied {chars} characters."),
+    /// How a copy of `chars` characters went.
+    pub(super) fn copied(&mut self, chars: usize, outcome: CopyOutcome) -> Outcome {
+        let count = match chars {
+            1 => "1 character".to_string(),
+            chars => format!("{chars} characters"),
+        };
+        self.message = Some(match outcome {
+            CopyOutcome::Taken => format!("Copied {count}."),
+            CopyOutcome::Sent(to) => format!("Sent {count} to {to}."),
+            CopyOutcome::Escape { bytes, to } => {
+                self.panel.escapes.push(bytes);
+                format!("Sent {count} to {to}.")
+            }
+            CopyOutcome::Failed(problem) => format!("Could not copy: {problem}."),
         });
         Outcome::Redraw
+    }
+
+    /// Escapes for the main loop to write to the terminal nun is drawn on,
+    /// between frames: copies through OSC 52.
+    pub fn take_escapes(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.panel.escapes)
     }
 }
 
@@ -1075,41 +1107,6 @@ fn resolve(path: &str, base: &Path) -> PathBuf {
         return home.join(rest);
     }
     base.join(path)
-}
-
-/// The programs tried, in order, to put text on the clipboard.
-#[cfg(not(test))]
-fn clipboard_commands() -> Vec<&'static [&'static str]> {
-    if cfg!(target_os = "macos") {
-        return vec![&["pbcopy"]];
-    }
-    let mut commands: Vec<&'static [&'static str]> = Vec::new();
-    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
-        commands.push(&["wl-copy"]);
-    }
-    commands.push(&["xclip", "-selection", "clipboard"]);
-    commands.push(&["xsel", "--clipboard", "--input"]);
-    commands
-}
-
-/// Run `argv` with `text` on its input; whether it took it.
-#[cfg(not(test))]
-fn pipe_to(argv: &[&str], text: &str) -> bool {
-    use std::io::Write as _;
-    use std::process::{Command, Stdio};
-
-    let Ok(mut child) = Command::new(argv[0])
-        .args(&argv[1..])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-    else {
-        return false;
-    };
-    let written =
-        child.stdin.take().is_some_and(|mut stdin| stdin.write_all(text.as_bytes()).is_ok());
-    child.wait().is_ok_and(|status| status.success()) && written
 }
 
 /// A keystroke as a terminal key, if it is one a program can be sent.
@@ -1329,6 +1326,24 @@ mod tests {
         rig.mouse(MouseEventKind::Up(MouseButton::Left), area.x + 9, area.y, KeyModifiers::NONE);
         assert_eq!(rig.app.panel.copied, ["beta"]);
         assert_eq!(rig.app.message.as_deref(), Some("Copied 4 characters."));
+    }
+
+    #[test]
+    fn a_copy_through_the_terminal_waits_for_the_main_loop_and_is_said_to_be_sent() {
+        let mut rig = rig("true");
+        let mut loaded = nun_config::Loaded::defaults();
+        loaded.config.clipboard = nun_config::Clipboard::Osc52;
+        let startup = crate::terminal::Startup {
+            palette: Probe::builtin_dark(),
+            kitty_keyboard: Some(true),
+            underlines: nun_ui::UnderlineProbe::new(),
+            attributes: vec![62, 22, 52],
+        };
+        rig.app.attach_settings(loaded, startup, crate::commands::KeySet::Basic, None);
+        rig.app.copy("beta".into());
+        assert_eq!(rig.app.take_escapes(), [crate::clipboard::osc52("beta")]);
+        assert!(rig.app.take_escapes().is_empty(), "written once");
+        assert_eq!(rig.app.message.as_deref(), Some("Sent 4 characters to the terminal to copy."));
     }
 
     #[test]

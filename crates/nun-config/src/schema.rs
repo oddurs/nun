@@ -181,6 +181,12 @@ pub const SETTINGS: &[Setting] = &[
         "Draw diagnostics with a curly, coloured underline.",
     ),
     setting(
+        "ui.clipboard",
+        Kind::OneOf(&["auto", "system", "osc52"]),
+        Scope::User,
+        "Where a copy goes: a clipboard program, the terminal through OSC 52, or auto to choose.",
+    ),
+    setting(
         "ui.double_click_ms",
         Kind::Int { min: 100, max: 2000 },
         Scope::User,
