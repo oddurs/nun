@@ -98,6 +98,14 @@ pub enum Glyph {
     FoldHidden,
     /// `lightbulb`
     Lightbulb,
+    /// `change.added`
+    ChangeAdded,
+    /// `change.modified`
+    ChangeModified,
+    /// `change.removed.above`
+    ChangeRemovedAbove,
+    /// `change.removed.below`
+    ChangeRemovedBelow,
     /// `rail.1`
     Rail1,
     /// `rail.2`
@@ -217,11 +225,15 @@ impl Glyph {
     pub const COUNT: usize = Self::ALL.len();
 
     /// Every role, in the order `nun glyphs` lists them.
-    pub const ALL: [Self; 52] = [
+    pub const ALL: [Self; 56] = [
         Self::FoldOpen,
         Self::FoldClosed,
         Self::FoldHidden,
         Self::Lightbulb,
+        Self::ChangeAdded,
+        Self::ChangeModified,
+        Self::ChangeRemovedAbove,
+        Self::ChangeRemovedBelow,
         Self::Rail1,
         Self::Rail2,
         Self::Rail3,
@@ -300,6 +312,26 @@ impl Glyph {
                 "lightbulb",
                 Editor,
                 "In the gutter, on the caret's line, when its language server has code actions there",
+            ),
+            Self::ChangeAdded => Spec::new(
+                "change.added",
+                Editor,
+                "A line git does not have yet: in the gutter, and on the rail",
+            ),
+            Self::ChangeModified => Spec::new(
+                "change.modified",
+                Editor,
+                "A line changed since git last had it: in the gutter, and on the rail",
+            ),
+            Self::ChangeRemovedAbove => Spec::new(
+                "change.removed.above",
+                Editor,
+                "Lines removed just above this one: in the gutter, and on the rail",
+            ),
+            Self::ChangeRemovedBelow => Spec::new(
+                "change.removed.below",
+                Editor,
+                "Lines removed after the last line, marked on it",
             ),
             Self::Rail1 => Spec::new(
                 "rail.1",
@@ -595,6 +627,17 @@ const fn default_glyph(glyph: Glyph) -> &'static str {
         // switched into, and is in every monospace font that has the fold
         // arrows beside it.
         Glyph::Lightbulb => "◊",
+        // A bar beside each changed line, in the colour of what happened to
+        // it. Added is solid and modified broken, so the two read apart
+        // without their colours. A removal has no line of its own to stand
+        // beside, so it is a rule on the edge of the line next to where the
+        // lines were. All four are one cell even where ambiguous widths are
+        // wide, like the lightbulb beside them: the gutter's columns are
+        // counted, and a wide bar would cover the fold arrow.
+        Glyph::ChangeAdded => "▐",
+        Glyph::ChangeModified => "╏",
+        Glyph::ChangeRemovedAbove => "¯",
+        Glyph::ChangeRemovedBelow => "_",
         // A bar that fills as the marks add up, so a row of five is visibly
         // not a row of one.
         Glyph::Rail1 => "▎",
@@ -678,7 +721,9 @@ const fn ascii_glyph(glyph: Glyph) -> &'static str {
         | Glyph::CardNext
         | Glyph::SearchReplace
         | Glyph::SidebarHidden => ">",
-        Glyph::FoldHidden | Glyph::Ellipsis => "~",
+        // A changed line is `~` and a new one `+`, as most gutters mark them;
+        // a removal points at where the lines were.
+        Glyph::FoldHidden | Glyph::Ellipsis | Glyph::ChangeModified => "~",
         Glyph::Lightbulb | Glyph::SearchRegex | Glyph::CardBullet => "*",
         Glyph::Rail1 | Glyph::ReplaceExcluded => ".",
         Glyph::Rail2 => ":",
@@ -691,7 +736,11 @@ const fn ascii_glyph(glyph: Glyph) -> &'static str {
         Glyph::TabClose | Glyph::TerminalClose | Glyph::DiagnosticError | Glyph::CardTaskDone => {
             "x"
         }
-        Glyph::TabModified | Glyph::TreeNewFile | Glyph::ReplaceAdded | Glyph::TerminalNew => "+",
+        Glyph::TabModified
+        | Glyph::TreeNewFile
+        | Glyph::ReplaceAdded
+        | Glyph::TerminalNew
+        | Glyph::ChangeAdded => "+",
         Glyph::SidebarShown | Glyph::CardPrevious => "<",
         Glyph::DiagnosticWarning => "!",
         Glyph::DiagnosticInfo => "i",
@@ -703,11 +752,11 @@ const fn ascii_glyph(glyph: Glyph) -> &'static str {
         Glyph::SearchCase => "A",
         Glyph::SearchWord => "w",
         Glyph::ReplaceRemoved | Glyph::RuleHorizontal => "-",
-        Glyph::CardAbove => "^",
+        Glyph::CardAbove | Glyph::ChangeRemovedAbove => "^",
         // Where `cat -A` and vim's list mode mark the end of a line, and the
         // shell's own prompt.
         Glyph::ReplaceLineBreak | Glyph::TerminalToggle => "$",
-        Glyph::CardTaskOpen => "_",
+        Glyph::CardTaskOpen | Glyph::ChangeRemovedBelow => "_",
     }
 }
 
@@ -1318,6 +1367,19 @@ mod tests {
                     check(glyph, text)
                 );
             }
+        }
+    }
+
+    #[test]
+    fn the_change_bars_keep_one_cell_where_ambiguous_characters_are_wide() {
+        for glyph in [
+            Glyph::ChangeAdded,
+            Glyph::ChangeModified,
+            Glyph::ChangeRemovedAbove,
+            Glyph::ChangeRemovedBelow,
+        ] {
+            let text = Preset::DEFAULT.get(glyph);
+            assert_eq!(text.width_cjk(), 1, "{}: {text:?}", glyph.key());
         }
     }
 

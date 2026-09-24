@@ -272,20 +272,17 @@ impl App {
 
     /// Whether `doc` gets a rail: while a server follows it, so the rail does
     /// not come and go as problems do, or while it has marks at all.
-    fn has_rail(&self, doc: &Document) -> bool {
+    pub(super) fn has_rail(&self, doc: &Document) -> bool {
         self.lsp.as_ref().is_some_and(|lsp| lsp.is_open(doc.id))
             || !self.diagnostics.marks(doc.id).is_empty()
     }
 
     /// Split a pane's text area into the part the text is drawn in and the
-    /// rail's column, if it has one.
+    /// rail's column, if it has one. The changes' column of the rail, when
+    /// git follows the file, is left out of both: see `gutter`.
     pub(super) fn split_rail(&self, doc: &Document, text: Rect) -> (Rect, Option<Rect>) {
-        let gutter = EditorView::new(&doc.buffer, &self.palette).gutter_width();
-        if !self.has_rail(doc) || text.width <= gutter.saturating_add(2) {
-            return (text, None);
-        }
-        let rail = Rect { x: text.right() - 1, width: 1, ..text };
-        (Rect { width: text.width - 1, ..text }, Some(rail))
+        let (text, _, rail) = self.rails_of(doc, text);
+        (text, rail)
     }
 
     /// The document in `pane`, the rectangle its text is drawn in, and its
@@ -486,6 +483,7 @@ impl App {
             }
             Target::Diagnostic(pane, index) => self.mark_card(pane, index),
             Target::RailMark(pane, row) => self.rail_card(pane, row),
+            target if target.in_changes() => self.change_dwelt(target),
             _ => Outcome::Redraw,
         }
     }
@@ -865,11 +863,11 @@ mod tests {
         let mut app = editor("let x = 1;\nlet y = 2;\n");
         publish(&mut app, &[diagnostic(1, 4, 5, DiagnosticSeverity::WARNING, "unused")]);
         let cells = draw(&app);
-        // The gutter is one digit and two columns of padding.
-        let y = &cells[(3 + 4, 1)];
+        // The gutter is one digit and three columns of padding.
+        let y = &cells[(4 + 4, 1)];
         assert!(y.modifier.contains(ratatui::style::Modifier::UNDERLINED));
         assert_eq!(y.underline_color, app.palette.underline(Role::Warn).underline_color.unwrap());
-        assert!(!cells[(3 + 5, 1)].modifier.contains(ratatui::style::Modifier::UNDERLINED));
+        assert!(!cells[(4 + 5, 1)].modifier.contains(ratatui::style::Modifier::UNDERLINED));
     }
 
     #[test]
@@ -972,7 +970,7 @@ mod tests {
         let mut app = editor("let x = 1;\nlet y = 2;\n");
         publish(&mut app, &[diagnostic(0, 4, 5, DiagnosticSeverity::ERROR, "expected `u8`")]);
         let now = std::time::Instant::now();
-        let (x, y) = (3 + 4, 0);
+        let (x, y) = (4 + 4, 0);
         assert!(app.wants_motion(), "an underline on screen reacts to hover");
         app.handle_at(mouse(MouseEventKind::Moved, x, y), now);
         let due = app.deadline().expect("waiting for the pointer to settle");
@@ -999,7 +997,7 @@ mod tests {
     fn a_click_on_an_underline_still_places_the_caret() {
         let mut app = editor("let x = 1;\n");
         publish(&mut app, &[diagnostic(0, 4, 5, DiagnosticSeverity::ERROR, "bad")]);
-        app.handle(press(3 + 4, 0));
+        app.handle(press(4 + 4, 0));
         assert_eq!(app.doc().buffer.selections().primary().head, 4);
     }
 

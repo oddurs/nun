@@ -14,20 +14,30 @@ impl App {
     /// Start git, once the editor has somewhere to post its answers.
     pub fn attach_vcs(&mut self, vcs: Vcs) {
         self.vcs = Some(vcs);
+        let ids: Vec<_> = self.docs.iter().map(|document| document.id).collect();
+        for id in ids {
+            self.vcs_open(id);
+        }
         self.refresh_status();
     }
 
-    /// Ask for the tree's status again.
+    /// Ask for the tree's status again, and every open document's hunks:
+    /// whatever made the one stale may have changed the index too.
     pub(super) fn refresh_status(&self) {
-        if let (Some(vcs), Some(sidebar)) = (&self.vcs, &self.sidebar) {
+        let Some(vcs) = &self.vcs else { return };
+        vcs.send(Request::Refresh);
+        if let Some(sidebar) = &self.sidebar {
             vcs.send(Request::Status(sidebar.tree.root().to_path_buf()));
         }
     }
 
     /// Something git worked out.
     pub(super) fn vcs_reply(&mut self, reply: Reply) -> Outcome {
+        let reply = match self.gutter_reply(reply) {
+            Ok(outcome) => return outcome,
+            Err(reply) => reply,
+        };
         let Reply::Status { root, status } = reply else {
-            // Hunks and staging are for the gutter, which nothing asks for yet.
             return Outcome::Continue;
         };
         let Some(sidebar) = self.sidebar.as_mut() else { return Outcome::Continue };
@@ -112,9 +122,17 @@ mod tests {
         (app, replies)
     }
 
+    /// Hand git's answers to the editor until the status comes, and say
+    /// what that one did. The gutter's answers may come before it.
     fn answer(app: &mut App, replies: &Receiver<Reply>) -> Outcome {
-        let reply = replies.recv_timeout(Duration::from_secs(20)).expect("git answers");
-        app.handle(Event::Vcs(reply))
+        loop {
+            let reply = replies.recv_timeout(Duration::from_secs(20)).expect("git answers");
+            let status = matches!(reply, Reply::Status { .. });
+            let outcome = app.handle(Event::Vcs(reply));
+            if status {
+                return outcome;
+            }
+        }
     }
 
     fn status_of(app: &App, path: &Path) -> Option<FileStatus> {

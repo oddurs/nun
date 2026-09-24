@@ -4,7 +4,7 @@ use std::time::Instant;
 
 use nun_core::{Buffer, Range, Selections};
 use nun_theme::{Probe, Role, derive};
-use nun_ui::{EditorView, Harness, Palette, Stop, changed_cells, changed_rows};
+use nun_ui::{Change, EditorView, Harness, Palette, Stop, changed_cells, changed_rows};
 
 fn palette() -> Palette {
     Palette::new(derive(&Probe::builtin_dark()))
@@ -22,9 +22,9 @@ fn a_buffer_renders_with_line_numbers() {
 
     assert_eq!(
         harness.to_text(),
-        "1  fn main() {\n\
-         2      println!(\"hi\");\n\
-         3  }\n\
+        "1   fn main() {\n\
+         2       println!(\"hi\");\n\
+         3   }\n\
          4\n"
     );
 }
@@ -35,8 +35,8 @@ fn the_gutter_widens_with_the_line_count() {
     let long = Buffer::from_text(&"x\n".repeat(150));
     let palette = palette();
 
-    assert_eq!(EditorView::new(&short, &palette).gutter_width(), 3, "one digit plus padding");
-    assert_eq!(EditorView::new(&long, &palette).gutter_width(), 5, "three digits plus padding");
+    assert_eq!(EditorView::new(&short, &palette).gutter_width(), 4, "one digit plus padding");
+    assert_eq!(EditorView::new(&long, &palette).gutter_width(), 6, "three digits plus padding");
 }
 
 #[test]
@@ -64,10 +64,10 @@ fn a_wide_character_occupies_two_cells() {
     draw(&mut harness, &buffer, &palette());
 
     let cells = harness.cells();
-    // Gutter is "1" plus two columns of padding.
-    assert_eq!(cells[(3, 0)].symbol(), "日");
-    assert_eq!(cells[(4, 0)].symbol(), " ", "the trailing half must not carry a stale glyph");
-    assert_eq!(cells[(5, 0)].symbol(), "本");
+    // Gutter is "1" plus three columns of padding.
+    assert_eq!(cells[(4, 0)].symbol(), "日");
+    assert_eq!(cells[(5, 0)].symbol(), " ", "the trailing half must not carry a stale glyph");
+    assert_eq!(cells[(6, 0)].symbol(), "本");
 }
 
 #[test]
@@ -78,7 +78,7 @@ fn a_tab_advances_to_the_next_stop() {
     draw(&mut harness, &buffer, &palette());
 
     let cells = harness.cells();
-    assert_eq!(cells[(3 + 4, 0)].symbol(), "x", "the tab occupied four columns");
+    assert_eq!(cells[(4 + 4, 0)].symbol(), "x", "the tab occupied four columns");
 }
 
 #[test]
@@ -90,7 +90,7 @@ fn the_caret_is_drawn_where_the_selection_head_is() {
     draw(&mut harness, &buffer, &palette);
 
     let accent = palette.ramp().get(Role::Accent);
-    let cell = &harness.cells()[(3 + 1, 0)];
+    let cell = &harness.cells()[(4 + 1, 0)];
     assert_eq!(cell.bg, ratatui::style::Color::Rgb(accent.r, accent.g, accent.b));
 }
 
@@ -104,7 +104,7 @@ fn the_caret_can_sit_one_past_the_end_of_a_line() {
 
     let accent = palette.ramp().get(Role::Accent);
     assert_eq!(
-        harness.cells()[(3 + 2, 0)].bg,
+        harness.cells()[(4 + 2, 0)].bg,
         ratatui::style::Color::Rgb(accent.r, accent.g, accent.b)
     );
 }
@@ -119,7 +119,7 @@ fn a_selection_is_washed_without_losing_its_foreground() {
 
     let selection = palette.ramp().get(Role::Selection);
     let text = palette.ramp().get(Role::Text);
-    let cell = &harness.cells()[(3 + 2, 0)];
+    let cell = &harness.cells()[(4 + 2, 0)];
     assert_eq!(cell.bg, ratatui::style::Color::Rgb(selection.r, selection.g, selection.b));
     assert_eq!(
         cell.fg,
@@ -134,7 +134,7 @@ fn scrolling_moves_the_window_not_the_numbering() {
     let palette = palette();
     let mut harness = Harness::new(20, 2);
     harness.draw(EditorView::new(&buffer, &palette).scrolled_to(2));
-    assert_eq!(harness.to_text(), "3  three\n4  four");
+    assert_eq!(harness.to_text(), "3   three\n4   four");
 }
 
 #[test]
@@ -159,11 +159,11 @@ fn resizing_redraws_without_a_teardown() {
 
     let mut small = Harness::new(10, 2);
     draw(&mut small, &buffer, &palette);
-    assert_eq!(small.to_text(), "1  one\n2  two");
+    assert_eq!(small.to_text(), "1   one\n2   two");
 
     let mut large = Harness::new(30, 4);
     draw(&mut large, &buffer, &palette);
-    assert_eq!(large.to_text(), "1  one\n2  two\n3  three\n4");
+    assert_eq!(large.to_text(), "1   one\n2   two\n3   three\n4");
 }
 
 // ── damage ──────────────────────────────────────────────────────────────────
@@ -405,14 +405,14 @@ fn every_caret_is_drawn_and_the_one_being_driven_stands_out() {
     let mut harness = Harness::new(20, 3);
     draw(&mut harness, &buffer, &palette);
 
-    assert_eq!(caret_columns(&harness, &palette, 0), vec![3 + 1], "the primary, in the accent");
+    assert_eq!(caret_columns(&harness, &palette, 0), vec![4 + 1], "the primary, in the accent");
     assert!(caret_columns(&harness, &palette, 1).is_empty(), "the other is not in the accent");
 
     let quiet = palette.on(Role::LineStrong, Role::Ground);
     let cells = harness.cells();
     let others: Vec<u16> =
         (0..harness.area().width).filter(|&x| cells[(x, 1)].bg == quiet.bg.unwrap()).collect();
-    assert_eq!(others, vec![3 + 1], "but it is drawn");
+    assert_eq!(others, vec![4 + 1], "but it is drawn");
 }
 
 #[test]
@@ -421,7 +421,7 @@ fn the_drop_marker_shows_where_dragged_text_would_land() {
     let palette = palette();
     let mut harness = Harness::new(20, 2);
     harness.draw(EditorView::new(&buffer, &palette).with_drop_marker(Some(4)));
-    assert_eq!(caret_columns(&harness, &palette, 0), vec![3, 3 + 4], "the caret, then the marker");
+    assert_eq!(caret_columns(&harness, &palette, 0), vec![4, 4 + 4], "the caret, then the marker");
 }
 
 // ── folding ─────────────────────────────────────────────────────────────────
@@ -436,10 +436,10 @@ fn a_folded_region_is_drawn_as_its_header_with_a_marker() {
     harness.draw(EditorView::new(&buffer, &palette).foldable(&foldable));
     assert_eq!(
         harness.to_text(),
-        "1▾ fn a() {\n\
-         2      one();\n\
-         3      two();\n\
-         4  }",
+        "1 ▾ fn a() {\n\
+         2       one();\n\
+         3       two();\n\
+         4   }",
         "an arrow on the line that opens a region, and nowhere else"
     );
 
@@ -448,12 +448,12 @@ fn a_folded_region_is_drawn_as_its_header_with_a_marker() {
     harness.draw(EditorView::new(&buffer, &palette).foldable(&foldable));
     assert_eq!(
         harness.to_text(),
-        "1▸ fn a() {  ⋯\n\
-         5  fn b() {}\n\
+        "1 ▸ fn a() {  ⋯\n\
+         5   fn b() {}\n\
          6\n",
         "the hidden lines take no rows, and the numbers say what is missing"
     );
-    let arrow = harness.cells()[(1, 0)].fg;
+    let arrow = harness.cells()[(2, 0)].fg;
     assert_eq!(arrow, palette.fg(Role::Accent).fg.unwrap(), "a folded arrow is in the accent");
 }
 
@@ -464,17 +464,47 @@ fn the_code_action_mark_sits_between_the_arrows_and_the_text() {
     let palette = palette();
     let mut harness = Harness::new(24, 3);
     let view = EditorView::new(&buffer, &palette).foldable(&foldable).with_lightbulb(Some(0));
-    assert_eq!(view.lightbulb_column(), 2);
+    assert_eq!(view.lightbulb_column(), 3);
     harness.draw(view);
     assert_eq!(
         harness.to_text(),
-        "1▾◊fn a() {\n\
-         2      one();\n\
-         3  }",
+        "1 ▾◊fn a() {\n\
+         2       one();\n\
+         3   }",
         "beside the arrow, on the one line, and the text not moved"
     );
-    let mark = harness.cells()[(2, 0)].fg;
+    let mark = harness.cells()[(3, 0)].fg;
     assert_eq!(mark, palette.fg(Role::Accent).fg.unwrap(), "a role, not a colour of its own");
+}
+
+#[test]
+fn a_changed_line_has_a_bar_after_its_number_in_the_colour_of_the_change() {
+    let buffer = Buffer::from_text("fn a() {\n    one();\n}\nlast\n");
+    let foldable = [nun_syntax::FoldRange { header: 0, last: 2 }];
+    let changes = [(0, Change::Modified), (1, Change::Added), (3, Change::RemovedAbove)];
+    let palette = palette();
+    let mut harness = Harness::new(24, 4);
+    let view = EditorView::new(&buffer, &palette).foldable(&foldable).with_changes(&changes);
+    assert_eq!(view.change_column(), 1);
+    harness.draw(view);
+    let bar = |change: Change| palette.glyph(change.glyph()).to_string();
+    assert_eq!(
+        harness.to_text(),
+        format!(
+            "1{}▾ fn a() {{\n2{}      one();\n3   }}\n4{}  last",
+            bar(Change::Modified),
+            bar(Change::Added),
+            bar(Change::RemovedAbove)
+        ),
+        "beside the numbers, clear of the arrows, and the text not moved"
+    );
+    let cells = harness.cells();
+    for (row, change) in [(0, Change::Modified), (1, Change::Added), (3, Change::RemovedAbove)] {
+        assert_eq!(cells[(1, row)].fg, palette.fg(change.role()).fg.unwrap(), "row {row}");
+    }
+    assert_ne!(bar(Change::Added), bar(Change::Modified), "told apart without their colours");
+    assert_ne!(Change::Added.role(), Change::Modified.role());
+    assert_ne!(Change::Modified.role(), Change::RemovedAbove.role());
 }
 
 #[test]
@@ -497,7 +527,7 @@ fn a_click_below_a_fold_maps_to_the_line_drawn_there() {
     let view = EditorView::new(&buffer, &palette);
     let area = ratatui::layout::Rect::new(0, 0, 20, 4);
     // Row 1 shows `last`, line 3.
-    assert_eq!(view.position_at(area, 3, 1), Some(buffer.line_start(3)));
+    assert_eq!(view.position_at(area, 4, 1), Some(buffer.line_start(3)));
     assert_eq!(view.line_at_row(1), Some(3));
 }
 

@@ -602,8 +602,9 @@ impl App {
                 .and_then(|id| self.doc_by(id))
             {
                 let focused = pane == self.panes.focus();
-                let (text, rail) = self.split_rail(doc, text);
+                let (text, changes, rail) = self.rails_of(doc, text);
                 let stops = self.snippet_stops(doc);
+                let marks = self.change_marks(doc, text.height);
                 nun_ui::EditorView::new(&doc.buffer, &self.palette)
                     .scrolled_to(doc.scroll)
                     .highlighted(App::spans_of(doc))
@@ -611,10 +612,14 @@ impl App {
                     .marked(self.diagnostics.marks(doc.id))
                     .with_stops(&stops)
                     .with_lightbulb(focused.then(|| self.lightbulb_line()).flatten())
+                    .with_changes(&marks)
                     .with_drop_marker(focused.then(|| self.drop_marker()).flatten())
                     .render(text, cells);
                 if let Some(rail) = rail {
                     self.render_rail(pane, doc, rail, cells);
+                }
+                if let Some(column) = changes {
+                    self.render_change_rail(pane, doc, text, column, cells);
                 }
             }
 

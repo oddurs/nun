@@ -72,6 +72,8 @@ pub(super) struct Card {
     links: Vec<String>,
     /// Whether to mark the links with OSC 8 as well.
     hyperlinks: bool,
+    /// The hunk it is about, which its buttons act on.
+    hunk: Option<super::gutter::Aim>,
 }
 
 impl Card {
@@ -96,7 +98,15 @@ impl Card {
             held: false,
             links: Vec::new(),
             hyperlinks: false,
+            hunk: None,
         }
+    }
+
+    /// A card about a hunk: its buttons act on that hunk, wherever the
+    /// caret is.
+    pub(super) fn about_hunk(mut self, hunk: super::gutter::Aim) -> Self {
+        self.hunk = Some(hunk);
+        self
     }
 
     /// A card the pointer opened by resting on the text of its anchor: it
@@ -267,8 +277,12 @@ impl App {
             }
             Target::CardButton(index) => {
                 let command = card.buttons.get(index - card.fixes).map(|(_, command)| *command);
+                let hunk = card.hunk.clone();
                 self.close_card();
-                Some(command.map_or(Outcome::Redraw, |command| self.run(command)))
+                self.changes.aim(hunk);
+                let outcome = command.map_or(Outcome::Redraw, |command| self.run(command));
+                self.changes.aim(None);
+                Some(outcome)
             }
             Target::CardLink(index) => {
                 let link = card.link(index).map(str::to_string);

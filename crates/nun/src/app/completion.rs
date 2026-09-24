@@ -1695,9 +1695,9 @@ mod tests {
         ask(&mut app, vec![snippet]);
         press(&mut app, KeyCode::Enter);
         assert_eq!(text(&app), "fn name(args) ");
-        // Into `args`, with the mouse: gutter of three, then column 9.
-        app.handle(mouse(MouseEventKind::Down(MouseButton::Left), 3 + 9, 0));
-        app.handle(mouse(MouseEventKind::Up(MouseButton::Left), 3 + 9, 0));
+        // Into `args`, with the mouse: gutter of four, then column 9.
+        app.handle(mouse(MouseEventKind::Down(MouseButton::Left), 4 + 9, 0));
+        app.handle(mouse(MouseEventKind::Up(MouseButton::Left), 4 + 9, 0));
         assert_eq!(app.completion.stops.as_ref().map(|stops| stops.current), Some(1));
         app.handle(Event::Key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT)));
         assert_eq!(selections(&app), [(3, 7)], "and Shift+Tab goes back from there");
@@ -1735,8 +1735,8 @@ mod tests {
     fn a_click_into_another_stop_moves_the_strong_mark_to_it() {
         let mut app = editor("f", 1);
         fn_snippet(&mut app);
-        app.handle(mouse(MouseEventKind::Down(MouseButton::Left), 3 + 9, 0));
-        app.handle(mouse(MouseEventKind::Up(MouseButton::Left), 3 + 9, 0));
+        app.handle(mouse(MouseEventKind::Down(MouseButton::Left), 4 + 9, 0));
+        app.handle(mouse(MouseEventKind::Up(MouseButton::Left), 4 + 9, 0));
         assert_eq!(marks(&app), [(3, 7, false), (8, 12, true), (14, 14, false)]);
     }
 
@@ -1797,8 +1797,8 @@ mod tests {
         let draw = |app: &App| {
             let mut cells = Cells::empty(area);
             app.render(area, &mut cells);
-            // `a` of `args`: a gutter of three, then column 5.
-            cells[(3 + 5, 0)].bg
+            // `a` of `args`: a gutter of four, then column 5.
+            cells[(4 + 5, 0)].bg
         };
         assert_eq!(Some(draw(&app)), palette.tabstop(false).bg, "the next stop, marked");
         press(&mut app, KeyCode::Esc);
