@@ -1488,6 +1488,29 @@ mod tests {
         }
     }
 
+    /// Typing into each interactive shell that is installed: each line
+    /// editor turns on its own modes at the prompt (zsh's bracketed paste
+    /// among them), and the keys must still arrive, be echoed and be run.
+    #[test]
+    fn typed_keys_reach_each_line_editor_and_run() {
+        for shell in [["/bin/zsh", "-f"], ["/bin/bash", "--norc"], ["/bin/sh", "-i"]] {
+            if !Path::new(shell[0]).exists() {
+                continue;
+            }
+            let mut rig = rig("");
+            rig.app.panel.program = Some(shell.iter().map(|arg| (*arg).to_string()).collect());
+            rig.press(KeyCode::F(6));
+            rig.until(&format!("{} to prompt", shell[0]), |app| {
+                screen_of(app).trim_end().ends_with(['%', '$', '#'])
+            });
+            rig.type_text("echo typed-$((6*7))");
+            rig.until_shown("echo typed-$((6*7))");
+            rig.press(KeyCode::Enter);
+            rig.until_shown("\ntyped-42");
+            rig.app.shutdown_terminals();
+        }
+    }
+
     #[test]
     fn paths_are_relative_to_where_the_program_is() {
         let base = Path::new("/work/project");
