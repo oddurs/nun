@@ -1,12 +1,12 @@
 ---
-id: 81
+id: fffa7361-2f04-4012-a7b2-47a3b6245618
 title: Mark lines that have code actions with a lightbulb
 type: feature
 status: done
 milestone: m4
 assignee: Oddur Sigurdsson
 depends_on:
-- 77
+- b863b33a-7608-4cc2-9078-ee26233588f8
 created: 2026-09-23
 updated: 2026-09-23
 closed_at: 2026-09-23

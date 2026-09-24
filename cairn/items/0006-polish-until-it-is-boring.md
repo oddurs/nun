@@ -1,5 +1,5 @@
 ---
-id: 6
+id: e7717f5c-cf13-46ae-ab59-e9706e7f68d4
 key: m6
 title: Polish until it is boring
 type: milestone

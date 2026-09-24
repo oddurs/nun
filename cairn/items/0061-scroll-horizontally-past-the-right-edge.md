@@ -1,11 +1,11 @@
 ---
-id: 61
+id: 072a4ae2-675e-4aaa-bd56-72288b8cbfaf
 title: Scroll horizontally past the right edge
 type: feature
 status: backlog
 milestone: perf
 depends_on:
-- 60
+- ab80cc7e-76f2-44f1-9afb-4cc44b521b17
 created: 2026-09-22
 updated: 2026-09-22
 priority: p1

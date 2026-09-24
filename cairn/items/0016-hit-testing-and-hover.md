@@ -1,12 +1,12 @@
 ---
-id: 16
+id: 56e014e6-551e-4756-a4a5-7ab82bbf66d1
 title: Hit-testing and hover
 type: feature
 status: done
 milestone: m2
 assignee: Oddur Sigurdsson
 depends_on:
-- 15
+- 62de7eb7-38c7-4324-b97c-ce0531e6afd1
 created: 2026-09-10
 updated: 2026-09-19
 priority: p0

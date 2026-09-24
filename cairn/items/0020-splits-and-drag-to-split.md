@@ -1,12 +1,12 @@
 ---
-id: 20
+id: 9563bb91-3e2c-4ef1-b581-1b972e2020ef
 title: Splits and drag-to-split
 type: feature
 status: done
 milestone: m2
 assignee: Oddur Sigurdsson
 depends_on:
-- 19
+- e35a3711-3695-4a84-98d2-f434ded542c1
 created: 2026-09-10
 updated: 2026-09-19
 priority: p1

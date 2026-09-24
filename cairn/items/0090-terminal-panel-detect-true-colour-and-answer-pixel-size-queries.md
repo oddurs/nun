@@ -1,12 +1,12 @@
 ---
-id: 90
+id: db068b65-6fa3-4697-9d30-99a86bdbe610
 title: 'Terminal panel: detect true colour, and answer pixel-size queries'
 type: feature
 status: done
 milestone: m5
 assignee: Oddur Sigurdsson
 depends_on:
-- 41
+- 4476d7b2-09a0-44fc-9870-bcb66dfba966
 created: 2026-09-23
 updated: 2026-09-24
 closed_at: 2026-09-24

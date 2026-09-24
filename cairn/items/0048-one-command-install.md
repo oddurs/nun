@@ -1,5 +1,5 @@
 ---
-id: 48
+id: 22d537c7-a260-49be-9f14-c80cee91e73d
 title: One-command install
 type: chore
 status: backlog

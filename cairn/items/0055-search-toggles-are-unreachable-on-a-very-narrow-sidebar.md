@@ -1,5 +1,5 @@
 ---
-id: 55
+id: 69b840ab-65f0-459d-86d6-f5b4033fc101
 title: Search toggles are unreachable on a very narrow sidebar
 type: bug
 status: done

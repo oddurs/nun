@@ -1,5 +1,5 @@
 ---
-id: 1
+id: 470f0c64-4c14-4795-b6fc-80e5b5310f06
 key: m1
 title: Buffer and screen
 type: milestone

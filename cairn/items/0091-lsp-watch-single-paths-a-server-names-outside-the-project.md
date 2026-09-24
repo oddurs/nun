@@ -1,5 +1,5 @@
 ---
-id: 91
+id: 818434a4-30e4-4a55-94c5-f94865a619e1
 title: 'LSP: watch single paths a server names outside the project'
 type: feature
 status: backlog

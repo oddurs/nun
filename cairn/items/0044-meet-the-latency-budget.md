@@ -1,12 +1,12 @@
 ---
-id: 44
+id: f1909df7-0b28-460b-856f-871f294291c6
 title: Meet the latency budget
 type: chore
 status: backlog
 milestone: perf
 depends_on:
-- 32
-- 57
+- 5feb5467-ec21-48f0-86f6-8cefc73566df
+- 98e7cf7d-4a57-4a62-8bd9-5346b7a2bf5f
 created: 2026-09-10
 updated: 2026-09-22
 priority: p0

@@ -34,7 +34,9 @@ worktree. `scripts/agent done` cleans up after a PR merged some other way.
 ### Branch names
 
 `<type>/<slug>`, where type is one of `feat` `fix` `chore` `docs` `perf`
-`refactor` `test`. When the work has a cairn item, the slug starts with its id:
+`refactor` `test`. When the work has a cairn item, the slug starts with its id — the number of
+an item from before cairn's format 4, or the first eight hex digits of the `id`
+of one created since:
 
 ```
 feat/0007-terminal-colour-probe
@@ -57,7 +59,9 @@ Refs: 0037
 ```
 
 The body explains **why**. The diff already says what. Reference the cairn item
-in a `Refs:` trailer.
+in a `Refs:` trailer. An item migrated from before format 4 keeps its number as an alias
+(`0042`); an item created since has only a UUID, so use the first eight hex
+digits of its `id` (`3f9c2a1b`), which every cairn command accepts.
 
 ### Green before it is a PR
 
