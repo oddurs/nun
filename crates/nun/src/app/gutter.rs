@@ -169,10 +169,13 @@ impl App {
         followed.revision = document.buffer.revision();
         followed.seen = followed.revision;
         followed.unsent = None;
+        // Absolute, because git is found from the file's folder upwards, and
+        // a file named on the command line is held as it was typed.
+        let path = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
         vcs.send(Request::Open {
             id,
             version: followed.sent,
-            path: path.to_path_buf(),
+            path,
             text: document.buffer.rope().clone(),
         });
     }
@@ -895,6 +898,24 @@ mod tests {
             assert_eq!(cell.symbol(), app.palette.glyph(change.glyph()));
             assert_eq!(cell.fg, app.palette.fg(change.role()).fg.unwrap());
         }
+    }
+
+    #[test]
+    fn a_file_named_relative_to_where_nun_started_is_followed_too() {
+        let Some((mut app, replies, dir)) = editor() else { return };
+        // `nun a.txt`, from wherever the tests run, spelled with `..`s.
+        let here = std::env::current_dir().unwrap();
+        let mut relative = std::path::PathBuf::new();
+        for _ in here.components().skip(1) {
+            relative.push("..");
+        }
+        relative.push(dir.path().join("a.txt").strip_prefix("/").unwrap());
+        assert!(relative.is_relative());
+        app.doc_mut().buffer.set_path(&relative);
+        app.vcs_open(app.doc().id);
+        type_at(&mut app, 4, "2");
+        settle(&mut app, &replies);
+        assert_eq!(marks(&app), [(1, Change::Modified)]);
     }
 
     #[test]
