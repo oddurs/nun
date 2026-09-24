@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 const MOST_FILES: usize = 500;
 
 /// Folds remembered from earlier sessions, and the file they live in.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Session {
     /// Where to write them. `None` keeps everything in memory only, which is
     /// what the tests and a system with no home directory get.

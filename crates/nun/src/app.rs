@@ -39,6 +39,7 @@ mod panes;
 mod pointer;
 mod prompt;
 mod rename;
+mod restore;
 mod search;
 mod settings;
 mod sidebar;
@@ -392,6 +393,8 @@ pub struct App {
     search_deadline: Option<Instant>,
     /// What is remembered from one session to the next.
     session: crate::session::Session,
+    /// Keeping this folder's session written down.
+    keeping: restore::Keeping,
     /// The language servers, once there is somewhere to post their news.
     lsp: Option<nun_lsp::Lsp>,
     /// Watches the folders the language servers ask to have watched.
@@ -487,6 +490,7 @@ impl App {
             sidebar_view: SidebarView::Files,
             search_deadline: None,
             session: crate::session::Session::default(),
+            keeping: restore::Keeping::default(),
             lsp: None,
             disk: lsp::Disk::default(),
             formatting: format::Formatting::default(),
@@ -761,6 +765,7 @@ impl App {
             self.hover_deadline(),
             self.bulb_deadline(),
             self.panel_deadline(),
+            self.session_deadline(),
         ]
         .into_iter()
         .flatten()
@@ -804,9 +809,11 @@ impl App {
             .and(self.hover_tick(now))
             .and(self.bulb_follow(now))
             .and(self.bulb_tick(now))
-            .and(self.panel_tick(now));
+            .and(self.panel_tick(now))
+            .and(self.session_tick(now));
         if outcome == Outcome::Redraw {
             self.relayout();
+            self.session_changed(now);
         }
         outcome
     }
@@ -853,6 +860,7 @@ impl App {
             // The gutter widens as lines are added, and later milestones lay out
             // far more than this; anything that redraws may have moved things.
             self.relayout();
+            self.session_changed(now);
         }
         outcome
     }

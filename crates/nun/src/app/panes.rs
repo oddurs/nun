@@ -51,6 +51,20 @@ impl Panes {
         }
     }
 
+    /// Panes put back as they were: `list` holds every pane `layout` names,
+    /// and `focus` is one of them.
+    pub(super) fn restored(layout: Layout, list: Vec<Pane>, focus: usize) -> Self {
+        let next_id = list.iter().map(|pane| pane.id + 1).max().unwrap_or(0);
+        let focus = if list.iter().any(|pane| pane.id == focus) {
+            focus
+        } else {
+            list.first().map_or(0, |pane| pane.id)
+        };
+        let mut panes = Self { layout, list, focus, next_id };
+        panes.sort_by_layout();
+        panes
+    }
+
     /// How the screen is divided.
     pub(super) const fn layout(&self) -> &Layout {
         &self.layout

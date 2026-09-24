@@ -169,30 +169,28 @@ impl App {
 
     /// Note what is folded in one document, before it closes.
     pub(super) fn remember_folds_of(&mut self, id: DocId) {
-        let Some(document) = self.doc_by(id) else { return };
-        let Some(path) = document.buffer.path().map(std::path::Path::to_path_buf) else { return };
+        if let Some((path, headers)) = self.folds_to_remember(id) {
+            self.session.remember(&path, headers);
+        }
+    }
+
+    /// What is folded in one document, by the path it is remembered under —
+    /// or nothing, when what it has now should not replace what it had.
+    pub(super) fn folds_to_remember(&self, id: DocId) -> Option<(std::path::PathBuf, Vec<usize>)> {
+        let document = self.doc_by(id)?;
+        let path = document.buffer.path()?.to_path_buf();
         // A file whose parse has not come back yet has had no chance to have
         // its folds put back, and remembering it now would forget them.
         if document.syntax.open && !document.syntax.folding.restored {
-            return;
+            return None;
         }
         // Line numbers in text that is not on disk mean nothing to the file
         // the next session opens; the last saved answer stands.
         if document.buffer.is_modified() {
-            return;
+            return None;
         }
         let headers = document.buffer.folded().into_iter().map(|(header, _)| header).collect();
-        self.session.remember(&path, headers);
-    }
-
-    /// Write down what has been remembered, for the next session.
-    ///
-    /// # Errors
-    ///
-    /// Whatever writing the file ran into.
-    pub fn save_session(&mut self) -> std::io::Result<()> {
-        self.remember_folds();
-        self.session.save()
+        Some((path, headers))
     }
 
     /// Remember folds in `session`, and put back the ones it already has.
