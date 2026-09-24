@@ -5,7 +5,7 @@ type: feature
 status: backlog
 milestone: m5
 created: 2026-09-10
-updated: 2026-09-10
+updated: 2026-09-23
 priority: p0
 effort: m
 area: vcs
@@ -28,3 +28,7 @@ hunks.
 - [ ] Revert restores exactly the hunk, and is undoable
 - [ ] Stage writes to the index without touching the working tree
 - [ ] The rail shows hunk positions alongside diagnostics without either winning
+
+## 2026-09-23
+
+nun-vcs (0038) runs in the editor (`App::vcs`, replies arrive as `Event::Vcs`) but only for the tree's status. For the gutter, send `Request::Open` / `Update` (debounced, once typing pauses) / `Moved` / `Close` per document and draw from `Reply::Hunks`. `Diff::marks(range)` gives a gutter window's marks; the last line can carry two marks (a removal above and one below), so draw both. `Request::Stage` and `Diff::revert` are the hunk actions.

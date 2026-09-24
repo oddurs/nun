@@ -6,6 +6,7 @@
 //! regions this draws, from one source.
 
 use nun_theme::Role;
+use nun_vcs::{FileStatus, Status};
 use nun_workspace::{Kind, Row};
 use ratatui::buffer::Buffer as Cells;
 use ratatui::layout::Rect;
@@ -77,6 +78,7 @@ pub struct TreeView<'a> {
     drop_target: Option<usize>,
     showing_ignored: bool,
     focused: bool,
+    status: Option<&'a Status>,
 }
 
 impl<'a> TreeView<'a> {
@@ -94,6 +96,7 @@ impl<'a> TreeView<'a> {
             drop_target: None,
             showing_ignored: false,
             focused: false,
+            status: None,
         }
     }
 
@@ -143,6 +146,13 @@ impl<'a> TreeView<'a> {
     #[must_use]
     pub const fn focused(mut self, focused: bool) -> Self {
         self.focused = focused;
+        self
+    }
+
+    /// What git says has changed, to colour each changed row's name by.
+    #[must_use]
+    pub const fn status(mut self, status: Option<&'a Status>) -> Self {
+        self.status = status;
         self
     }
 
@@ -257,16 +267,20 @@ impl TreeView<'_> {
     fn draw_row(&self, cells: &mut Cells, line: Rect, index: usize) {
         let row = &self.rows[index];
 
-        let mut style = self.palette.on(Role::Raised, Role::Text);
-        if row.ignored || row.error.is_some() {
-            style = self.palette.on(Role::Raised, Role::Faint);
-        }
+        let ink = if row.ignored || row.error.is_some() {
+            Role::Faint
+        } else {
+            self.status.and_then(|status| status.of(&row.path)).map_or(Role::Text, status_role)
+        };
+        let mut style = self.palette.on(Role::Raised, ink);
         if self.hovered == Some(index) {
             style = style.patch(self.palette.cursor_line());
         }
         if self.selected == Some(index) {
             let wash = if self.focused { Role::Selection } else { Role::CursorLine };
-            style = style.patch(self.palette.on(wash, Role::Text));
+            // A changed row keeps its colour while selected.
+            let ink = if ink == Role::Faint { Role::Text } else { ink };
+            style = style.patch(self.palette.on(wash, ink));
         }
         if self.drop_target == Some(index) {
             style = self.palette.on(Role::Accent, Role::OnAccent);
@@ -309,10 +323,71 @@ impl TreeView<'_> {
     }
 }
 
+/// The ink a row's name takes for how git sees it.
+const fn status_role(status: FileStatus) -> Role {
+    match status {
+        FileStatus::Added => Role::Added,
+        FileStatus::Modified => Role::Changed,
+        FileStatus::Deleted => Role::Removed,
+        FileStatus::Conflicted => Role::Error,
+    }
+}
+
 fn fill(cells: &mut Cells, area: Rect, style: Style) {
     for y in area.top()..area.bottom() {
         for x in area.left()..area.right() {
             cells[(x, y)].set_char(' ').set_style(style);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
+
+    use nun_theme::{Probe, derive};
+
+    use super::*;
+
+    fn row(name: &str) -> Row {
+        Row {
+            depth: 0,
+            name: name.into(),
+            path: Path::new("/w").join(name),
+            kind: Kind::File,
+            expanded: false,
+            ignored: false,
+            error: None,
+        }
+    }
+
+    #[test]
+    fn changed_rows_are_inked_by_their_git_status() {
+        let palette = Palette::new(derive(&Probe::builtin_dark()));
+        let rows = [row("new.rs"), row("edit.rs"), row("same.rs"), row("both.rs")];
+        let status = Status::from_files(
+            Path::new("/w"),
+            [
+                (PathBuf::from("new.rs"), FileStatus::Added),
+                (PathBuf::from("edit.rs"), FileStatus::Modified),
+                (PathBuf::from("both.rs"), FileStatus::Conflicted),
+            ],
+        );
+        let area = Rect::new(0, 0, 20, 5);
+        let mut cells = Cells::empty(area);
+        TreeView::new("w", &rows, &palette)
+            .status(Some(&status))
+            .selected(Some(0))
+            .focused(true)
+            .render(area, &mut cells);
+
+        // The name starts three columns in: a margin and a blank disclosure.
+        let ink = |y: u16| cells[(3, y)].fg;
+        // Selected, and still green.
+        assert_eq!(ink(1), palette.fg(Role::Added).fg.unwrap());
+        assert_eq!(cells[(3, 1)].bg, palette.on(Role::Selection, Role::Text).bg.unwrap());
+        assert_eq!(ink(2), palette.fg(Role::Changed).fg.unwrap());
+        assert_eq!(ink(3), palette.fg(Role::Text).fg.unwrap());
+        assert_eq!(ink(4), palette.fg(Role::Error).fg.unwrap());
     }
 }

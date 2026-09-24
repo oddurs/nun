@@ -8,9 +8,11 @@
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
 use nun_ui::{MenuItem, TreeButton, TreeView};
+use nun_vcs::Status;
 use nun_workspace::{Change, Done, FileTree, Job, Jobs, Kind, Watcher};
 use ratatui::layout::Rect;
 
@@ -38,6 +40,12 @@ pub(super) struct Sidebar {
     reveal_after: Option<PathBuf>,
     watcher: Option<Watcher>,
     watched: BTreeSet<PathBuf>,
+    /// What git says has changed in the tree, once it has said. `None` in no
+    /// repository, which colours nothing.
+    pub(super) status: Option<Arc<Status>>,
+    /// Whether the last status failed, so a failure is reported once rather
+    /// than on every change the watcher sees.
+    pub(super) status_failed: bool,
     pub(super) visible: bool,
     /// Columns, including the divider on its right edge.
     pub(super) width: u16,
@@ -84,6 +92,8 @@ impl Sidebar {
             reveal_after: None,
             watcher: None,
             watched: BTreeSet::new(),
+            status: None,
+            status_failed: false,
             visible,
             width: 30,
             scroll: 0,
@@ -713,6 +723,7 @@ impl App {
             return Outcome::Continue;
         }
         sidebar.request_listings();
+        self.refresh_status();
         Outcome::Redraw
     }
 
@@ -752,6 +763,7 @@ impl App {
         }
         self.sidebar = Some(sidebar);
         self.relayout();
+        self.refresh_status();
     }
 
     /// Keep the tree live with `watcher`.

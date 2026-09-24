@@ -270,6 +270,13 @@ fn edit(path: &Path, lsp_log: Option<&Path>, no_session: bool) -> io::Result<()>
         let _ = sender.send(nun_ui::Event::Syntax(reply));
     })));
 
+    // Git has threads of its own too: a status walk of a large repository
+    // takes as long as it takes, and the tree is drawn without waiting for it.
+    let sender = events.sender();
+    app.attach_vcs(nun_vcs::Vcs::new(Box::new(move |reply| {
+        let _ = sender.send(nun_ui::Event::Vcs(reply));
+    })));
+
     // Searching the project has a thread of its own rather than sharing the
     // tree's: a search of a large repository would otherwise sit in front of
     // the directory listings the tree is waiting on.
