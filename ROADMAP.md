@@ -119,16 +119,23 @@
 
 ## m6 — Polish until it is boring
 
-`###·······` 27% · 3 of 11 done · due 2026-12-17
+`##········` 17% · 3 of 18 done · due 2026-12-17
 
 ### backlog
 
+- [ ] [`07905151`](https://github.com/oddurs/nun/blob/main/cairn/items/07905151-1fc4-4fdc-9d18-77ace93aa6c3-text-width-edge-cases-left-from-the-glyph-review.md) Text width edge cases left from the glyph review <sup>bug · p3</sup>
+- [ ] [`0f009610`](https://github.com/oddurs/nun/blob/main/cairn/items/0f009610-3700-4cd5-8b3e-a2777b510637-status-line-notices-bury-each-other-and-get-cut-short.md) Status line notices bury each other and get cut short <sup>bug · p1</sup>
 - [ ] [`21d111ce`](https://github.com/oddurs/nun/blob/main/cairn/items/0049-freeze-and-ship-0-1.md) Freeze and ship 0.1 <sup>chore · p0</sup>
 - [ ] [`22d537c7`](https://github.com/oddurs/nun/blob/main/cairn/items/0048-one-command-install.md) One-command install <sup>chore · p1</sup>
+- [ ] [`2be43025`](https://github.com/oddurs/nun/blob/main/cairn/items/2be43025-2478-4315-b647-3356a0394364-gutter-follow-outside-index-changes-and-draw-both-marks-on-the-last-line.md) Gutter: follow outside index changes, and draw both marks on the last line <sup>bug · p2</sup>
+- [ ] [`603fedda`](https://github.com/oddurs/nun/blob/main/cairn/items/603fedda-fa4a-4a62-a4c3-4b6d82082c08-copy-cut-and-paste-in-the-editor.md) Copy, cut and paste in the editor <sup>feature · p0</sup>
+- [ ] [`6079f5ce`](https://github.com/oddurs/nun/blob/main/cairn/items/6079f5ce-0c3c-4694-b2ed-3c16766ec192-session-restore-keep-untitled-buffers-unsaved-edits-and-the-sidebar.md) Session restore: keep untitled buffers, unsaved edits and the sidebar <sup>feature · p2</sup>
 - [ ] [`6378e359`](https://github.com/oddurs/nun/blob/main/cairn/items/0086-custom-glyphs-drawn-as-cell-images.md) Custom glyphs drawn as cell images <sup>feature · p3</sup>
 - [ ] [`77bfba6f`](https://github.com/oddurs/nun/blob/main/cairn/items/0046-terminal-support-matrix.md) Terminal support matrix <sup>docs · p0</sup>
 - [ ] [`818434a4`](https://github.com/oddurs/nun/blob/main/cairn/items/0091-lsp-watch-single-paths-a-server-names-outside-the-project.md) LSP: watch single paths a server names outside the project <sup>feature · p3</sup>
+- [ ] [`9d2f5de0`](https://github.com/oddurs/nun/blob/main/cairn/items/9d2f5de0-7787-49c0-92a6-b4eabaf4d99c-config-small-gaps-in-watching-and-matching.md) Config: small gaps in watching and matching <sup>chore · p3</sup>
 - [ ] [`b5747a9d`](https://github.com/oddurs/nun/blob/main/cairn/items/0085-nerd-font-glyph-preset.md) Nerd Font glyph preset <sup>feature · p2</sup>
+- [ ] [`d0f6bd3c`](https://github.com/oddurs/nun/blob/main/cairn/items/d0f6bd3c-2ca0-4ba1-96b7-68dde549dadc-a-carriage-return-before-crlf-is-folded-into-the-line-break-on-load.md) A carriage return before CRLF is folded into the line break on load <sup>bug · p2</sup>
 - [ ] [`f7a245a5`](https://github.com/oddurs/nun/blob/main/cairn/items/0082-a-key-pressed-right-after-escape-types-its-escape-sequence-as-text.md) A key pressed right after Escape types its escape sequence as text <sup>bug · p1</sup>
 - [ ] [`f8a1110c`](https://github.com/oddurs/nun/blob/main/cairn/items/0047-first-run.md) First run <sup>feature · p1</sup>
 
