@@ -1136,7 +1136,9 @@ dependencies = [
  "ratatui",
  "ropey",
  "rustix",
+ "serde",
  "tempfile",
+ "toml",
  "unicode-segmentation",
  "unicode-width",
 ]

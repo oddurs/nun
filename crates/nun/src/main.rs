@@ -5,6 +5,7 @@ mod clipboard;
 mod commands;
 mod hints;
 mod reload;
+mod restore;
 mod session;
 mod terminal;
 
@@ -29,6 +30,7 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn main() {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
+    let no_session = take_flag(&mut args, "--no-session");
     let lsp_log = match take_value(&mut args, "--lsp-log") {
         Ok(path) => path.map(PathBuf::from),
         Err(problem) => {
@@ -59,12 +61,20 @@ fn main() {
             std::process::exit(2);
         }
         Some(path) => {
-            if let Err(error) = edit(Path::new(path), lsp_log.as_deref()) {
+            if let Err(error) = edit(Path::new(path), lsp_log.as_deref(), no_session) {
                 eprintln!("nun: {error}");
                 std::process::exit(1);
             }
         }
     }
+}
+
+/// Take `--name` out of the arguments, wherever it is, and say whether it was
+/// there.
+fn take_flag(args: &mut Vec<String>, name: &str) -> bool {
+    let before = args.len();
+    args.retain(|arg| arg != name);
+    args.len() != before
 }
 
 /// Take `--name <value>` or `--name=<value>` out of the arguments, wherever it
@@ -180,7 +190,7 @@ fn config(args: &[String]) -> Result<String, String> {
     })
 }
 
-fn edit(path: &Path, lsp_log: Option<&Path>) -> io::Result<()> {
+fn edit(path: &Path, lsp_log: Option<&Path>, no_session: bool) -> io::Result<()> {
     let folder = path.is_dir();
     let root = workspace_root(path, folder);
     let settings = nun_config::load_in(&root);
@@ -210,8 +220,11 @@ fn edit(path: &Path, lsp_log: Option<&Path>) -> io::Result<()> {
 
     let mut app = App::new(buffer, palette, keymap);
     app.set_format_on_save(format_on_save(&settings));
-    if let Some(path) = session::Session::default_path() {
-        app.attach_session(session::Session::load(path));
+    if !no_session {
+        if let Some(path) = session::Session::default_path() {
+            app.attach_session(session::Session::load(path));
+        }
+        keep_session(&mut app, &root);
     }
     pointer_settings(&mut app, &settings.config);
     // Only the first is shown: the rest are visible through `nun config`, and a
@@ -370,9 +383,9 @@ fn wind_down(app: &mut App, ctrl_click: Option<hints::Unseen>) {
     // the loop ended — a signal as much as a quit.
     app.save_before_quitting();
     // After the terminal is back, so a failure can be said where it is seen.
-    // Losing it costs the folds, and nothing else.
+    // Losing it costs the layout and the folds, and nothing else.
     if let Err(error) = app.save_session() {
-        eprintln!("nun: could not remember this session's folds: {error}");
+        eprintln!("nun: could not remember this session: {error}");
     }
     if let Some(hint) = ctrl_click.filter(|_| app.hint_seen()) {
         let _ = hint.remember();
@@ -407,6 +420,34 @@ fn attach_watchers(app: &mut App, events: &Events) {
         Err(error) => app.warn(format!(
             "The language servers will not hear of files changed outside nun: {error}"
         )),
+    }
+}
+
+/// Put back the session `root` was left with, and keep it written down from
+/// here on. Whatever is wrong with what was kept, nun starts anyway: a notice
+/// says what was lost.
+fn keep_session(app: &mut App, root: &Path) {
+    let file = restore::path_for(root);
+    let mut writable = true;
+    match file.as_deref().map(|file| restore::load(file, root)) {
+        Some(restore::Loaded::Found(state)) => app.restore_session(&state),
+        Some(restore::Loaded::Damaged(why)) => {
+            app.warn(format!(
+                "The last session here could not be read ({why}), so nun started without it."
+            ));
+        }
+        Some(restore::Loaded::Newer(version)) => {
+            // Written over, it would be lost to the nun that wrote it.
+            writable = false;
+            app.warn(format!(
+                "The last session here is from a newer nun (format {version}), so it was not restored and will not be changed."
+            ));
+        }
+        Some(restore::Loaded::Nothing) | None => {}
+    }
+    match restore::Writer::start() {
+        Ok(writer) => app.keep_session(root.to_path_buf(), file.filter(|_| writable), writer),
+        Err(error) => app.warn(format!("This session will not be remembered: {error}")),
     }
 }
 
@@ -702,11 +743,12 @@ fn usage() -> String {
     format!(
         "nun {VERSION}\n\
          A mouse-first terminal code editor.\n\n\
-         Usage: nun [--lsp-log <path>] <file>\n       nun [--lsp-log <path>] <folder>\n       nun config [--explain <key>] [<path>]\n       nun keys\n       nun glyphs\n       nun theme dump\n\n\
+         Usage: nun [--no-session] [--lsp-log <path>] <file>\n       nun [--no-session] [--lsp-log <path>] <folder>\n       nun config [--explain <key>] [<path>]\n       nun keys\n       nun glyphs\n       nun theme dump\n\n\
          Options:\n  \
            -h, --help         Print help\n  \
            -V, --version      Print version\n  \
            --capabilities     Probe this terminal and say what nun will use\n  \
+           --no-session       Open clean: neither restore nor remember this folder's layout\n  \
            --lsp-log <path>   Write every message to and from the language servers to <path>\n\n\
          Commands:\n  \
            config         Print the settings in force here, and the layer each came from\n  \
@@ -984,6 +1026,19 @@ mod tests {
     #[test]
     fn usage_documents_the_glyphs() {
         assert!(usage().contains("nun glyphs"));
+    }
+
+    #[test]
+    fn usage_documents_opening_clean() {
+        assert!(usage().contains("--no-session"));
+    }
+
+    #[test]
+    fn the_no_session_flag_is_taken_out_wherever_it_is() {
+        let mut args: Vec<String> = ["x.rs", "--no-session"].map(String::from).to_vec();
+        assert!(take_flag(&mut args, "--no-session"));
+        assert_eq!(args, ["x.rs"]);
+        assert!(!take_flag(&mut args, "--no-session"));
     }
 
     #[test]
