@@ -1,12 +1,12 @@
 ---
-id: 17
+id: 33d6648b-8b87-4c68-b642-7f1aac2f5660
 title: Click, drag and multi-click selection
 type: feature
 status: done
 milestone: m2
 assignee: Oddur Sigurdsson
 depends_on:
-- 16
+- 56e014e6-551e-4756-a4a5-7ab82bbf66d1
 created: 2026-09-10
 updated: 2026-09-19
 priority: p0

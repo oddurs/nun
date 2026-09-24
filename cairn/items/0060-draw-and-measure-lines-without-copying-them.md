@@ -1,11 +1,11 @@
 ---
-id: 60
+id: ab80cc7e-76f2-44f1-9afb-4cc44b521b17
 title: Draw and measure lines without copying them
 type: chore
 status: backlog
 milestone: perf
 depends_on:
-- 57
+- 98e7cf7d-4a57-4a62-8bd9-5346b7a2bf5f
 created: 2026-09-22
 updated: 2026-09-22
 priority: p0

@@ -1,11 +1,11 @@
 ---
-id: 85
+id: b5747a9d-00fe-49d5-95e9-26f6af06fede
 title: Nerd Font glyph preset
 type: feature
 status: backlog
 milestone: m6
 depends_on:
-- 84
+- 567291ce-56e2-43d5-93d9-bfb7459c6798
 created: 2026-09-23
 updated: 2026-09-23
 priority: p2

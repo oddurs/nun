@@ -1,5 +1,5 @@
 ---
-id: 22
+id: 4e3ee334-4b6c-4a70-ba1e-a9ce7a599c71
 title: Keymap resolution and Kitty protocol negotiation
 type: feature
 status: done

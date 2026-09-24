@@ -1,12 +1,12 @@
 ---
-id: 12
+id: 6cd79de4-239e-40a6-b279-17da86f48d39
 title: Headless render harness
 type: feature
 status: done
 milestone: m1
 assignee: Oddur Sigurdsson
 depends_on:
-- 11
+- f546b22d-2b57-4f4b-91da-471996db2185
 created: 2026-09-10
 updated: 2026-09-11
 priority: p1

@@ -1,5 +1,5 @@
 ---
-id: 69
+id: 825146d1-84d8-424a-a093-62f8f32bf1a4
 title: Give project replace its own worker
 type: chore
 status: backlog

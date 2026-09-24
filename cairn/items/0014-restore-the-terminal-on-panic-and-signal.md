@@ -1,5 +1,5 @@
 ---
-id: 14
+id: bfa4e353-47d5-42ea-8c11-9e6c17f8351c
 title: Restore the terminal on panic and signal
 type: chore
 status: done

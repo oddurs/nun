@@ -1,11 +1,11 @@
 ---
-id: 64
+id: 246a531a-e9f3-48f9-905d-4ddfdce30c60
 title: Cache fold visibility and update folds in place
 type: chore
 status: backlog
 milestone: perf
 depends_on:
-- 57
+- 98e7cf7d-4a57-4a62-8bd9-5346b7a2bf5f
 created: 2026-09-22
 updated: 2026-09-22
 priority: p1

@@ -1,5 +1,5 @@
 ---
-id: 50
+id: a1cb2257-16d1-4f0f-be68-6fb253b43676
 title: Read nun.toml for the settings that exist
 type: feature
 status: done
@@ -10,7 +10,7 @@ priority: p1
 effort: m
 area: config
 part_of:
-- 42
+- faa72f74-0b99-4aa8-b168-d64d1d9b46b4
 ---
 
 ## Problem

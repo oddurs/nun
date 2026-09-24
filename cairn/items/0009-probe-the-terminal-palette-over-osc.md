@@ -1,5 +1,5 @@
 ---
-id: 9
+id: bbcd2699-49d6-409f-bbd5-4a571663e9bd
 title: Probe the terminal palette over OSC
 type: feature
 status: done

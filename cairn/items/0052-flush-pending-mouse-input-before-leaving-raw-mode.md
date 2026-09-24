@@ -1,5 +1,5 @@
 ---
-id: 52
+id: 7ee1aab2-58e8-4323-9c96-ca2669588d08
 title: Flush pending mouse input before leaving raw mode
 type: bug
 status: done

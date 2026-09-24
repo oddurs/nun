@@ -1,12 +1,12 @@
 ---
-id: 77
+id: b863b33a-7608-4cc2-9078-ee26233588f8
 title: Code actions and quick fixes
 type: feature
 status: done
 milestone: m4
 assignee: Oddur Sigurdsson
 depends_on:
-- 32
+- 5feb5467-ec21-48f0-86f6-8cefc73566df
 created: 2026-09-22
 updated: 2026-09-23
 closed_at: 2026-09-23

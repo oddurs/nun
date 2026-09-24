@@ -8,16 +8,16 @@
 
 ### done
 
-- [x] [`0007`](https://github.com/oddurs/nun/blob/main/cairn/items/0007-rope-backed-text-buffer-with-edits-and-undo.md) Rope-backed text buffer with edits and undo <sup>feature · p0</sup>
-- [x] [`0008`](https://github.com/oddurs/nun/blob/main/cairn/items/0008-cursor-and-selection-model.md) Cursor and selection model <sup>feature · p0</sup>
-- [x] [`0009`](https://github.com/oddurs/nun/blob/main/cairn/items/0009-probe-the-terminal-palette-over-osc.md) Probe the terminal palette over OSC <sup>feature · p0</sup>
-- [x] [`0010`](https://github.com/oddurs/nun/blob/main/cairn/items/0010-derive-the-role-ramp-in-oklch.md) Derive the role ramp in OKLCH <sup>feature · p0</sup>
-- [x] [`0011`](https://github.com/oddurs/nun/blob/main/cairn/items/0011-render-loop-with-damage-tracking.md) Render loop with damage tracking <sup>feature · p0</sup>
-- [x] [`0012`](https://github.com/oddurs/nun/blob/main/cairn/items/0012-headless-render-harness.md) Headless render harness <sup>feature · p1</sup>
-- [x] [`0013`](https://github.com/oddurs/nun/blob/main/cairn/items/0013-open-edit-and-save-a-file-end-to-end.md) Open, edit and save a file end to end <sup>feature · p0</sup>
-- [x] [`0014`](https://github.com/oddurs/nun/blob/main/cairn/items/0014-restore-the-terminal-on-panic-and-signal.md) Restore the terminal on panic and signal <sup>chore · p0</sup>
-- [x] [`0050`](https://github.com/oddurs/nun/blob/main/cairn/items/0050-read-nun-toml-for-the-settings-that-exist.md) Read nun.toml for the settings that exist <sup>feature · p1</sup>
-- [x] [`0051`](https://github.com/oddurs/nun/blob/main/cairn/items/0051-opening-a-directory-reports-a-raw-errno.md) Opening a directory reports a raw errno <sup>bug · p0</sup>
+- [x] [`6cd79de4`](https://github.com/oddurs/nun/blob/main/cairn/items/0012-headless-render-harness.md) Headless render harness <sup>feature · p1</sup>
+- [x] [`8f973ca1`](https://github.com/oddurs/nun/blob/main/cairn/items/0007-rope-backed-text-buffer-with-edits-and-undo.md) Rope-backed text buffer with edits and undo <sup>feature · p0</sup>
+- [x] [`9dd0b48a`](https://github.com/oddurs/nun/blob/main/cairn/items/0051-opening-a-directory-reports-a-raw-errno.md) Opening a directory reports a raw errno <sup>bug · p0</sup>
+- [x] [`a1cb2257`](https://github.com/oddurs/nun/blob/main/cairn/items/0050-read-nun-toml-for-the-settings-that-exist.md) Read nun.toml for the settings that exist <sup>feature · p1</sup>
+- [x] [`bbcd2699`](https://github.com/oddurs/nun/blob/main/cairn/items/0009-probe-the-terminal-palette-over-osc.md) Probe the terminal palette over OSC <sup>feature · p0</sup>
+- [x] [`bc1e4abe`](https://github.com/oddurs/nun/blob/main/cairn/items/0008-cursor-and-selection-model.md) Cursor and selection model <sup>feature · p0</sup>
+- [x] [`bfa4e353`](https://github.com/oddurs/nun/blob/main/cairn/items/0014-restore-the-terminal-on-panic-and-signal.md) Restore the terminal on panic and signal <sup>chore · p0</sup>
+- [x] [`d72c3db0`](https://github.com/oddurs/nun/blob/main/cairn/items/0010-derive-the-role-ramp-in-oklch.md) Derive the role ramp in OKLCH <sup>feature · p0</sup>
+- [x] [`f49531b0`](https://github.com/oddurs/nun/blob/main/cairn/items/0013-open-edit-and-save-a-file-end-to-end.md) Open, edit and save a file end to end <sup>feature · p0</sup>
+- [x] [`f546b22d`](https://github.com/oddurs/nun/blob/main/cairn/items/0011-render-loop-with-damage-tracking.md) Render loop with damage tracking <sup>feature · p0</sup>
 
 ## m2 — Mouse and shell
 
@@ -25,15 +25,15 @@
 
 ### done
 
-- [x] [`0015`](https://github.com/oddurs/nun/blob/main/cairn/items/0015-mouse-event-plumbing.md) Mouse event plumbing <sup>feature · p0</sup>
-- [x] [`0016`](https://github.com/oddurs/nun/blob/main/cairn/items/0016-hit-testing-and-hover.md) Hit-testing and hover <sup>feature · p0</sup>
-- [x] [`0017`](https://github.com/oddurs/nun/blob/main/cairn/items/0017-click-drag-and-multi-click-selection.md) Click, drag and multi-click selection <sup>feature · p0</sup>
-- [x] [`0018`](https://github.com/oddurs/nun/blob/main/cairn/items/0018-file-tree-sidebar.md) File tree sidebar <sup>feature · p0</sup>
-- [x] [`0019`](https://github.com/oddurs/nun/blob/main/cairn/items/0019-tabs.md) Tabs <sup>feature · p1</sup>
-- [x] [`0020`](https://github.com/oddurs/nun/blob/main/cairn/items/0020-splits-and-drag-to-split.md) Splits and drag-to-split <sup>feature · p1</sup>
-- [x] [`0021`](https://github.com/oddurs/nun/blob/main/cairn/items/0021-command-palette.md) Command palette <sup>feature · p0</sup>
-- [x] [`0022`](https://github.com/oddurs/nun/blob/main/cairn/items/0022-keymap-resolution-and-kitty-protocol-negotiation.md) Keymap resolution and Kitty protocol negotiation <sup>feature · p0</sup>
-- [x] [`0052`](https://github.com/oddurs/nun/blob/main/cairn/items/0052-flush-pending-mouse-input-before-leaving-raw-mode.md) Flush pending mouse input before leaving raw mode <sup>bug · p1</sup>
+- [x] [`33d6648b`](https://github.com/oddurs/nun/blob/main/cairn/items/0017-click-drag-and-multi-click-selection.md) Click, drag and multi-click selection <sup>feature · p0</sup>
+- [x] [`4e3ee334`](https://github.com/oddurs/nun/blob/main/cairn/items/0022-keymap-resolution-and-kitty-protocol-negotiation.md) Keymap resolution and Kitty protocol negotiation <sup>feature · p0</sup>
+- [x] [`56e014e6`](https://github.com/oddurs/nun/blob/main/cairn/items/0016-hit-testing-and-hover.md) Hit-testing and hover <sup>feature · p0</sup>
+- [x] [`62de7eb7`](https://github.com/oddurs/nun/blob/main/cairn/items/0015-mouse-event-plumbing.md) Mouse event plumbing <sup>feature · p0</sup>
+- [x] [`7ee1aab2`](https://github.com/oddurs/nun/blob/main/cairn/items/0052-flush-pending-mouse-input-before-leaving-raw-mode.md) Flush pending mouse input before leaving raw mode <sup>bug · p1</sup>
+- [x] [`9563bb91`](https://github.com/oddurs/nun/blob/main/cairn/items/0020-splits-and-drag-to-split.md) Splits and drag-to-split <sup>feature · p1</sup>
+- [x] [`e0338049`](https://github.com/oddurs/nun/blob/main/cairn/items/0021-command-palette.md) Command palette <sup>feature · p0</sup>
+- [x] [`e35a3711`](https://github.com/oddurs/nun/blob/main/cairn/items/0019-tabs.md) Tabs <sup>feature · p1</sup>
+- [x] [`ebdf64de`](https://github.com/oddurs/nun/blob/main/cairn/items/0018-file-tree-sidebar.md) File tree sidebar <sup>feature · p0</sup>
 
 ## m3 — Understanding the code
 
@@ -41,15 +41,15 @@
 
 ### done
 
-- [x] [`0023`](https://github.com/oddurs/nun/blob/main/cairn/items/0023-tree-sitter-integration-and-incremental-reparse.md) Tree-sitter integration and incremental reparse <sup>feature · p0</sup>
-- [x] [`0024`](https://github.com/oddurs/nun/blob/main/cairn/items/0024-map-highlight-captures-to-theme-roles.md) Map highlight captures to theme roles <sup>feature · p0</sup>
-- [x] [`0025`](https://github.com/oddurs/nun/blob/main/cairn/items/0025-folding.md) Folding <sup>feature · p1</sup>
-- [x] [`0026`](https://github.com/oddurs/nun/blob/main/cairn/items/0026-structural-selection.md) Structural selection <sup>feature · p2</sup>
-- [x] [`0027`](https://github.com/oddurs/nun/blob/main/cairn/items/0027-symbol-palette.md) Symbol palette <sup>feature · p1</sup>
-- [x] [`0028`](https://github.com/oddurs/nun/blob/main/cairn/items/0028-project-search.md) Project search <sup>feature · p0</sup>
-- [x] [`0029`](https://github.com/oddurs/nun/blob/main/cairn/items/0029-find-and-replace-with-preview.md) Find and replace with preview <sup>feature · p1</sup>
-- [x] [`0030`](https://github.com/oddurs/nun/blob/main/cairn/items/0030-multi-cursor-and-column-selection.md) Multi-cursor and column selection <sup>feature · p1</sup>
-- [x] [`0055`](https://github.com/oddurs/nun/blob/main/cairn/items/0055-search-toggles-are-unreachable-on-a-very-narrow-sidebar.md) Search toggles are unreachable on a very narrow sidebar <sup>bug · p2</sup>
+- [x] [`15032ade`](https://github.com/oddurs/nun/blob/main/cairn/items/0024-map-highlight-captures-to-theme-roles.md) Map highlight captures to theme roles <sup>feature · p0</sup>
+- [x] [`173a6210`](https://github.com/oddurs/nun/blob/main/cairn/items/0029-find-and-replace-with-preview.md) Find and replace with preview <sup>feature · p1</sup>
+- [x] [`26e8cdec`](https://github.com/oddurs/nun/blob/main/cairn/items/0028-project-search.md) Project search <sup>feature · p0</sup>
+- [x] [`46b00a9e`](https://github.com/oddurs/nun/blob/main/cairn/items/0027-symbol-palette.md) Symbol palette <sup>feature · p1</sup>
+- [x] [`69b840ab`](https://github.com/oddurs/nun/blob/main/cairn/items/0055-search-toggles-are-unreachable-on-a-very-narrow-sidebar.md) Search toggles are unreachable on a very narrow sidebar <sup>bug · p2</sup>
+- [x] [`86417e95`](https://github.com/oddurs/nun/blob/main/cairn/items/0030-multi-cursor-and-column-selection.md) Multi-cursor and column selection <sup>feature · p1</sup>
+- [x] [`87899ca9`](https://github.com/oddurs/nun/blob/main/cairn/items/0023-tree-sitter-integration-and-incremental-reparse.md) Tree-sitter integration and incremental reparse <sup>feature · p0</sup>
+- [x] [`f4cdedaf`](https://github.com/oddurs/nun/blob/main/cairn/items/0025-folding.md) Folding <sup>feature · p1</sup>
+- [x] [`f520259c`](https://github.com/oddurs/nun/blob/main/cairn/items/0026-structural-selection.md) Structural selection <sup>feature · p2</sup>
 
 ## m4 — Language servers
 
@@ -57,19 +57,19 @@
 
 ### done
 
-- [x] [`0031`](https://github.com/oddurs/nun/blob/main/cairn/items/0031-async-lsp-client-and-server-lifecycle.md) Async LSP client and server lifecycle <sup>feature · p0</sup>
-- [x] [`0032`](https://github.com/oddurs/nun/blob/main/cairn/items/0032-diagnostics-and-the-mark-rail.md) Diagnostics and the mark rail <sup>feature · p0</sup>
-- [x] [`0033`](https://github.com/oddurs/nun/blob/main/cairn/items/0033-completion.md) Completion <sup>feature · p0</sup>
-- [x] [`0034`](https://github.com/oddurs/nun/blob/main/cairn/items/0034-hover-cards.md) Hover cards <sup>feature · p1</sup>
-- [x] [`0035`](https://github.com/oddurs/nun/blob/main/cairn/items/0035-go-to-definition-and-find-references.md) Go to definition and find references <sup>feature · p0</sup>
-- [x] [`0036`](https://github.com/oddurs/nun/blob/main/cairn/items/0036-rename.md) Rename <sup>feature · p1</sup>
-- [x] [`0037`](https://github.com/oddurs/nun/blob/main/cairn/items/0037-format-on-save.md) Format on save <sup>feature · p1</sup>
-- [x] [`0074`](https://github.com/oddurs/nun/blob/main/cairn/items/0074-pasted-text-can-put-a-bare-carriage-return-in-the-buffer.md) Pasted text can put a bare carriage return in the buffer <sup>bug · p1</sup>
-- [x] [`0076`](https://github.com/oddurs/nun/blob/main/cairn/items/0076-say-where-ctrl-click-is-taken-by-the-terminal.md) Say where Ctrl-click is taken by the terminal <sup>feature · p2</sup>
-- [x] [`0077`](https://github.com/oddurs/nun/blob/main/cairn/items/0077-code-actions-and-quick-fixes.md) Code actions and quick fixes <sup>feature · p1</sup>
-- [x] [`0079`](https://github.com/oddurs/nun/blob/main/cairn/items/0079-scroll-a-keyboard-opened-card-from-the-keyboard.md) Scroll a keyboard-opened card from the keyboard <sup>feature · p2</sup>
-- [x] [`0080`](https://github.com/oddurs/nun/blob/main/cairn/items/0080-show-where-a-snippet-s-tab-stops-are.md) Show where a snippet's tab-stops are <sup>feature · p2</sup>
-- [x] [`0081`](https://github.com/oddurs/nun/blob/main/cairn/items/0081-mark-lines-that-have-code-actions-with-a-lightbulb.md) Mark lines that have code actions with a lightbulb <sup>feature · p3</sup>
+- [x] [`179d0519`](https://github.com/oddurs/nun/blob/main/cairn/items/0033-completion.md) Completion <sup>feature · p0</sup>
+- [x] [`56f5f8f1`](https://github.com/oddurs/nun/blob/main/cairn/items/0031-async-lsp-client-and-server-lifecycle.md) Async LSP client and server lifecycle <sup>feature · p0</sup>
+- [x] [`5feb5467`](https://github.com/oddurs/nun/blob/main/cairn/items/0032-diagnostics-and-the-mark-rail.md) Diagnostics and the mark rail <sup>feature · p0</sup>
+- [x] [`a67ce07c`](https://github.com/oddurs/nun/blob/main/cairn/items/0034-hover-cards.md) Hover cards <sup>feature · p1</sup>
+- [x] [`aa351b86`](https://github.com/oddurs/nun/blob/main/cairn/items/0037-format-on-save.md) Format on save <sup>feature · p1</sup>
+- [x] [`b6609e18`](https://github.com/oddurs/nun/blob/main/cairn/items/0079-scroll-a-keyboard-opened-card-from-the-keyboard.md) Scroll a keyboard-opened card from the keyboard <sup>feature · p2</sup>
+- [x] [`b863b33a`](https://github.com/oddurs/nun/blob/main/cairn/items/0077-code-actions-and-quick-fixes.md) Code actions and quick fixes <sup>feature · p1</sup>
+- [x] [`d053b6d9`](https://github.com/oddurs/nun/blob/main/cairn/items/0074-pasted-text-can-put-a-bare-carriage-return-in-the-buffer.md) Pasted text can put a bare carriage return in the buffer <sup>bug · p1</sup>
+- [x] [`d5ac38ce`](https://github.com/oddurs/nun/blob/main/cairn/items/0076-say-where-ctrl-click-is-taken-by-the-terminal.md) Say where Ctrl-click is taken by the terminal <sup>feature · p2</sup>
+- [x] [`d9d6b9ca`](https://github.com/oddurs/nun/blob/main/cairn/items/0036-rename.md) Rename <sup>feature · p1</sup>
+- [x] [`df3e7b76`](https://github.com/oddurs/nun/blob/main/cairn/items/0035-go-to-definition-and-find-references.md) Go to definition and find references <sup>feature · p0</sup>
+- [x] [`e17adef1`](https://github.com/oddurs/nun/blob/main/cairn/items/0080-show-where-a-snippet-s-tab-stops-are.md) Show where a snippet's tab-stops are <sup>feature · p2</sup>
+- [x] [`fffa7361`](https://github.com/oddurs/nun/blob/main/cairn/items/0081-mark-lines-that-have-code-actions-with-a-lightbulb.md) Mark lines that have code actions with a lightbulb <sup>feature · p3</sup>
 
 ## m5 — Git and terminal
 
@@ -77,18 +77,18 @@
 
 ### done
 
-- [x] [`0038`](https://github.com/oddurs/nun/blob/main/cairn/items/0038-git-status-and-hunk-computation.md) Git status and hunk computation <sup>feature · p0</sup>
-- [x] [`0039`](https://github.com/oddurs/nun/blob/main/cairn/items/0039-gutter-marks-and-hunk-actions.md) Gutter marks and hunk actions <sup>feature · p0</sup>
-- [x] [`0040`](https://github.com/oddurs/nun/blob/main/cairn/items/0040-diff-view.md) Diff view <sup>feature · p2</sup>
-- [x] [`0041`](https://github.com/oddurs/nun/blob/main/cairn/items/0041-integrated-terminal-panel.md) Integrated terminal panel <sup>feature · p1</sup>
-- [x] [`0042`](https://github.com/oddurs/nun/blob/main/cairn/items/0042-layered-config-with-hot-reload.md) Layered config with hot reload <sup>feature · p0</sup>
-- [x] [`0043`](https://github.com/oddurs/nun/blob/main/cairn/items/0043-session-restore.md) Session restore <sup>feature · p2</sup>
-- [x] [`0075`](https://github.com/oddurs/nun/blob/main/cairn/items/0075-format-on-save-per-project.md) Format on save per project <sup>feature · p2</sup>
-- [x] [`0078`](https://github.com/oddurs/nun/blob/main/cairn/items/0078-rename-carry-out-file-operations-a-server-asks-for.md) Rename: carry out file operations a server asks for <sup>feature · p2</sup>
-- [x] [`0087`](https://github.com/oddurs/nun/blob/main/cairn/items/0087-lsp-tell-servers-about-files-that-change-on-disk.md) LSP: tell servers about files that change on disk <sup>feature · p2</sup>
-- [x] [`0088`](https://github.com/oddurs/nun/blob/main/cairn/items/0088-terminal-panel-restore-its-tabs-and-directories-with-the-session.md) Terminal panel: restore its tabs and directories with the session <sup>feature · p2</sup>
-- [x] [`0089`](https://github.com/oddurs/nun/blob/main/cairn/items/0089-terminal-panel-copy-through-osc-52-where-the-system-clipboard-cannot.md) Terminal panel: copy through OSC 52 where the system clipboard cannot <sup>feature · p2</sup>
-- [x] [`0090`](https://github.com/oddurs/nun/blob/main/cairn/items/0090-terminal-panel-detect-true-colour-and-answer-pixel-size-queries.md) Terminal panel: detect true colour, and answer pixel-size queries <sup>feature · p3</sup>
+- [x] [`1564dae3`](https://github.com/oddurs/nun/blob/main/cairn/items/0040-diff-view.md) Diff view <sup>feature · p2</sup>
+- [x] [`3e55aa0e`](https://github.com/oddurs/nun/blob/main/cairn/items/0038-git-status-and-hunk-computation.md) Git status and hunk computation <sup>feature · p0</sup>
+- [x] [`42a1f698`](https://github.com/oddurs/nun/blob/main/cairn/items/0043-session-restore.md) Session restore <sup>feature · p2</sup>
+- [x] [`4476d7b2`](https://github.com/oddurs/nun/blob/main/cairn/items/0041-integrated-terminal-panel.md) Integrated terminal panel <sup>feature · p1</sup>
+- [x] [`6311788a`](https://github.com/oddurs/nun/blob/main/cairn/items/0078-rename-carry-out-file-operations-a-server-asks-for.md) Rename: carry out file operations a server asks for <sup>feature · p2</sup>
+- [x] [`6a822baf`](https://github.com/oddurs/nun/blob/main/cairn/items/0089-terminal-panel-copy-through-osc-52-where-the-system-clipboard-cannot.md) Terminal panel: copy through OSC 52 where the system clipboard cannot <sup>feature · p2</sup>
+- [x] [`74a17705`](https://github.com/oddurs/nun/blob/main/cairn/items/0075-format-on-save-per-project.md) Format on save per project <sup>feature · p2</sup>
+- [x] [`7b313c2c`](https://github.com/oddurs/nun/blob/main/cairn/items/0087-lsp-tell-servers-about-files-that-change-on-disk.md) LSP: tell servers about files that change on disk <sup>feature · p2</sup>
+- [x] [`b9ce75f0`](https://github.com/oddurs/nun/blob/main/cairn/items/0039-gutter-marks-and-hunk-actions.md) Gutter marks and hunk actions <sup>feature · p0</sup>
+- [x] [`be6fbe42`](https://github.com/oddurs/nun/blob/main/cairn/items/0088-terminal-panel-restore-its-tabs-and-directories-with-the-session.md) Terminal panel: restore its tabs and directories with the session <sup>feature · p2</sup>
+- [x] [`db068b65`](https://github.com/oddurs/nun/blob/main/cairn/items/0090-terminal-panel-detect-true-colour-and-answer-pixel-size-queries.md) Terminal panel: detect true colour, and answer pixel-size queries <sup>feature · p3</sup>
+- [x] [`faa72f74`](https://github.com/oddurs/nun/blob/main/cairn/items/0042-layered-config-with-hot-reload.md) Layered config with hot reload <sup>feature · p0</sup>
 
 ## perf — Fast on anything
 
@@ -96,26 +96,26 @@
 
 ### backlog
 
-- [ ] [`0044`](https://github.com/oddurs/nun/blob/main/cairn/items/0044-meet-the-latency-budget.md) Meet the latency budget <sup>chore · p0</sup>
-- [ ] [`0045`](https://github.com/oddurs/nun/blob/main/cairn/items/0045-zero-idle-cost.md) Zero idle cost <sup>chore · p0</sup>
-- [ ] [`0053`](https://github.com/oddurs/nun/blob/main/cairn/items/0053-load-and-save-the-buffer-off-the-main-thread.md) Load and save the buffer off the main thread <sup>chore · p1</sup>
-- [ ] [`0057`](https://github.com/oddurs/nun/blob/main/cairn/items/0057-benchmarks-and-a-release-mode-perf-job.md) Benchmarks and a release-mode perf job <sup>chore · p0</sup>
-- [ ] [`0058`](https://github.com/oddurs/nun/blob/main/cairn/items/0058-a-profiling-build-and-trace-spans.md) A profiling build and trace spans <sup>chore · p1</sup>
-- [ ] [`0059`](https://github.com/oddurs/nun/blob/main/cairn/items/0059-highlighting-switches-itself-off-after-a-burst-of-edits.md) Highlighting switches itself off after a burst of edits <sup>bug · p0</sup>
-- [ ] [`0060`](https://github.com/oddurs/nun/blob/main/cairn/items/0060-draw-and-measure-lines-without-copying-them.md) Draw and measure lines without copying them <sup>chore · p0</sup>
-- [ ] [`0061`](https://github.com/oddurs/nun/blob/main/cairn/items/0061-scroll-horizontally-past-the-right-edge.md) Scroll horizontally past the right edge <sup>feature · p1</sup>
-- [ ] [`0062`](https://github.com/oddurs/nun/blob/main/cairn/items/0062-open-large-files-without-tripling-their-size-in-memory.md) Open large files without tripling their size in memory <sup>chore · p0</sup>
-- [ ] [`0063`](https://github.com/oddurs/nun/blob/main/cairn/items/0063-rebuild-layout-once-per-frame.md) Rebuild layout once per frame <sup>chore · p1</sup>
-- [ ] [`0064`](https://github.com/oddurs/nun/blob/main/cairn/items/0064-cache-fold-visibility-and-update-folds-in-place.md) Cache fold visibility and update folds in place <sup>chore · p1</sup>
-- [ ] [`0065`](https://github.com/oddurs/nun/blob/main/cairn/items/0065-bound-the-cost-of-undo-history.md) Bound the cost of undo history <sup>chore · p1</sup>
-- [ ] [`0066`](https://github.com/oddurs/nun/blob/main/cairn/items/0066-find-the-next-occurrence-without-copying-the-file.md) Find the next occurrence without copying the file <sup>chore · p1</sup>
-- [ ] [`0067`](https://github.com/oddurs/nun/blob/main/cairn/items/0067-one-reply-per-parse-with-folds-from-the-changed-ranges.md) One reply per parse, with folds from the changed ranges <sup>chore · p1</sup>
-- [ ] [`0068`](https://github.com/oddurs/nun/blob/main/cairn/items/0068-compile-grammar-queries-on-first-use.md) Compile grammar queries on first use <sup>chore · p1</sup>
-- [ ] [`0069`](https://github.com/oddurs/nun/blob/main/cairn/items/0069-give-project-replace-its-own-worker.md) Give project replace its own worker <sup>chore · p1</sup>
-- [ ] [`0070`](https://github.com/oddurs/nun/blob/main/cairn/items/0070-search-the-project-in-parallel-and-cap-what-it-keeps.md) Search the project in parallel, and cap what it keeps <sup>chore · p2</sup>
-- [ ] [`0071`](https://github.com/oddurs/nun/blob/main/cairn/items/0071-highlights-drift-for-a-frame-after-an-edit.md) Highlights drift for a frame after an edit <sup>bug · p2</sup>
-- [ ] [`0072`](https://github.com/oddurs/nun/blob/main/cairn/items/0072-reuse-parses-of-injected-languages.md) Reuse parses of injected languages <sup>chore · p2</sup>
-- [ ] [`0073`](https://github.com/oddurs/nun/blob/main/cairn/items/0073-compute-per-frame-constants-once-per-frame.md) Compute per-frame constants once per frame <sup>chore · p2</sup>
+- [ ] [`072a4ae2`](https://github.com/oddurs/nun/blob/main/cairn/items/0061-scroll-horizontally-past-the-right-edge.md) Scroll horizontally past the right edge <sup>feature · p1</sup>
+- [ ] [`0c6cbc3a`](https://github.com/oddurs/nun/blob/main/cairn/items/0062-open-large-files-without-tripling-their-size-in-memory.md) Open large files without tripling their size in memory <sup>chore · p0</sup>
+- [ ] [`246a531a`](https://github.com/oddurs/nun/blob/main/cairn/items/0064-cache-fold-visibility-and-update-folds-in-place.md) Cache fold visibility and update folds in place <sup>chore · p1</sup>
+- [ ] [`468df801`](https://github.com/oddurs/nun/blob/main/cairn/items/0068-compile-grammar-queries-on-first-use.md) Compile grammar queries on first use <sup>chore · p1</sup>
+- [ ] [`6d13cceb`](https://github.com/oddurs/nun/blob/main/cairn/items/0045-zero-idle-cost.md) Zero idle cost <sup>chore · p0</sup>
+- [ ] [`73a4f3fd`](https://github.com/oddurs/nun/blob/main/cairn/items/0058-a-profiling-build-and-trace-spans.md) A profiling build and trace spans <sup>chore · p1</sup>
+- [ ] [`825146d1`](https://github.com/oddurs/nun/blob/main/cairn/items/0069-give-project-replace-its-own-worker.md) Give project replace its own worker <sup>chore · p1</sup>
+- [ ] [`8e5cb8ea`](https://github.com/oddurs/nun/blob/main/cairn/items/0070-search-the-project-in-parallel-and-cap-what-it-keeps.md) Search the project in parallel, and cap what it keeps <sup>chore · p2</sup>
+- [ ] [`92a96f4f`](https://github.com/oddurs/nun/blob/main/cairn/items/0063-rebuild-layout-once-per-frame.md) Rebuild layout once per frame <sup>chore · p1</sup>
+- [ ] [`96804f61`](https://github.com/oddurs/nun/blob/main/cairn/items/0053-load-and-save-the-buffer-off-the-main-thread.md) Load and save the buffer off the main thread <sup>chore · p1</sup>
+- [ ] [`98e7cf7d`](https://github.com/oddurs/nun/blob/main/cairn/items/0057-benchmarks-and-a-release-mode-perf-job.md) Benchmarks and a release-mode perf job <sup>chore · p0</sup>
+- [ ] [`ab80cc7e`](https://github.com/oddurs/nun/blob/main/cairn/items/0060-draw-and-measure-lines-without-copying-them.md) Draw and measure lines without copying them <sup>chore · p0</sup>
+- [ ] [`cb29c429`](https://github.com/oddurs/nun/blob/main/cairn/items/0067-one-reply-per-parse-with-folds-from-the-changed-ranges.md) One reply per parse, with folds from the changed ranges <sup>chore · p1</sup>
+- [ ] [`cde36112`](https://github.com/oddurs/nun/blob/main/cairn/items/0066-find-the-next-occurrence-without-copying-the-file.md) Find the next occurrence without copying the file <sup>chore · p1</sup>
+- [ ] [`d5a9bba2`](https://github.com/oddurs/nun/blob/main/cairn/items/0059-highlighting-switches-itself-off-after-a-burst-of-edits.md) Highlighting switches itself off after a burst of edits <sup>bug · p0</sup>
+- [ ] [`db256dcd`](https://github.com/oddurs/nun/blob/main/cairn/items/0065-bound-the-cost-of-undo-history.md) Bound the cost of undo history <sup>chore · p1</sup>
+- [ ] [`dc9570d6`](https://github.com/oddurs/nun/blob/main/cairn/items/0072-reuse-parses-of-injected-languages.md) Reuse parses of injected languages <sup>chore · p2</sup>
+- [ ] [`f0b7a33c`](https://github.com/oddurs/nun/blob/main/cairn/items/0071-highlights-drift-for-a-frame-after-an-edit.md) Highlights drift for a frame after an edit <sup>bug · p2</sup>
+- [ ] [`f1909df7`](https://github.com/oddurs/nun/blob/main/cairn/items/0044-meet-the-latency-budget.md) Meet the latency budget <sup>chore · p0</sup>
+- [ ] [`ff8325cf`](https://github.com/oddurs/nun/blob/main/cairn/items/0073-compute-per-frame-constants-once-per-frame.md) Compute per-frame constants once per frame <sup>chore · p2</sup>
 
 ## m6 — Polish until it is boring
 
@@ -123,18 +123,18 @@
 
 ### backlog
 
-- [ ] [`0046`](https://github.com/oddurs/nun/blob/main/cairn/items/0046-terminal-support-matrix.md) Terminal support matrix <sup>docs · p0</sup>
-- [ ] [`0047`](https://github.com/oddurs/nun/blob/main/cairn/items/0047-first-run.md) First run <sup>feature · p1</sup>
-- [ ] [`0048`](https://github.com/oddurs/nun/blob/main/cairn/items/0048-one-command-install.md) One-command install <sup>chore · p1</sup>
-- [ ] [`0049`](https://github.com/oddurs/nun/blob/main/cairn/items/0049-freeze-and-ship-0-1.md) Freeze and ship 0.1 <sup>chore · p0</sup>
-- [ ] [`0082`](https://github.com/oddurs/nun/blob/main/cairn/items/0082-a-key-pressed-right-after-escape-types-its-escape-sequence-as-text.md) A key pressed right after Escape types its escape sequence as text <sup>bug · p1</sup>
-- [ ] [`0085`](https://github.com/oddurs/nun/blob/main/cairn/items/0085-nerd-font-glyph-preset.md) Nerd Font glyph preset <sup>feature · p2</sup>
-- [ ] [`0086`](https://github.com/oddurs/nun/blob/main/cairn/items/0086-custom-glyphs-drawn-as-cell-images.md) Custom glyphs drawn as cell images <sup>feature · p3</sup>
-- [ ] [`0091`](https://github.com/oddurs/nun/blob/main/cairn/items/0091-lsp-watch-single-paths-a-server-names-outside-the-project.md) LSP: watch single paths a server names outside the project <sup>feature · p3</sup>
+- [ ] [`21d111ce`](https://github.com/oddurs/nun/blob/main/cairn/items/0049-freeze-and-ship-0-1.md) Freeze and ship 0.1 <sup>chore · p0</sup>
+- [ ] [`22d537c7`](https://github.com/oddurs/nun/blob/main/cairn/items/0048-one-command-install.md) One-command install <sup>chore · p1</sup>
+- [ ] [`6378e359`](https://github.com/oddurs/nun/blob/main/cairn/items/0086-custom-glyphs-drawn-as-cell-images.md) Custom glyphs drawn as cell images <sup>feature · p3</sup>
+- [ ] [`77bfba6f`](https://github.com/oddurs/nun/blob/main/cairn/items/0046-terminal-support-matrix.md) Terminal support matrix <sup>docs · p0</sup>
+- [ ] [`818434a4`](https://github.com/oddurs/nun/blob/main/cairn/items/0091-lsp-watch-single-paths-a-server-names-outside-the-project.md) LSP: watch single paths a server names outside the project <sup>feature · p3</sup>
+- [ ] [`b5747a9d`](https://github.com/oddurs/nun/blob/main/cairn/items/0085-nerd-font-glyph-preset.md) Nerd Font glyph preset <sup>feature · p2</sup>
+- [ ] [`f7a245a5`](https://github.com/oddurs/nun/blob/main/cairn/items/0082-a-key-pressed-right-after-escape-types-its-escape-sequence-as-text.md) A key pressed right after Escape types its escape sequence as text <sup>bug · p1</sup>
+- [ ] [`f8a1110c`](https://github.com/oddurs/nun/blob/main/cairn/items/0047-first-run.md) First run <sup>feature · p1</sup>
 
 ### done
 
-- [x] [`0054`](https://github.com/oddurs/nun/blob/main/cairn/items/0054-install-nun-from-the-working-copy-with-one-command.md) Install nun from the working copy with one command <sup>chore · p2</sup>
-- [x] [`0083`](https://github.com/oddurs/nun/blob/main/cairn/items/0083-show-the-github-repository-as-the-file-tree-s-title.md) Show the GitHub repository as the file tree's title <sup>feature · p2</sup>
-- [x] [`0084`](https://github.com/oddurs/nun/blob/main/cairn/items/0084-glyphs-come-from-semantic-roles-overridable-in-nun-toml.md) Glyphs come from semantic roles, overridable in nun.toml <sup>feature · p1</sup>
+- [x] [`3c95455c`](https://github.com/oddurs/nun/blob/main/cairn/items/0054-install-nun-from-the-working-copy-with-one-command.md) Install nun from the working copy with one command <sup>chore · p2</sup>
+- [x] [`567291ce`](https://github.com/oddurs/nun/blob/main/cairn/items/0084-glyphs-come-from-semantic-roles-overridable-in-nun-toml.md) Glyphs come from semantic roles, overridable in nun.toml <sup>feature · p1</sup>
+- [x] [`56ce6fa8`](https://github.com/oddurs/nun/blob/main/cairn/items/0083-show-the-github-repository-as-the-file-tree-s-title.md) Show the GitHub repository as the file tree's title <sup>feature · p2</sup>
 

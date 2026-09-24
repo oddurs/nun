@@ -1,5 +1,5 @@
 ---
-id: 41
+id: 4476d7b2-09a0-44fc-9870-bcb66dfba966
 title: Integrated terminal panel
 type: feature
 status: done

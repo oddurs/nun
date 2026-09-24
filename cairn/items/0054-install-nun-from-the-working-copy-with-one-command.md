@@ -1,5 +1,5 @@
 ---
-id: 54
+id: 3c95455c-e148-4d58-9a9e-fd867861aa7e
 title: Install nun from the working copy with one command
 type: chore
 status: done

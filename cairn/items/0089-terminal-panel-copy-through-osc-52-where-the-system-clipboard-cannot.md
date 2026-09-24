@@ -1,12 +1,12 @@
 ---
-id: 89
+id: 6a822baf-b67e-4b1a-8f32-18bc42b1f808
 title: 'Terminal panel: copy through OSC 52 where the system clipboard cannot'
 type: feature
 status: done
 milestone: m5
 assignee: Oddur Sigurdsson
 depends_on:
-- 41
+- 4476d7b2-09a0-44fc-9870-bcb66dfba966
 created: 2026-09-23
 updated: 2026-09-24
 closed_at: 2026-09-24

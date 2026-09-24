@@ -1,12 +1,12 @@
 ---
-id: 8
+id: bc1e4abe-f895-406f-a77f-e0c51270d32a
 title: Cursor and selection model
 type: feature
 status: done
 milestone: m1
 assignee: Oddur Sigurdsson
 depends_on:
-- 7
+- 8f973ca1-e168-4056-9965-9f042259019b
 created: 2026-09-10
 updated: 2026-09-11
 priority: p0

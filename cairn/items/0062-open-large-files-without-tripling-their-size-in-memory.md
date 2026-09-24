@@ -1,12 +1,12 @@
 ---
-id: 62
+id: 0c6cbc3a-54bc-407a-ba45-0ff19b1a12fa
 title: Open large files without tripling their size in memory
 type: chore
 status: backlog
 milestone: perf
 depends_on:
-- 53
-- 57
+- 96804f61-ec66-4c00-be35-042193b2b370
+- 98e7cf7d-4a57-4a62-8bd9-5346b7a2bf5f
 created: 2026-09-22
 updated: 2026-09-22
 priority: p0

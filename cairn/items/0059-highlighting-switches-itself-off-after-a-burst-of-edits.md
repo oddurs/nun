@@ -1,5 +1,5 @@
 ---
-id: 59
+id: d5a9bba2-5c03-45d9-a9a1-2c8c1a19dd73
 title: Highlighting switches itself off after a burst of edits
 type: bug
 status: backlog

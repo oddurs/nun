@@ -1,5 +1,5 @@
 ---
-id: 2
+id: 4ec57eee-db3b-4329-b1ba-d9ca2b78ed7c
 key: m2
 title: Mouse and shell
 type: milestone

@@ -1,12 +1,12 @@
 ---
-id: 25
+id: f4cdedaf-e35f-43a8-9edc-40a19a912c24
 title: Folding
 type: feature
 status: done
 milestone: m3
 assignee: Oddur Sigurdsson
 depends_on:
-- 22
+- 4e3ee334-4b6c-4a70-ba1e-a9ce7a599c71
 created: 2026-09-10
 updated: 2026-09-22
 priority: p1

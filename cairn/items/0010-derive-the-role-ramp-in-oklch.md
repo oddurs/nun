@@ -1,12 +1,12 @@
 ---
-id: 10
+id: d72c3db0-debe-45e8-81ed-cbbda5b3cf35
 title: Derive the role ramp in OKLCH
 type: feature
 status: done
 milestone: m1
 assignee: Oddur Sigurdsson
 depends_on:
-- 9
+- bbcd2699-49d6-409f-bbd5-4a571663e9bd
 created: 2026-09-10
 updated: 2026-09-11
 priority: p0

@@ -1,12 +1,12 @@
 ---
-id: 80
+id: e17adef1-d0ef-452f-b600-6d3f65b92f57
 title: Show where a snippet's tab-stops are
 type: feature
 status: done
 milestone: m4
 assignee: Oddur Sigurdsson
 depends_on:
-- 33
+- 179d0519-976a-447e-9071-b28a12aa8fcb
 created: 2026-09-23
 updated: 2026-09-23
 closed_at: 2026-09-23

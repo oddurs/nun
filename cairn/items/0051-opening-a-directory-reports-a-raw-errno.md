@@ -1,5 +1,5 @@
 ---
-id: 51
+id: 9dd0b48a-78d6-4b9b-b0ed-c64ecb534203
 title: Opening a directory reports a raw errno
 type: bug
 status: done

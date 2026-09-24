@@ -1,5 +1,5 @@
 ---
-id: 27
+id: 46b00a9e-e420-4257-9767-0ecd19e07476
 title: Symbol palette
 type: feature
 status: done

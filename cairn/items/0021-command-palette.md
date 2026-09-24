@@ -1,5 +1,5 @@
 ---
-id: 21
+id: e0338049-2c1a-4768-b819-e0c6b2680122
 title: Command palette
 type: feature
 status: done

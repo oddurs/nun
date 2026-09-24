@@ -1,13 +1,13 @@
 ---
-id: 88
+id: be6fbe42-f742-44b3-aa36-b69aad629c5e
 title: 'Terminal panel: restore its tabs and directories with the session'
 type: feature
 status: done
 milestone: m5
 assignee: Oddur Sigurdsson
 depends_on:
-- 41
-- 43
+- 4476d7b2-09a0-44fc-9870-bcb66dfba966
+- 42a1f698-ca43-4a44-a429-09de2964bdae
 created: 2026-09-23
 updated: 2026-09-24
 closed_at: 2026-09-24

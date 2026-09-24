@@ -1,12 +1,12 @@
 ---
-id: 24
+id: 15032ade-8116-4934-832d-ac061e0eb51e
 title: Map highlight captures to theme roles
 type: feature
 status: done
 milestone: m3
 assignee: Oddur Sigurdsson
 depends_on:
-- 22
+- 4e3ee334-4b6c-4a70-ba1e-a9ce7a599c71
 created: 2026-09-10
 updated: 2026-09-19
 priority: p0

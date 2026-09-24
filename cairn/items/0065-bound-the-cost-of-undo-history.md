@@ -1,11 +1,11 @@
 ---
-id: 65
+id: db256dcd-c789-4c3d-885c-1df228477232
 title: Bound the cost of undo history
 type: chore
 status: backlog
 milestone: perf
 depends_on:
-- 57
+- 98e7cf7d-4a57-4a62-8bd9-5346b7a2bf5f
 created: 2026-09-22
 updated: 2026-09-22
 priority: p1

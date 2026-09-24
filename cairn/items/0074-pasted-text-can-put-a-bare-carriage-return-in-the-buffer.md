@@ -1,5 +1,5 @@
 ---
-id: 74
+id: d053b6d9-7f7c-476f-8d87-929e9c245b8a
 title: Pasted text can put a bare carriage return in the buffer
 type: bug
 status: done
