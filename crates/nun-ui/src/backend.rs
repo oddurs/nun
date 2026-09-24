@@ -52,6 +52,11 @@ impl<W: Write> NunBackend<W> {
         Self { writer, underlines }
     }
 
+    /// Draw with `underlines` from now on: the configuration changed.
+    pub const fn set_underlines(&mut self, underlines: Underlines) {
+        self.underlines = underlines;
+    }
+
     /// The writer, for tests that read back what was written.
     #[cfg(test)]
     const fn writer(&self) -> &W {

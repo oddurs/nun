@@ -37,6 +37,18 @@ impl Screen {
         Ok(Self { terminal, guard, capabilities, motion_wanted: false })
     }
 
+    /// Draw underlines as `underlines` from now on, and draw every cell again
+    /// at the next frame, since a cell that has not changed is otherwise
+    /// never written.
+    ///
+    /// # Errors
+    ///
+    /// If the terminal cannot be cleared.
+    pub fn set_underlines(&mut self, underlines: Underlines) -> io::Result<()> {
+        self.terminal.backend_mut().set_underlines(underlines);
+        self.terminal.clear()
+    }
+
     /// Draw one frame.
     ///
     /// Only the cells that differ from the previous frame are written, so an

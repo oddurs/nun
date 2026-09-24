@@ -13,6 +13,7 @@ workspace = true
 
 [dependencies]
 crossterm = "0.29.0"
+nun-config = { version = "0.1.0", path = "../nun-config" }
 nun-core = { version = "0.1.0", path = "../nun-core" }
 nun-lsp = { version = "0.1.0", path = "../nun-lsp" }
 nun-syntax = { version = "0.1.0", path = "../nun-syntax" }

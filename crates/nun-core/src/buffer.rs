@@ -277,6 +277,24 @@ impl Buffer {
         self.tab_width
     }
 
+    /// Write `ending` between lines from the next save on, whatever the file
+    /// had: the text itself is held with `\n` either way, so nothing in the
+    /// buffer moves.
+    pub const fn set_line_ending(&mut self, ending: LineEnding) {
+        self.line_ending = ending;
+    }
+
+    /// Whether the next save begins with a byte-order mark.
+    #[must_use]
+    pub const fn has_bom(&self) -> bool {
+        self.had_bom
+    }
+
+    /// Begin the file with a byte-order mark from the next save on, or stop.
+    pub const fn set_bom(&mut self, bom: bool) {
+        self.had_bom = bom;
+    }
+
     /// Set the columns a tab advances to.
     pub const fn set_tab_width(&mut self, width: usize) {
         self.tab_width = width;
@@ -1848,5 +1866,19 @@ mod tests {
             }
             proptest::prop_assert_eq!(replay(&before, &b.take_edits()), text_of(&b));
         }
+    }
+
+    #[test]
+    fn line_ending_and_mark_can_be_chosen_for_the_next_save() {
+        let mut buffer = Buffer::from_text("a\r\nb\r\n");
+        buffer.set_line_ending(LineEnding::Lf);
+        assert_eq!(buffer.to_bytes(), b"a\nb\n");
+        buffer.set_bom(true);
+        assert!(buffer.has_bom());
+        assert_eq!(buffer.to_bytes(), "\u{feff}a\nb\n".as_bytes());
+        buffer.set_line_ending(LineEnding::Crlf);
+        buffer.set_bom(false);
+        assert_eq!(buffer.to_bytes(), b"a\r\nb\r\n");
+        assert!(!buffer.is_modified(), "choosing how to save is not an edit");
     }
 }

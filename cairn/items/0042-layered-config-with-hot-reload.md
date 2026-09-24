@@ -2,10 +2,12 @@
 id: 42
 title: Layered config with hot reload
 type: feature
-status: backlog
+status: done
 milestone: m5
+assignee: Oddur Sigurdsson
 created: 2026-09-10
-updated: 2026-09-10
+updated: 2026-09-23
+closed_at: 2026-09-23
 priority: p0
 effort: m
 area: config
@@ -29,8 +31,12 @@ line; the rest of the file still applies and the editor never goes down.
 
 ## Acceptance criteria
 
-- [ ] `nun config` prints the merged result annotated by originating layer
-- [ ] `nun config --explain <key>` says what it resolved to here, and why
-- [ ] Saving any layer re-applies live, theme included
-- [ ] An untrusted project file is inert until accepted, and the prompt says what it would change
-- [ ] A malformed file degrades to the previous good value with a visible notice
+- [x] `nun config` prints the merged result annotated by originating layer
+- [x] `nun config --explain <key>` says what it resolved to here, and why
+- [x] Saving any layer re-applies live, theme included
+- [x] An untrusted project file is inert until accepted, and the prompt says what it would change
+- [x] A malformed file degrades to the previous good value with a visible notice
+
+## 2026-09-23
+
+Trust is keyed by canonical directory + SHA-256 of the settings whose scope needs trust (lsp.*). Editing [editor] in a trusted project applies at once; changing [lsp] asks again, and until then only the risky keys are withheld. schema::Scope is the API for a setting that may come from a project.

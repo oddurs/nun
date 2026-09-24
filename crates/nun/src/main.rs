@@ -3,6 +3,7 @@
 mod app;
 mod commands;
 mod hints;
+mod reload;
 mod session;
 mod terminal;
 
@@ -42,10 +43,13 @@ fn main() {
             print!("{}", capabilities_report(&nun_config::load(), &startup));
         }
         Some("theme") => print!("{}", theme(args.get(1).map(String::as_str))),
-        Some("config") => {
-            let settings = nun_config::load();
-            print!("{}{}", settings.describe(), glyphs(&settings).summary());
-        }
+        Some("config") => match config(&args[1..]) {
+            Ok(out) => print!("{out}"),
+            Err(problem) => {
+                eprint!("nun: {problem}\n\n{}", usage());
+                std::process::exit(2);
+            }
+        },
         Some("keys") => print!("{}", commands::reference()),
         Some("glyphs") => print!("{}", glyphs(&nun_config::load()).reference()),
         Some("--help" | "-h") | None => print!("{}", usage()),
@@ -97,7 +101,7 @@ fn language_servers(settings: &Loaded) -> (BTreeMap<String, nun_lsp::ServerSpec>
         }
         // A default is quiet when it is not installed; one somebody wrote
         // into their config is worth saying is missing.
-        let optional = settings.origin(&format!("lsp.{language}")) == nun_config::Origin::Default;
+        let optional = !settings.set_by_a_file(&format!("lsp.{language}"));
         let spec = nun_lsp::ServerSpec {
             command: server.command.clone(),
             args: server.args.clone(),
@@ -118,8 +122,67 @@ fn pointer_settings(app: &mut App, config: &nun_config::Config) {
     app.set_lightbulb(config.lightbulb);
 }
 
+/// Which languages have their files formatted on save.
+fn format_on_save(settings: &Loaded) -> Vec<String> {
+    settings
+        .config
+        .lsp
+        .iter()
+        .filter(|(_, server)| server.enabled && server.format_on_save)
+        .map(|(language, _)| language.clone())
+        .collect()
+}
+
+/// Everything wrong with the settings, from the files themselves to what
+/// the theme, the glyphs, the keys and the servers could not use of them.
+fn all_problems(settings: &Loaded, startup: &terminal::Startup, set: KeySet) -> Vec<String> {
+    let (_, roles) = build_ramp(&startup.palette, settings);
+    let (_, keys) = commands::keymap(set, &settings.config.keys);
+    let (_, servers) = language_servers(settings);
+    let files = settings.problems.iter().map(nun_config::Problem::brief);
+    files.chain(roles).chain(glyphs(settings).problems).chain(keys).chain(servers).collect()
+}
+
+/// `nun config [--explain <key>] [<path>]`: the settings that apply at
+/// `path` — the current directory, or a file, whose `.editorconfig` is then
+/// included — or how one of them was arrived at.
+fn config(args: &[String]) -> Result<String, String> {
+    let mut args = args.to_vec();
+    let explain = take_value(&mut args, "--explain")
+        .map_err(|_| "`--explain` needs a setting after it, like editor.tab_width".to_string())?;
+    if let Some(unknown) = args.iter().find(|arg| arg.starts_with('-')) {
+        return Err(format!("unknown option `{unknown}`"));
+    }
+    if args.len() > 1 {
+        return Err("`nun config` takes one path at most".to_string());
+    }
+    let target = PathBuf::from(args.first().map_or(".", String::as_str));
+    let file = !target.is_dir();
+    let root = workspace_root(&target, !file);
+    let settings = nun_config::load_in(&root);
+    let file = file.then(|| std::path::absolute(&target).unwrap_or(target));
+    let configs = file
+        .as_deref()
+        .map(|file| nun_config::editorconfig::find(file, nun_config::EditorConfig::read));
+    let with_file = file.as_deref().zip(configs.as_deref());
+    if let Some(key) = explain {
+        return Ok(settings.explain(&key, with_file));
+    }
+    Ok({
+        {
+            let whitespace = with_file.map(|(file, configs)| {
+                (file, nun_config::Whitespace::resolve(&settings, file, configs))
+            });
+            let whitespace = whitespace.as_ref().map(|(file, whitespace)| (*file, whitespace));
+            format!("{}{}", settings.describe(whitespace), glyphs(&settings).summary())
+        }
+    })
+}
+
 fn edit(path: &Path, lsp_log: Option<&Path>) -> io::Result<()> {
-    let settings = nun_config::load();
+    let folder = path.is_dir();
+    let root = workspace_root(path, folder);
+    let settings = nun_config::load_in(&root);
 
     // Installed before anything touches the terminal, the probe included, so a
     // panic anywhere after this point still puts it back.
@@ -134,7 +197,6 @@ fn edit(path: &Path, lsp_log: Option<&Path>) -> io::Result<()> {
 
     // A folder opens the file tree with an empty buffer beside it; a file
     // opens the file, with the tree rooted at the folder it is in.
-    let folder = path.is_dir();
     let (mut buffer, report) =
         if folder { (Buffer::new(), LoadReport::default()) } else { open(path)? };
     buffer.set_tab_width(settings.config.tab_width);
@@ -146,14 +208,7 @@ fn edit(path: &Path, lsp_log: Option<&Path>) -> io::Result<()> {
     let ctrl_click = ctrl_click_hint(&settings, &startup, &keymap);
 
     let mut app = App::new(buffer, palette, keymap);
-    app.set_format_on_save(
-        settings
-            .config
-            .lsp
-            .iter()
-            .filter(|(_, server)| server.enabled && server.format_on_save)
-            .map(|(language, _)| language.clone()),
-    );
+    app.set_format_on_save(format_on_save(&settings));
     if let Some(path) = session::Session::default_path() {
         app.attach_session(session::Session::load(path));
     }
@@ -178,12 +233,15 @@ fn edit(path: &Path, lsp_log: Option<&Path>) -> io::Result<()> {
     })?;
     let events = Events::start()?;
 
+    start_reloader(&mut app, &events, root.clone(), settings, startup, set);
+
     // Everything the file tree does happens off this thread and comes back
     // through the same channel as the keyboard, so the main thread stays the
     // only thing that touches the tree.
     let sender = events.sender();
+
     app.open_folder(
-        workspace_root(path, folder),
+        root,
         nun_workspace::trash_or_temp(),
         folder,
         Box::new(move |done| {
@@ -235,6 +293,10 @@ fn edit(path: &Path, lsp_log: Option<&Path>) -> io::Result<()> {
             outcome = outcome.and(app.handle(event));
         }
 
+        if let Some(underlines) = app.take_underlines() {
+            // A failure costs one frame drawn twice, not the session.
+            let _ = screen.set_underlines(underlines);
+        }
         match outcome {
             Outcome::Quit => break,
             Outcome::Suspend => {
@@ -257,6 +319,30 @@ fn edit(path: &Path, lsp_log: Option<&Path>) -> io::Result<()> {
     screen.close();
     wind_down(&mut app, ctrl_click);
     Ok(())
+}
+
+/// Watch and read the settings files on a thread of their own; a change comes
+/// back through the same channel as everything else, to be swapped in whole.
+fn start_reloader(
+    app: &mut App,
+    events: &Events,
+    root: PathBuf,
+    settings: Loaded,
+    startup: terminal::Startup,
+    set: KeySet,
+) {
+    let sender = events.sender();
+    let files = nun_config::Files {
+        user: settings.user.clone(),
+        project: settings.project.as_ref().map(|project| project.file.clone()),
+    };
+    let post = Box::new(move |news| {
+        let _ = sender.send(nun_ui::Event::Config(news));
+    });
+    let reloader = reload::Reloader::start(root, files, post)
+        .map_err(|error| app.warn(format!("Settings will not reload on their own: {error}")))
+        .ok();
+    app.attach_settings(settings, startup, set, reloader);
 }
 
 /// Everything after the terminal is back: saving what was waiting, keeping
@@ -515,7 +601,7 @@ fn warnings(report: LoadReport, settings: &Loaded, role_problems: &[String]) -> 
         );
     }
     for problem in &settings.problems {
-        warnings.push(format!("Config: {problem}"));
+        warnings.push(format!("Config: {}", problem.brief()));
     }
     for problem in role_problems {
         warnings.push(format!("Config: {problem}"));
@@ -566,14 +652,15 @@ fn usage() -> String {
     format!(
         "nun {VERSION}\n\
          A mouse-first terminal code editor.\n\n\
-         Usage: nun [--lsp-log <path>] <file>\n       nun [--lsp-log <path>] <folder>\n       nun config\n       nun keys\n       nun glyphs\n       nun theme dump\n\n\
+         Usage: nun [--lsp-log <path>] <file>\n       nun [--lsp-log <path>] <folder>\n       nun config [--explain <key>] [<path>]\n       nun keys\n       nun glyphs\n       nun theme dump\n\n\
          Options:\n  \
            -h, --help         Print help\n  \
            -V, --version      Print version\n  \
            --capabilities     Probe this terminal and say what nun will use\n  \
            --lsp-log <path>   Write every message to and from the language servers to <path>\n\n\
          Commands:\n  \
-           config         Print the effective configuration and where it came from\n  \
+           config         Print the settings in force here, and the layer each came from\n  \
+           config --explain <key>  Say what one setting is here, and why\n  \
            keys           List every command and the keys bound to it\n  \
            glyphs         List every glyph nun draws, and what draws it\n  \
            theme dump     Probe this terminal and print the derived ramp as TOML\n\n\
@@ -736,9 +823,11 @@ mod tests {
     #[test]
     fn a_lossy_file_outranks_a_config_complaint_in_the_status_line() {
         let mut settings = Loaded::defaults();
-        settings
-            .problems
-            .push(nun_config::Problem { path: "nun.toml".into(), message: "something".into() });
+        settings.problems.push(nun_config::Problem {
+            path: "nun.toml".into(),
+            line: None,
+            message: "something".into(),
+        });
         let report = LoadReport { lossy: true, ..LoadReport::default() };
 
         let warnings = warnings(report, &settings, &[]);
@@ -779,8 +868,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("nun.toml");
         std::fs::write(&path, "[lsp.python]\nenabled = false\n\n[lsp.go]\nargs = [\"serve\"]\n\n[lsp.zig]\ncommand = \"zls\"\n").unwrap();
-        let mut settings = Loaded::defaults();
-        nun_config::apply_file(&mut settings, &path);
+        let sources = nun_config::Sources { user: Some(path), project: None };
+        let files = nun_config::Files::read(&sources, &nun_config::Files::default());
+        let settings = nun_config::resolve(&files, &nun_config::TrustStore::in_memory());
 
         let (servers, problems) = language_servers(&settings);
         assert_eq!(servers["rust"].command, "rust-analyzer");
