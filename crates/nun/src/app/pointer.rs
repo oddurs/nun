@@ -230,6 +230,9 @@ impl App {
         if self.can_complete() {
             commands.push(Command::Complete);
         }
+        if self.can_diff() {
+            commands.push(Command::Diff(crate::commands::Diff::Toggle));
+        }
 
         let items: Vec<MenuItem> = commands
             .iter()

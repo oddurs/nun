@@ -80,6 +80,14 @@ pub enum Role {
     Removed,
     /// Git: changed lines.
     Changed,
+    /// A diff's added lines: a wash of [`Role::Added`] behind their text.
+    AddedWash,
+    /// A diff's removed lines: a wash of [`Role::Removed`] behind their text.
+    RemovedWash,
+    /// The words that changed within an added line, washed more strongly.
+    AddedEmphasis,
+    /// The words that changed within a removed line, washed more strongly.
+    RemovedEmphasis,
     /// Syntax: keywords.
     Keyword,
     /// Syntax: type names.
@@ -137,6 +145,10 @@ pub struct Ramp {
     added: Rgb,
     removed: Rgb,
     changed: Rgb,
+    added_wash: Rgb,
+    removed_wash: Rgb,
+    added_emphasis: Rgb,
+    removed_emphasis: Rgb,
     keyword: Rgb,
     type_name: Rgb,
     string_literal: Rgb,
@@ -178,6 +190,10 @@ impl Ramp {
             Role::Added => self.added,
             Role::Removed => self.removed,
             Role::Changed => self.changed,
+            Role::AddedWash => self.added_wash,
+            Role::RemovedWash => self.removed_wash,
+            Role::AddedEmphasis => self.added_emphasis,
+            Role::RemovedEmphasis => self.removed_emphasis,
             Role::Keyword => self.keyword,
             Role::Type => self.type_name,
             Role::StringLiteral => self.string_literal,
@@ -215,6 +231,10 @@ impl Ramp {
             Role::Added => self.added = color,
             Role::Removed => self.removed = color,
             Role::Changed => self.changed = color,
+            Role::AddedWash => self.added_wash = color,
+            Role::RemovedWash => self.removed_wash = color,
+            Role::AddedEmphasis => self.added_emphasis = color,
+            Role::RemovedEmphasis => self.removed_emphasis = color,
             Role::Keyword => self.keyword = color,
             Role::Type => self.type_name = color,
             Role::StringLiteral => self.string_literal = color,
@@ -246,7 +266,7 @@ impl Ramp {
 
 impl Role {
     /// Every role, in the order `nun theme dump` prints them.
-    pub const ALL: [Self; 28] = [
+    pub const ALL: [Self; 32] = [
         Self::Ground,
         Self::Raised,
         Self::Overlay,
@@ -268,6 +288,10 @@ impl Role {
         Self::Added,
         Self::Removed,
         Self::Changed,
+        Self::AddedWash,
+        Self::RemovedWash,
+        Self::AddedEmphasis,
+        Self::RemovedEmphasis,
         Self::Keyword,
         Self::Type,
         Self::StringLiteral,
@@ -302,6 +326,10 @@ impl Role {
             Self::Added => "added",
             Self::Removed => "removed",
             Self::Changed => "changed",
+            Self::AddedWash => "added_wash",
+            Self::RemovedWash => "removed_wash",
+            Self::AddedEmphasis => "added_emphasis",
+            Self::RemovedEmphasis => "removed_emphasis",
             Self::Keyword => "keyword",
             Self::Type => "type",
             Self::StringLiteral => "string",
@@ -363,6 +391,7 @@ pub fn derive_with_polarity(probe: &Probe, polarity: Polarity) -> Ramp {
     let accent_rgb = Rgb::from(accent);
 
     let role = |slot: Ansi| enforce(Oklch::from(probe.ansi(slot)), probe.background, floor::ROLE);
+    let (added, removed) = (role(Ansi::Green), role(Ansi::Red));
 
     Ramp {
         polarity,
@@ -387,9 +416,16 @@ pub fn derive_with_polarity(probe: &Probe, polarity: Polarity) -> Ramp {
         error: Rgb::from(role(Ansi::Red)),
         warn: Rgb::from(role(Ansi::Yellow)),
         info: Rgb::from(role(Ansi::Cyan)),
-        added: Rgb::from(role(Ansi::Green)),
-        removed: Rgb::from(role(Ansi::Red)),
+        added: Rgb::from(added),
+        removed: Rgb::from(removed),
         changed: Rgb::from(role(Ansi::Yellow)),
+        // Washes of the diff colours, like the tab-stops': faint enough that
+        // syntax colours still read over a whole line of them, and stronger
+        // on the words within a line that actually changed.
+        added_wash: Rgb::from(tint(ground, added, 0.14)),
+        removed_wash: Rgb::from(tint(ground, removed, 0.14)),
+        added_emphasis: Rgb::from(tint(ground, added, 0.32)),
+        removed_emphasis: Rgb::from(tint(ground, removed, 0.32)),
         keyword: Rgb::from(role(Ansi::Magenta)),
         type_name: Rgb::from(role(Ansi::Cyan)),
         string_literal: Rgb::from(role(Ansi::Green)),
@@ -402,6 +438,15 @@ pub fn derive_with_polarity(probe: &Probe, polarity: Polarity) -> Ramp {
         function: Rgb::from(enforce(accent_source, probe.background, floor::ROLE)),
         punctuation: Rgb::from(enforce(ground.mix(figure, 0.72), probe.background, floor::DIM)),
     }
+}
+
+/// `ground` washed with `colour` by `t`: the colour's chroma and hue by that
+/// much, but only a third of its lightness. A wash sits behind text in every
+/// syntax colour, faint comments included, and it is the lightness that
+/// would take their contrast away; the hue is what says added or removed.
+fn tint(ground: Oklch, colour: Oklch, t: f64) -> Oklch {
+    let blended = ground.blend(colour, t);
+    Oklch { l: ground.l + (blended.l - ground.l) / 3.0, ..blended }
 }
 
 /// Step a colour away from `against` until it reads as separate from it.

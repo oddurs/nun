@@ -106,6 +106,13 @@ impl Palette {
         Style::default().bg(to_color(self.ramp.get(role)))
     }
 
+    /// One role as a background only, keeping whatever foreground the text
+    /// already had: a diff's washes, which syntax colours read through.
+    #[must_use]
+    pub fn wash(&self, role: Role) -> Style {
+        Style::default().bg(to_color(self.ramp.get(role)))
+    }
+
     /// An underline in one role's colour, over whatever the text already has.
     ///
     /// Asking for a colour is asking for a curl: the backend draws one where

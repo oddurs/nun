@@ -127,6 +127,15 @@ In use: `default`.
 | `terminal.close` | `×` | U+00D7 | 1, 2 in CJK | `x` | Closes the terminal being used, ending what runs in it |
 | `terminal.hide` | `▾` | U+25BE | 1 | `v` | Puts the panel away, leaving its shells running |
 
+## Diff
+
+| Role | Glyph | Code points | Cells | ascii | Description |
+|---|---|---|---|---|---|
+| `diff.added` | `+` | U+002B | 1 | `+` | Beside a line the file has that the old one did not |
+| `diff.removed` | `-` | U+002D | 1 | `-` | Beside a line the old file had that this one does not |
+| `diff.filler` | `╱` | U+2571 | 1, 2 in CJK | `/` | Hatching the rows where one side has no line, so the two stay level |
+| `diff.close` | `×` | U+00D7 | 1, 2 in CJK | `x` | Closes the diff, back to the text |
+
 ## Everywhere
 
 | Role | Glyph | Code points | Cells | ascii | Description |

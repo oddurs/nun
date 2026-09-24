@@ -167,6 +167,23 @@ impl Oklch {
         }
     }
 
+    /// Blend toward `other` by `t` in straight lines rather than round the
+    /// hue circle: the mix a wash wants.
+    ///
+    /// [`Oklch::mix`] carries hue along with lightness, which is right
+    /// between two colours and wrong from a near-grey ground, whose hue is
+    /// noise: a tenth of the way from grey to green would still have the
+    /// grey's arbitrary hue, and could come out faintly red. Mixed as
+    /// Cartesian Oklab coordinates, a little green is always green.
+    #[must_use]
+    pub fn blend(self, other: Self, t: f64) -> Self {
+        let t = t.clamp(0.0, 1.0);
+        let lab = |c: Self| (c.c * c.h.cos(), c.c * c.h.sin());
+        let ((a0, b0), (a1, b1)) = (lab(self), lab(other));
+        let (a, b) = (a0 + (a1 - a0) * t, b0 + (b1 - b0) * t);
+        Self { l: self.l + (other.l - self.l) * t, c: a.hypot(b), h: b.atan2(a) }
+    }
+
     /// Raise chroma to at least `floor`, leaving more saturated colours alone.
     ///
     /// A terminal configured with a nearly grey "blue" would otherwise give an
@@ -330,6 +347,17 @@ mod tests {
         assert!((contrast_ratio(black, white) - 21.0).abs() < 0.01);
         assert!((contrast_ratio(white, black) - 21.0).abs() < 0.01);
         assert!((contrast_ratio(white, white) - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_blend_from_grey_takes_the_hue_of_the_colour_it_moves_toward() {
+        // A grey whose hue is noise, on the far side of the circle from green.
+        let grey = Oklch { l: 0.2, c: 0.001, h: -2.0 };
+        let green = Oklch { l: 0.7, c: 0.15, h: 2.4 };
+        let wash = grey.blend(green, 0.13);
+        assert!((wash.h - green.h).abs() < 0.1, "hue {} is not green's", wash.h);
+        assert!(wash.c > 0.0 && wash.c < green.c);
+        assert!((grey.blend(green, 0.0).l - grey.l).abs() < 1e-12);
     }
 
     #[test]

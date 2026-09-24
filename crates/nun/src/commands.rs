@@ -150,6 +150,39 @@ pub enum Command {
     CloseTerminal,
     /// Put the terminal panel away, leaving its shells running.
     HideTerminal,
+    /// Something to do with the diff view.
+    Diff(Diff),
+}
+
+/// What the diff view can be asked to do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Diff {
+    /// Show the file's changes against git in its pane, or put them away.
+    /// Stepping between them and staging one are the gutter's commands,
+    /// which act on the view while it has the keyboard.
+    Toggle,
+    /// Show it side by side, or unified.
+    ToggleLayout,
+    /// Compare with the index, or with `HEAD`.
+    ToggleBase,
+}
+
+impl Diff {
+    const fn id(self) -> &'static str {
+        match self {
+            Self::Toggle => "diff.toggle",
+            Self::ToggleLayout => "diff.toggle_layout",
+            Self::ToggleBase => "diff.toggle_base",
+        }
+    }
+
+    const fn title(self) -> &'static str {
+        match self {
+            Self::Toggle => "Diff: show the file's changes, or hide them",
+            Self::ToggleLayout => "Diff: side by side or unified",
+            Self::ToggleBase => "Diff: compare with the index or HEAD",
+        }
+    }
 }
 
 impl Command {
@@ -219,6 +252,9 @@ impl Command {
         Self::NextTerminal,
         Self::CloseTerminal,
         Self::HideTerminal,
+        Self::Diff(Diff::Toggle),
+        Self::Diff(Diff::ToggleLayout),
+        Self::Diff(Diff::ToggleBase),
     ];
 
     /// The name used in `[keys]` in `nun.toml`.
@@ -289,6 +325,7 @@ impl Command {
             Self::NextTerminal => "terminal.next",
             Self::CloseTerminal => "terminal.close",
             Self::HideTerminal => "terminal.hide",
+            Self::Diff(diff) => diff.id(),
         }
     }
 
@@ -360,6 +397,7 @@ impl Command {
             Self::NextTerminal => "Terminal: next",
             Self::CloseTerminal => "Terminal: close",
             Self::HideTerminal => "Terminal: hide the panel",
+            Self::Diff(diff) => diff.title(),
         }
     }
 
@@ -495,6 +533,12 @@ const BASIC: &[(&str, Command)] = &[
     ("ctrl+k tab", Command::NextTerminal),
     ("ctrl+k shift+x", Command::CloseTerminal),
     ("ctrl+k `", Command::HideTerminal),
+    // Git's Ctrl+K G shows one change; Shift makes it all of them. F7,
+    // Shift+F7 and Ctrl+K S step and stage in the view as in the gutter.
+    ("ctrl+k shift+g", Command::Diff(Diff::Toggle)),
+    // B for base, U for unified.
+    ("ctrl+k shift+b", Command::Diff(Diff::ToggleBase)),
+    ("ctrl+k shift+u", Command::Diff(Diff::ToggleLayout)),
 ];
 
 /// Bindings that need the Kitty keyboard protocol, added over [`BASIC`].

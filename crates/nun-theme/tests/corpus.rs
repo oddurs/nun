@@ -187,6 +187,36 @@ fn tabstops_are_washes_the_selection_still_reads_over() {
 }
 
 #[test]
+fn diff_washes_are_tints_that_text_still_reads_over() {
+    for (name, probe) in corpus() {
+        let ramp = derive(&probe);
+        let ground = ramp.get(Role::Ground);
+        for (wash, emphasis) in
+            [(Role::AddedWash, Role::AddedEmphasis), (Role::RemovedWash, Role::RemovedEmphasis)]
+        {
+            let [wash_ratio, emphasis_ratio] =
+                [wash, emphasis].map(|role| contrast_ratio(ramp.get(role), ground));
+            assert!(wash_ratio > 1.0, "{name}: {wash:?} is invisible");
+            assert!(
+                emphasis_ratio > wash_ratio,
+                "{name}: {emphasis:?} must stand out from {wash:?}"
+            );
+            // Every syntax colour keeps most of the contrast it has on the
+            // ground, the faint comments included.
+            for text in [Role::Text, Role::Keyword, Role::StringLiteral, Role::Comment] {
+                let on_ground = contrast_ratio(ramp.get(text), ground);
+                let ratio = contrast_ratio(ramp.get(text), ramp.get(emphasis));
+                assert!(
+                    ratio >= on_ground * 0.75,
+                    "{name}: {text:?} on {emphasis:?} is only {ratio:.2}:1, from {on_ground:.2}:1"
+                );
+            }
+        }
+        assert_ne!(ramp.get(Role::AddedWash), ramp.get(Role::RemovedWash), "{name}");
+    }
+}
+
+#[test]
 fn text_on_the_accent_is_legible() {
     for (name, probe) in corpus() {
         let ramp = derive(&probe);

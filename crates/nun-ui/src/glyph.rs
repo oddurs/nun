@@ -45,13 +45,15 @@ pub enum Area {
     Cards,
     /// The terminal panel.
     Terminal,
+    /// The diff of a file against git.
+    Diff,
     /// Marks that mean the same thing wherever they are.
     Everywhere,
 }
 
 impl Area {
     /// Every area, in the order `nun glyphs` lists them.
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::Editor,
         Self::Rail,
         Self::Tabs,
@@ -61,6 +63,7 @@ impl Area {
         Self::Replace,
         Self::Cards,
         Self::Terminal,
+        Self::Diff,
         Self::Everywhere,
     ];
 
@@ -77,6 +80,7 @@ impl Area {
             Self::Replace => "Replace preview",
             Self::Cards => "Cards",
             Self::Terminal => "Terminal",
+            Self::Diff => "Diff",
             Self::Everywhere => "Everywhere",
         }
     }
@@ -196,6 +200,14 @@ pub enum Glyph {
     TerminalClose,
     /// `terminal.hide`
     TerminalHide,
+    /// `diff.added`
+    DiffAdded,
+    /// `diff.removed`
+    DiffRemoved,
+    /// `diff.filler`
+    DiffFiller,
+    /// `diff.close`
+    DiffClose,
     /// `ellipsis`
     Ellipsis,
     /// `rule.horizontal`
@@ -225,7 +237,7 @@ impl Glyph {
     pub const COUNT: usize = Self::ALL.len();
 
     /// Every role, in the order `nun glyphs` lists them.
-    pub const ALL: [Self; 56] = [
+    pub const ALL: [Self; 60] = [
         Self::FoldOpen,
         Self::FoldClosed,
         Self::FoldHidden,
@@ -279,6 +291,10 @@ impl Glyph {
         Self::TerminalSplit,
         Self::TerminalClose,
         Self::TerminalHide,
+        Self::DiffAdded,
+        Self::DiffRemoved,
+        Self::DiffFiller,
+        Self::DiffClose,
         Self::Ellipsis,
         Self::RuleHorizontal,
         Self::RuleVertical,
@@ -292,7 +308,8 @@ impl Glyph {
     #[allow(clippy::too_many_lines)] // A table: one row per role, and long for it.
     const fn spec(self) -> Spec {
         use Area::{
-            Cards, Editor, Everywhere, Rail, Replace, Search, StatusLine, Tabs, Terminal, Tree,
+            Cards, Diff, Editor, Everywhere, Rail, Replace, Search, StatusLine, Tabs, Terminal,
+            Tree,
         };
         match self {
             Self::FoldOpen => Spec::new(
@@ -495,6 +512,20 @@ impl Glyph {
                 Terminal,
                 "Puts the panel away, leaving its shells running",
             ),
+            Self::DiffAdded => {
+                Spec::new("diff.added", Diff, "Beside a line the file has that the old one did not")
+            }
+            Self::DiffRemoved => Spec::new(
+                "diff.removed",
+                Diff,
+                "Beside a line the old file had that this one does not",
+            ),
+            Self::DiffFiller => Spec::new(
+                "diff.filler",
+                Diff,
+                "Hatching the rows where one side has no line, so the two stay level",
+            ),
+            Self::DiffClose => Spec::new("diff.close", Diff, "Closes the diff, back to the text"),
             Self::RuleHorizontal => Spec::new(
                 "rule.horizontal",
                 Everywhere,
@@ -644,7 +675,7 @@ const fn default_glyph(glyph: Glyph) -> &'static str {
         Glyph::Rail2 => "▌",
         Glyph::Rail3 => "▊",
         Glyph::Rail4 => "█",
-        Glyph::TabClose | Glyph::TerminalClose => "×",
+        Glyph::TabClose | Glyph::TerminalClose | Glyph::DiffClose => "×",
         Glyph::TabModified | Glyph::CardBullet => "•",
         Glyph::TabDrop => "▏",
         Glyph::SidebarShown => "◧",
@@ -652,7 +683,7 @@ const fn default_glyph(glyph: Glyph) -> &'static str {
         Glyph::DiagnosticError => "✕",
         Glyph::DiagnosticWarning => "▲",
         Glyph::DiagnosticInfo | Glyph::TreeIgnoredShown => "●",
-        Glyph::TreeNewFile | Glyph::ReplaceAdded | Glyph::TerminalNew => "+",
+        Glyph::TreeNewFile | Glyph::ReplaceAdded | Glyph::TerminalNew | Glyph::DiffAdded => "+",
         Glyph::TreeNewFolder => "▪",
         // The same ring on the tree's toggle and the search's, so one mark
         // means one thing across the whole sidebar.
@@ -685,7 +716,10 @@ const fn default_glyph(glyph: Glyph) -> &'static str {
         // A box the match has to fill exactly, which is what a whole-word
         // match is.
         Glyph::SearchWord => "▭",
-        Glyph::ReplaceRemoved => "-",
+        Glyph::ReplaceRemoved | Glyph::DiffRemoved => "-",
+        // A hatch, the way a drawing marks where there is nothing: an empty
+        // row would read as a blank line the file has.
+        Glyph::DiffFiller => "╱",
         Glyph::ReplaceIncluded => "✓",
         Glyph::ReplaceExcluded => "·",
         Glyph::ReplaceLineBreak => "↵",
@@ -733,25 +767,28 @@ const fn ascii_glyph(glyph: Glyph) -> &'static str {
         | Glyph::RuleVertical
         | Glyph::TerminalSplit => "|",
         Glyph::Rail4 | Glyph::TreeNewFolder => "#",
-        Glyph::TabClose | Glyph::TerminalClose | Glyph::DiagnosticError | Glyph::CardTaskDone => {
-            "x"
-        }
+        Glyph::TabClose
+        | Glyph::TerminalClose
+        | Glyph::DiagnosticError
+        | Glyph::CardTaskDone
+        | Glyph::DiffClose => "x",
         Glyph::TabModified
         | Glyph::TreeNewFile
         | Glyph::ReplaceAdded
         | Glyph::TerminalNew
-        | Glyph::ChangeAdded => "+",
+        | Glyph::ChangeAdded
+        | Glyph::DiffAdded => "+",
         Glyph::SidebarShown | Glyph::CardPrevious => "<",
         Glyph::DiagnosticWarning => "!",
         Glyph::DiagnosticInfo => "i",
         Glyph::TreeIgnoredHidden | Glyph::SearchIgnored => "o",
         Glyph::TreeIgnoredShown => "O",
         Glyph::TreeSymlink => "@",
-        Glyph::SearchIcon => "/",
+        Glyph::SearchIcon | Glyph::DiffFiller => "/",
         Glyph::SearchBack => "=",
         Glyph::SearchCase => "A",
         Glyph::SearchWord => "w",
-        Glyph::ReplaceRemoved | Glyph::RuleHorizontal => "-",
+        Glyph::ReplaceRemoved | Glyph::RuleHorizontal | Glyph::DiffRemoved => "-",
         Glyph::CardAbove | Glyph::ChangeRemovedAbove => "^",
         // Where `cat -A` and vim's list mode mark the end of a line, and the
         // shell's own prompt.
