@@ -1,0 +1,24 @@
+[package]
+name = "nun-vcs"
+description = "Git status and hunks for nun, computed off the thread that draws"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# Only what status, blob lookup and index writes need. `status` brings the
+# directory walk, ignore rules and gix's copy of imara-diff, which the hunks
+# use too; `parallel` lets a large tree's status use more than one core.
+gix = { version = "0.87.1", default-features = false, features = ["status", "sha1", "parallel"] }
+nun-core = { version = "0.1.0", path = "../nun-core" }
+ropey = { version = "1.6.1", default-features = false, features = ["simd"] }
+
+[dev-dependencies]
+proptest = "1.11.0"
+tempfile = "3.27.0"

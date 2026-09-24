@@ -19,6 +19,7 @@ nun-lsp = { version = "0.1.0", path = "../nun-lsp" }
 nun-syntax = { version = "0.1.0", path = "../nun-syntax" }
 nun-term = { version = "0.1.0", path = "../nun-term" }
 nun-theme = { version = "0.1.0", path = "../nun-theme" }
+nun-vcs = { version = "0.1.0", path = "../nun-vcs" }
 nun-workspace = { version = "0.1.0", path = "../nun-workspace" }
 pulldown-cmark = { version = "0.13.4", default-features = false }
 ratatui = "0.30.2"

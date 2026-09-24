@@ -44,6 +44,8 @@ pub enum Event {
         /// Where it went.
         outcome: CopyOutcome,
     },
+    /// Git has worked something out: a status, or a document's hunks.
+    Vcs(nun_vcs::Reply),
     /// Something changed inside a watched directory, or watching one failed.
     Files {
         /// The directory whose contents changed.

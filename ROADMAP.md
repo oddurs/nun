@@ -73,11 +73,10 @@
 
 ## m5 — Git and terminal
 
-`#####·····` 50% · 6 of 12 done · due 2026-12-03
+`######····` 58% · 7 of 12 done · due 2026-12-03
 
 ### backlog
 
-- [ ] [`0038`](https://github.com/oddurs/nun/blob/main/cairn/items/0038-git-status-and-hunk-computation.md) Git status and hunk computation <sup>feature · p0</sup>
 - [ ] [`0039`](https://github.com/oddurs/nun/blob/main/cairn/items/0039-gutter-marks-and-hunk-actions.md) Gutter marks and hunk actions <sup>feature · p0</sup>
 - [ ] [`0040`](https://github.com/oddurs/nun/blob/main/cairn/items/0040-diff-view.md) Diff view <sup>feature · p2</sup>
 - [ ] [`0088`](https://github.com/oddurs/nun/blob/main/cairn/items/0088-terminal-panel-restore-its-tabs-and-directories-with-the-session.md) Terminal panel: restore its tabs and directories with the session <sup>feature · p2</sup>
@@ -89,6 +88,7 @@
 
 ### done
 
+- [x] [`0038`](https://github.com/oddurs/nun/blob/main/cairn/items/0038-git-status-and-hunk-computation.md) Git status and hunk computation <sup>feature · p0</sup>
 - [x] [`0042`](https://github.com/oddurs/nun/blob/main/cairn/items/0042-layered-config-with-hot-reload.md) Layered config with hot reload <sup>feature · p0</sup>
 - [x] [`0043`](https://github.com/oddurs/nun/blob/main/cairn/items/0043-session-restore.md) Session restore <sup>feature · p2</sup>
 - [x] [`0075`](https://github.com/oddurs/nun/blob/main/cairn/items/0075-format-on-save-per-project.md) Format on save per project <sup>feature · p2</sup>

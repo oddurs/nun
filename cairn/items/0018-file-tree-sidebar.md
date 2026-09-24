@@ -6,7 +6,7 @@ status: done
 milestone: m2
 assignee: Oddur Sigurdsson
 created: 2026-09-10
-updated: 2026-09-19
+updated: 2026-09-23
 priority: p0
 effort: l
 area: workspace
@@ -29,7 +29,7 @@ disk with an undo toast. `notify` keeps it live.
 - [x] Respects .gitignore, with a toggle to show ignored files
 - [x] Create, rename, delete and move, each undoable
 - [x] External filesystem changes appear without a manual refresh
-- [ ] Git status colours rows from nun-vcs once that exists
+- [x] Git status colours rows from nun-vcs once that exists
 
 ## 2026-09-19
 

@@ -45,6 +45,7 @@ mod settings;
 mod sidebar;
 mod syntax;
 mod tabs;
+mod vcs;
 mod workspace_edit;
 
 /// What the editor wants the caller to do next.
@@ -383,6 +384,8 @@ pub struct App {
     syntax: Option<nun_syntax::Worker>,
     /// When the parser is next due to be told what changed.
     syntax_deadline: Option<Instant>,
+    /// Git, once it has somewhere to post its answers.
+    vcs: Option<nun_vcs::Vcs>,
     /// Searching the project, and what it has found.
     search: search::Search,
     /// The outline of the file the palette was last asked about.
@@ -485,6 +488,7 @@ impl App {
             searches: 0,
             syntax: None,
             syntax_deadline: None,
+            vcs: None,
             search: search::Search::default(),
             symbols: syntax::Outline::default(),
             sidebar_view: SidebarView::Files,
@@ -909,7 +913,13 @@ impl App {
             Event::Config(news) => self.config_news(news),
             Event::Term(report) => self.terminal_report(report),
             Event::Copied { chars, outcome } => self.copied(chars, outcome),
-            Event::Focus(true) => Outcome::Continue,
+            Event::Vcs(reply) => self.vcs_reply(reply),
+            // Back from a terminal, where a commit or a checkout may have
+            // happened that no watched folder would show.
+            Event::Focus(true) => {
+                self.refresh_status();
+                Outcome::Continue
+            }
             // The pointer may be anywhere by the time focus comes back.
             Event::Focus(false) => {
                 self.end_drag();
@@ -1530,6 +1540,7 @@ impl App {
             Ok(()) => {
                 let saved = format!("Saved {}", display_path(document.buffer.path()));
                 self.lsp_saved(id);
+                self.refresh_status();
                 Ok(saved)
             }
             Err(SaveError::NoPath) => Err("No path to save to.".into()),
@@ -1663,6 +1674,7 @@ impl App {
             .drop_target(sidebar.drag.and_then(|drag| drag.target))
             .showing_ignored(sidebar.tree.show_ignored())
             .focused(self.focus == Focus::Sidebar)
+            .status(sidebar.status.as_deref())
             .render(tree, cells);
     }
 
