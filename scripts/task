@@ -5,18 +5,32 @@
 # stack-specific lives here and nowhere else, so the two can never drift.
 set -eu
 
-# Every worktree of this repository builds into one target directory, beside
-# the primary checkout. A worktree per unit of work is the workflow, and each
-# one compiling its own copy of tree-sitter, tokio and gix filled a disk with
-# five agents running at once. Sharing keeps dependencies built once; cargo's
-# lock on the directory queues concurrent builds rather than racing them. An
-# explicit CARGO_TARGET_DIR still wins.
-if [ -z "${CARGO_TARGET_DIR:-}" ]; then
-    _common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
-    if [ -n "$_common" ]; then
-        CARGO_TARGET_DIR="$(dirname "$_common")/target"
-        export CARGO_TARGET_DIR
+# Where this checkout builds. The primary checkout uses its own `target/`; a
+# linked worktree gets a directory of its own inside it, at
+# `target/worktrees/<type>-<slug>`, so every build lands wherever the primary's
+# `target/` lives (it may be a link to another volume) and the worktrees' builds
+# are not left behind in their checkouts to fill a disk.
+#
+# Each worktree needs its own directory, not a share of one. Cargo names a
+# workspace crate's artifacts from its path relative to the workspace root, which
+# is the same in every worktree, and decides freshness by mtime, so a shared
+# directory can link one branch against another branch's build of a crate — a
+# green check of the wrong code. An explicit CARGO_TARGET_DIR still wins.
+target_dir() {
+    _common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+    _primary=$(dirname "$_common")
+    _top=$(git rev-parse --show-toplevel)
+    if [ "$_top" = "$_primary" ]; then
+        printf '%s/target' "$_primary"
+    else
+        printf '%s/target/worktrees/%s-%s' "$_primary" \
+            "$(basename "$(dirname "$_top")")" "$(basename "$_top")"
     fi
+}
+
+if [ -z "${CARGO_TARGET_DIR:-}" ] && _dir=$(target_dir); then
+    CARGO_TARGET_DIR=$_dir
+    export CARGO_TARGET_DIR
 fi
 
 usage() {
@@ -31,12 +45,16 @@ Targets:
   build      Compile the workspace
   check      fmt:check && lint && test && build
   install    Build in release and put this working copy on your PATH
+  target:dir Print the directory this checkout builds into
 USAGE
 }
 
 case "${1:-}" in
     fmt)
         cargo fmt --all
+        ;;
+    target:dir)
+        printf '%s\n' "${CARGO_TARGET_DIR:-target}"
         ;;
     fmt:check)
         cargo fmt --all -- --check

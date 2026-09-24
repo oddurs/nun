@@ -215,11 +215,20 @@ cmd_done() {
   merge it first, or drop the branch by hand if it was abandoned"
 
     _dir=$(git rev-parse --show-toplevel)
+    _build=$("$_dir/scripts/task" target:dir 2>/dev/null || true)
     say 'returning to the primary checkout'
     cd "$(git worktree list --porcelain | awk '/^worktree /{print $2; exit}')"
 
     say "removing worktree $_dir"
     git worktree remove "$_dir"
+    # A worktree's build lives outside it (see scripts/task), so removing the
+    # worktree leaves it behind; only ever delete one under target/worktrees/.
+    case "$_build" in
+        */target/worktrees/*)
+            say "removing its build directory $_build"
+            rm -rf "$_build"
+            ;;
+    esac
     git branch -D "$_b" >/dev/null 2>&1 || true
     git worktree prune
     git fetch --prune --quiet origin 2>/dev/null || true

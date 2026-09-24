@@ -85,11 +85,12 @@ scripts/task install    # release build, onto your PATH
 Never put a `cargo` invocation into CI, a git hook, or any script other than
 `scripts/task`. Add a target instead.
 
-Every worktree builds into the primary checkout's `target/`, which
-`scripts/task` arranges, so the binary a worktree just built is at
-`<primary checkout>/target/debug/nun`, not under the worktree. Builds from
-parallel worktrees queue on cargo's lock rather than each filling the disk
-with its own copy of every dependency.
+Each worktree builds into a directory of its own inside the primary
+checkout's `target/`, which `scripts/task` arranges: `scripts/task target:dir`
+prints it, and the binary a worktree just built is under it, at
+`<that dir>/debug/nun`. Worktrees never share one: cargo would link one
+branch against another's build of a workspace crate. `scripts/agent done`
+deletes the directory with the worktree.
 
 Lints are strict by workspace policy: `unsafe_code` is **forbidden**, and clippy
 runs with `pedantic` denied. Do not sprinkle `#[allow]` to get green — if a lint
