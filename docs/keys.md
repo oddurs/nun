@@ -15,6 +15,15 @@ then does what it does. iTerm2 sends them only when Option counts as Alt
 for function keys, and Terminal.app keeps Page Up and Down for itself; the
 wheel scrolls a card in every terminal.
 
+While a terminal in the panel has the keyboard, every key goes to the
+program in it — Esc, Ctrl+C, Ctrl+P, the arrows — except the one key
+bound on its own to `terminal.toggle`, which comes back to the editor.
+Only a single key can be that: the first key of a chord is one some
+program wants. Cmd bindings still work there, since no program can be
+sent Cmd. The panel's header names the key while the terminal has it.
+On a Mac keyboard F6 is Do Not Disturb unless the function keys are set
+to be standard, so it may be Fn+F6; a click on the editor comes back too.
+
 Add or replace bindings in `~/.config/nun/nun.toml`; the defaults you do not
 mention stay as they are:
 
@@ -80,3 +89,9 @@ This file is generated from the source by `nun keys`. Do not edit it by hand.
 | Show hover | `lsp.hover` | `Ctrl+K H`, `Ctrl+K Ctrl+I` | `Ctrl+K H` |
 | Code actions | `lsp.code_actions` | `Ctrl+.`, `Cmd+.`, `Ctrl+K .` | `Ctrl+K .` |
 | Review the project's settings | `config.review_project` | `Ctrl+K T` | `Ctrl+K T` |
+| Terminal: open, or go between it and the editor | `terminal.toggle` | `` Ctrl+` ``, `F6` | `F6` |
+| Terminal: new | `terminal.new` | `Ctrl+K Shift+T` | `Ctrl+K Shift+T` |
+| Terminal: split | `terminal.split` | `Ctrl+K Shift+V` | `Ctrl+K Shift+V` |
+| Terminal: next | `terminal.next` | `Ctrl+K Tab` | `Ctrl+K Tab` |
+| Terminal: close | `terminal.close` | `Ctrl+K Shift+X` | `Ctrl+K Shift+X` |
+| Terminal: hide the panel | `terminal.hide` | `` Ctrl+K ` `` | `` Ctrl+K ` `` |

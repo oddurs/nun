@@ -269,6 +269,8 @@ fn edit(path: &Path, lsp_log: Option<&Path>) -> io::Result<()> {
     // language is opened.
     start_language_servers(&mut app, &events, servers, lsp_log);
 
+    attach_terminal(&mut app, &events, path, folder)?;
+
     let sender = events.sender();
     match nun_workspace::Watcher::new(Box::new(move |change| {
         let _ = sender.send(nun_ui::Event::Files { dir: change.dir, error: change.watch_error });
@@ -345,6 +347,21 @@ fn start_reloader(
     app.attach_settings(settings, startup, set, reloader);
 }
 
+/// Let the terminal panel start shells: in the folder that was opened, or
+/// where nun was started from when it was a file, since that is where the
+/// person was working.
+fn attach_terminal(app: &mut App, events: &Events, path: &Path, folder: bool) -> io::Result<()> {
+    let start = if folder { workspace_root(path, true) } else { std::env::current_dir()? };
+    let sender = events.sender();
+    app.attach_terminal(
+        start,
+        std::sync::Arc::new(move |event| {
+            let _ = sender.send(event);
+        }),
+    );
+    Ok(())
+}
+
 /// Everything after the terminal is back: saving what was waiting, keeping
 /// what is remembered between sessions, and stopping the language servers.
 fn wind_down(app: &mut App, ctrl_click: Option<hints::Unseen>) {
@@ -359,6 +376,10 @@ fn wind_down(app: &mut App, ctrl_click: Option<hints::Unseen>) {
     if let Some(hint) = ctrl_click.filter(|_| app.hint_seen()) {
         let _ = hint.remember();
     }
+    // Every shell in the panel is hung up at once, and waited for: each has
+    // a short grace to go before it is killed, and nothing it started
+    // outlives the editor.
+    app.shutdown_terminals();
     // Last, and bounded: a server that will not exit is killed at the
     // deadline rather than waited for.
     app.shutdown_lsp();

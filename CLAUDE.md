@@ -25,6 +25,7 @@ crates/nun-theme/    OSC probe, OKLCH ramp, role tokens     (no terminal)
 crates/nun-config/   layered toml, schema, hot reload       (no terminal)
 crates/nun-ui/       ratatui widgets, layout, damage tracking
 crates/nun-input/    hit-testing, gestures, keymap resolution
+crates/nun-term/     pty, VT emulator, key and mouse encoding (no ratatui)
 cairn/items/         the roadmap and issues, as Markdown
 scripts/task         the only place a cargo invocation belongs
 ```

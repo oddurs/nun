@@ -8,6 +8,7 @@
 //! widget handed a palette can colour a mark and knows which mark to draw,
 //! with no second thing to thread through every signature.
 
+use nun_term::{Attrs, Ink};
 use nun_theme::{Ramp, Rgb, Role};
 use ratatui::style::{Color, Modifier, Style};
 
@@ -117,6 +118,40 @@ impl Palette {
             .underline_color(to_color(self.ramp.get(role)))
     }
 
+    /// A cell of a program's output in the terminal panel.
+    ///
+    /// Content, not chrome: the colours are the ones the program asked for,
+    /// passed through as it asked for them — an ANSI index stays an index, so
+    /// it comes out in the terminal's own palette, exactly as it would outside
+    /// the editor. Only the program's default colours become roles, so an
+    /// uncoloured shell sits on the editor's own ground in its own text.
+    #[must_use]
+    pub fn content(&self, fg: Ink, bg: Ink, attrs: Attrs) -> Style {
+        let ink = |ink: Ink, default: Role| match ink {
+            Ink::Default => to_color(self.ramp.get(default)),
+            Ink::Indexed(index) => Color::Indexed(index),
+            Ink::Rgb(r, g, b) => Color::Rgb(r, g, b),
+        };
+        let (mut fg, mut bg) = (ink(fg, Role::Text), ink(bg, Role::Ground));
+        if attrs.contains(Attrs::INVERSE) {
+            std::mem::swap(&mut fg, &mut bg);
+        }
+        let mut style = Style::default().fg(fg).bg(bg);
+        for (attr, modifier) in [
+            (Attrs::BOLD, Modifier::BOLD),
+            (Attrs::DIM, Modifier::DIM),
+            (Attrs::ITALIC, Modifier::ITALIC),
+            (Attrs::UNDERLINE, Modifier::UNDERLINED),
+            (Attrs::STRIKE, Modifier::CROSSED_OUT),
+            (Attrs::HIDDEN, Modifier::HIDDEN),
+        ] {
+            if attrs.contains(attr) {
+                style = style.add_modifier(modifier);
+            }
+        }
+        style
+    }
+
     /// Gutter digits, emphasised on the caret's own line.
     #[must_use]
     pub fn gutter(&self, current: bool) -> Style {
@@ -176,6 +211,20 @@ mod tests {
         let expected = palette.ramp().get(Role::Warn);
         assert_eq!(style.underline_color, Some(Color::Rgb(expected.r, expected.g, expected.b)));
         assert_eq!((style.fg, style.bg), (None, None), "the syntax colour shows through");
+    }
+
+    #[test]
+    fn a_programs_colours_pass_through_and_only_its_defaults_are_roles() {
+        let palette = palette();
+        let style = palette.content(Ink::Indexed(1), Ink::Rgb(1, 2, 3), Attrs::default());
+        assert_eq!((style.fg, style.bg), (Some(Color::Indexed(1)), Some(Color::Rgb(1, 2, 3))));
+        let plain = palette.content(Ink::Default, Ink::Default, Attrs::default());
+        assert_eq!(plain, palette.text(), "an uncoloured cell is body text on the ground");
+        let inverse = palette.content(Ink::Default, Ink::Indexed(4), Attrs::INVERSE);
+        assert_eq!(inverse.fg, Some(Color::Indexed(4)));
+        assert_eq!(inverse.bg, palette.text().fg);
+        let bold = palette.content(Ink::Default, Ink::Default, Attrs::BOLD);
+        assert!(bold.add_modifier.contains(Modifier::BOLD));
     }
 
     #[test]

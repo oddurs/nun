@@ -34,6 +34,7 @@ mod hover;
 mod lsp;
 mod navigation;
 mod palette;
+mod panel;
 mod panes;
 mod pointer;
 mod prompt;
@@ -178,6 +179,19 @@ pub enum Target {
     CompletionRow(usize),
     /// Somewhere in the preview of an edit across files.
     EditPreview(workspace_edit::Spot),
+    /// The terminal panel's header, away from its tabs and buttons, which is
+    /// dragged to resize the panel.
+    TermHeader,
+    /// A tab of the terminal panel.
+    TermTab(usize),
+    /// A terminal tab's close cross.
+    TermTabClose(usize),
+    /// One of the terminal panel's buttons.
+    TermButton(panel::TermButton),
+    /// A terminal's screen, by the terminal's id.
+    TermScreen(nun_term::Id),
+    /// The status line's button that opens the terminal panel.
+    StatusTerminal,
 }
 
 impl Target {
@@ -232,6 +246,18 @@ impl Target {
         )
     }
 
+    /// Whether this is part of the terminal panel.
+    const fn in_panel(self) -> bool {
+        matches!(
+            self,
+            Self::TermHeader
+                | Self::TermTab(_)
+                | Self::TermTabClose(_)
+                | Self::TermButton(_)
+                | Self::TermScreen(_)
+        )
+    }
+
     /// Whether this is part of the references panel.
     const fn in_references(self) -> bool {
         matches!(self, Self::ReferencesBack | Self::ReferencesRow(_) | Self::ReferencesEmpty)
@@ -266,6 +292,9 @@ pub enum Focus {
     Search,
     /// The preview of an edit across files.
     EditPreview,
+    /// A terminal in the panel, where every key goes to the program but the
+    /// one bound to `terminal.toggle`.
+    Terminal,
 }
 
 /// One open file: its text, and where the view on it is.
@@ -386,6 +415,8 @@ pub struct App {
     code_actions: code_actions::CodeActions,
     /// The configuration in force, and what follows it as it changes.
     settings: settings::Live,
+    /// The terminal panel.
+    panel: panel::Panel,
 }
 
 impl App {
@@ -465,6 +496,7 @@ impl App {
             edits: workspace_edit::Edits::default(),
             code_actions: code_actions::CodeActions::default(),
             settings: settings::Live::default(),
+            panel: panel::Panel::default(),
         };
         app.relayout();
         app
@@ -595,6 +627,7 @@ impl App {
         self.layout_references(&mut hits);
         self.layout_edit_preview(&mut hits);
         self.layout_panes(&mut hits);
+        self.layout_panel(&mut hits);
         self.layout_diagnostics(&mut hits);
         self.layout_card(&mut hits);
         self.layout_completion(&mut hits);
@@ -608,6 +641,10 @@ impl App {
             // Clickable, but not a hover target: one small button is no reason
             // to have the terminal report every pointer movement all session.
             hits.push(cells(search), Target::StatusSearch, false);
+        }
+        if let Some(terminal) = parts.terminal {
+            // Not a hover target, for the same reason.
+            hits.push(cells(terminal), Target::StatusTerminal, false);
         }
         if let Some(undo) = parts.undo {
             hits.push(cells(undo), Target::StatusUndo, true);
@@ -653,6 +690,7 @@ impl App {
             return StatusParts {
                 files: None,
                 search: None,
+                terminal: None,
                 undo: None,
                 close: None,
                 lsp: None,
@@ -666,7 +704,12 @@ impl App {
         // it has a button of its own rather than only a key.
         let search =
             (status.width > 12).then(|| Rect::new(after_files, status.y, 3, status.height.min(1)));
-        let text = search.map_or(after_files, Rect::right);
+        let after_search = search.map_or(after_files, Rect::right);
+        // And the terminal: the one place it can be opened from with the
+        // mouse before there is a panel to click.
+        let terminal =
+            (status.width > 16).then(|| Rect::new(after_search, status.y, 3, status.height.min(1)));
+        let text = terminal.map_or(after_search, Rect::right);
         let undo = self.undo_offer.then(|| {
             let (left, _) = self.status();
             let x = text + u16::try_from(text_width(&left) + 2).unwrap_or(u16::MAX);
@@ -689,7 +732,7 @@ impl App {
             (x > undo.map_or(used, Rect::right)).then(|| Rect::new(x, status.y, width, 1))
         });
         let problems = self.problems_part(status, text, undo, close, lsp);
-        StatusParts { files, search, undo, close, lsp, problems, text }
+        StatusParts { files, search, terminal, undo, close, lsp, problems, text }
     }
 
     /// Whether anything on screen reacts to the pointer merely passing over it.
@@ -714,6 +757,7 @@ impl App {
             self.link_deadline(),
             self.hover_deadline(),
             self.bulb_deadline(),
+            self.panel_deadline(),
         ]
         .into_iter()
         .flatten()
@@ -756,7 +800,8 @@ impl App {
             .and(self.link_tick(now))
             .and(self.hover_tick(now))
             .and(self.bulb_follow(now))
-            .and(self.bulb_tick(now));
+            .and(self.bulb_tick(now))
+            .and(self.panel_tick(now));
         if outcome == Outcome::Redraw {
             self.relayout();
         }
@@ -786,6 +831,7 @@ impl App {
             Outcome::Continue
         };
         let outcome = self.dispatch(event, now).and(unlinked);
+        self.panel_focus_follow();
         // Whatever the event did to the text goes to the language servers
         // now, in the order it was done, and only then is anything asked
         // about it.
@@ -823,6 +869,7 @@ impl App {
                 self.palette_paste(&text);
                 Outcome::Redraw
             }
+            Event::Paste(text) if self.focus == Focus::Terminal => self.terminal_paste(&text),
             Event::Paste(text) => {
                 // A paste is not the second half of a chord.
                 self.chords.cancel();
@@ -848,6 +895,8 @@ impl App {
             Event::Found(found) => self.search_found(found),
             Event::Lsp(event) => self.lsp_event(event),
             Event::Config(news) => self.config_news(news),
+            Event::Term(report) => self.terminal_report(report),
+            Event::Copied { chars, problem } => self.copied(chars, problem),
             Event::Focus(true) => Outcome::Continue,
             // The pointer may be anywhere by the time focus comes back.
             Event::Focus(false) => {
@@ -869,6 +918,9 @@ impl App {
         }
         if self.finder.is_some() {
             return self.palette_key(&event);
+        }
+        if let Some(outcome) = self.terminal_key(&event) {
+            return outcome;
         }
         if let Some(outcome) = self.card_key(&event) {
             return outcome;
@@ -915,13 +967,16 @@ impl App {
                     Focus::Search => self.search_key(event, Instant::now()),
                     Focus::Sidebar => self.sidebar_key(event),
                     Focus::EditPreview => self.edit_preview_key(event),
-                    Focus::Editor => Outcome::Continue,
+                    Focus::Editor | Focus::Terminal => Outcome::Continue,
                 }
             }
             Resolved::Command(command) => self.run(command),
             // The status line shows the chord so far.
             Resolved::Pending => Outcome::Redraw,
             Resolved::Unbound(keys) if keys.len() == 1 => match event {
+                // A key the terminal could not be sent, and nothing else is
+                // bound to: nothing to type it into.
+                Some(_) if self.focus == Focus::Terminal => Outcome::Continue,
                 // The query is a text field: everything unbound belongs to it,
                 // including the characters that would otherwise be typed into
                 // the document behind it.
@@ -1064,6 +1119,12 @@ impl App {
                 }
             }
 
+            Command::ToggleTerminal
+            | Command::NewTerminal
+            | Command::SplitTerminal
+            | Command::NextTerminal
+            | Command::CloseTerminal
+            | Command::HideTerminal => return self.terminal_command(command),
             Command::NextTab => return self.step_tab(1),
             Command::PreviousTab => return self.step_tab(-1),
         }
@@ -1144,6 +1205,21 @@ impl App {
         let hovered = hovered.and(self.link_pointer(mouse, now));
 
         let target = hit.map(|hit| hit.target.pressed());
+        if let Some(outcome) = self.panel_pointer(mouse, target, now) {
+            return outcome.and(hovered);
+        }
+        self.mouse_on(mouse, target, hovered, now)
+    }
+
+    /// The pointer did something over `target`, outside the terminal panel.
+    /// `hovered` is what following it did already.
+    fn mouse_on(
+        &mut self,
+        mouse: crossterm::event::MouseEvent,
+        target: Option<Target>,
+        hovered: Outcome,
+        now: Instant,
+    ) -> Outcome {
         match mouse.kind {
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
                 if target.is_some_and(Target::in_card) =>
@@ -1301,6 +1377,10 @@ impl App {
             Target::StatusLsp => {
                 self.acknowledge();
                 self.lsp_restart()
+            }
+            Target::StatusTerminal => {
+                self.acknowledge();
+                self.run(Command::ToggleTerminal)
             }
             target if target.in_diagnostics() => {
                 self.acknowledge();
@@ -1515,6 +1595,7 @@ impl App {
         let status =
             Rect { y: area.bottom().saturating_sub(1), height: area.height.min(1), ..area };
         self.render_panes(area, cells);
+        self.render_panel(area, cells);
         self.render_link(cells);
         self.render_sidebar(cells);
         self.render_search(cells);
@@ -1624,6 +1705,10 @@ impl App {
             let glyph = self.button_glyph(Glyph::SearchIcon);
             write_at(cells, search, search.x, &glyph, button(Target::StatusSearch));
         }
+        if let Some(terminal) = parts.terminal {
+            let glyph = self.button_glyph(Glyph::TerminalToggle);
+            write_at(cells, terminal, terminal.x, &glyph, button(Target::StatusTerminal));
+        }
 
         let (left, right) = self.status();
         write_at(cells, area, parts.text, &left, style);
@@ -1700,6 +1785,8 @@ struct StatusParts {
     files: Option<Rect>,
     /// The button that opens the palette.
     search: Option<Rect>,
+    /// The button that opens the terminal panel.
+    terminal: Option<Rect>,
     /// The Undo button after a file operation.
     undo: Option<Rect>,
     /// The cross that closes the open file, when there is no tab strip to

@@ -43,13 +43,15 @@ pub enum Area {
     Replace,
     /// Hover cards, problem cards, and the markdown drawn in them.
     Cards,
+    /// The terminal panel.
+    Terminal,
     /// Marks that mean the same thing wherever they are.
     Everywhere,
 }
 
 impl Area {
     /// Every area, in the order `nun glyphs` lists them.
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::Editor,
         Self::Rail,
         Self::Tabs,
@@ -58,6 +60,7 @@ impl Area {
         Self::Search,
         Self::Replace,
         Self::Cards,
+        Self::Terminal,
         Self::Everywhere,
     ];
 
@@ -73,6 +76,7 @@ impl Area {
             Self::Search => "Search",
             Self::Replace => "Replace preview",
             Self::Cards => "Cards",
+            Self::Terminal => "Terminal",
             Self::Everywhere => "Everywhere",
         }
     }
@@ -174,6 +178,16 @@ pub enum Glyph {
     CardTaskDone,
     /// `card.task.open`
     CardTaskOpen,
+    /// `status.terminal`
+    TerminalToggle,
+    /// `terminal.new`
+    TerminalNew,
+    /// `terminal.split`
+    TerminalSplit,
+    /// `terminal.close`
+    TerminalClose,
+    /// `terminal.hide`
+    TerminalHide,
     /// `ellipsis`
     Ellipsis,
     /// `rule.horizontal`
@@ -203,7 +217,7 @@ impl Glyph {
     pub const COUNT: usize = Self::ALL.len();
 
     /// Every role, in the order `nun glyphs` lists them.
-    pub const ALL: [Self; 47] = [
+    pub const ALL: [Self; 52] = [
         Self::FoldOpen,
         Self::FoldClosed,
         Self::FoldHidden,
@@ -248,6 +262,11 @@ impl Glyph {
         Self::CardQuote,
         Self::CardTaskDone,
         Self::CardTaskOpen,
+        Self::TerminalToggle,
+        Self::TerminalNew,
+        Self::TerminalSplit,
+        Self::TerminalClose,
+        Self::TerminalHide,
         Self::Ellipsis,
         Self::RuleHorizontal,
         Self::RuleVertical,
@@ -260,7 +279,9 @@ impl Glyph {
     /// not compile.
     #[allow(clippy::too_many_lines)] // A table: one row per role, and long for it.
     const fn spec(self) -> Spec {
-        use Area::{Cards, Editor, Everywhere, Rail, Replace, Search, StatusLine, Tabs, Tree};
+        use Area::{
+            Cards, Editor, Everywhere, Rail, Replace, Search, StatusLine, Tabs, Terminal, Tree,
+        };
         match self {
             Self::FoldOpen => Spec::new(
                 "fold.open",
@@ -419,6 +440,29 @@ impl Glyph {
                 Everywhere,
                 "Where text was cut short to fit, and after a key that waits for another",
             ),
+            Self::TerminalToggle => Spec::new(
+                "status.terminal",
+                StatusLine,
+                "The status line's button that opens the terminal panel, or goes to it",
+            ),
+            Self::TerminalNew => {
+                Spec::new("terminal.new", Terminal, "Starts another terminal, in a tab of its own")
+            }
+            Self::TerminalSplit => Spec::new(
+                "terminal.split",
+                Terminal,
+                "Starts another terminal beside the one being used",
+            ),
+            Self::TerminalClose => Spec::new(
+                "terminal.close",
+                Terminal,
+                "Closes the terminal being used, ending what runs in it",
+            ),
+            Self::TerminalHide => Spec::new(
+                "terminal.hide",
+                Terminal,
+                "Puts the panel away, leaving its shells running",
+            ),
             Self::RuleHorizontal => Spec::new(
                 "rule.horizontal",
                 Everywhere,
@@ -541,7 +585,7 @@ impl Preset {
 /// The `default` preset: exactly what nun drew before glyphs had roles.
 const fn default_glyph(glyph: Glyph) -> &'static str {
     match glyph {
-        Glyph::FoldOpen | Glyph::TreeExpanded | Glyph::CardBelow => "▾",
+        Glyph::FoldOpen | Glyph::TreeExpanded | Glyph::CardBelow | Glyph::TerminalHide => "▾",
         Glyph::FoldClosed | Glyph::TreeCollapsed => "▸",
         Glyph::FoldHidden => "⋯",
         // A lozenge rather than a light bulb: 💡 is two cells wide and drawn
@@ -557,7 +601,7 @@ const fn default_glyph(glyph: Glyph) -> &'static str {
         Glyph::Rail2 => "▌",
         Glyph::Rail3 => "▊",
         Glyph::Rail4 => "█",
-        Glyph::TabClose => "×",
+        Glyph::TabClose | Glyph::TerminalClose => "×",
         Glyph::TabModified | Glyph::CardBullet => "•",
         Glyph::TabDrop => "▏",
         Glyph::SidebarShown => "◧",
@@ -565,7 +609,7 @@ const fn default_glyph(glyph: Glyph) -> &'static str {
         Glyph::DiagnosticError => "✕",
         Glyph::DiagnosticWarning => "▲",
         Glyph::DiagnosticInfo | Glyph::TreeIgnoredShown => "●",
-        Glyph::TreeNewFile | Glyph::ReplaceAdded => "+",
+        Glyph::TreeNewFile | Glyph::ReplaceAdded | Glyph::TerminalNew => "+",
         Glyph::TreeNewFolder => "▪",
         // The same ring on the tree's toggle and the search's, so one mark
         // means one thing across the whole sidebar.
@@ -609,6 +653,8 @@ const fn default_glyph(glyph: Glyph) -> &'static str {
         Glyph::CardTaskDone => "☑",
         Glyph::CardTaskOpen => "☐",
         Glyph::Ellipsis => "…",
+        Glyph::TerminalToggle => "❯",
+        Glyph::TerminalSplit => "◫",
         Glyph::RuleHorizontal => "─",
     }
 }
@@ -625,7 +671,8 @@ const fn ascii_glyph(glyph: Glyph) -> &'static str {
         | Glyph::TreeExpanded
         | Glyph::CardBelow
         | Glyph::SearchApply
-        | Glyph::ReplaceIncluded => "v",
+        | Glyph::ReplaceIncluded
+        | Glyph::TerminalHide => "v",
         Glyph::FoldClosed
         | Glyph::TreeCollapsed
         | Glyph::CardNext
@@ -635,10 +682,16 @@ const fn ascii_glyph(glyph: Glyph) -> &'static str {
         Glyph::Lightbulb | Glyph::SearchRegex | Glyph::CardBullet => "*",
         Glyph::Rail1 | Glyph::ReplaceExcluded => ".",
         Glyph::Rail2 => ":",
-        Glyph::Rail3 | Glyph::TabDrop | Glyph::CardQuote | Glyph::RuleVertical => "|",
+        Glyph::Rail3
+        | Glyph::TabDrop
+        | Glyph::CardQuote
+        | Glyph::RuleVertical
+        | Glyph::TerminalSplit => "|",
         Glyph::Rail4 | Glyph::TreeNewFolder => "#",
-        Glyph::TabClose | Glyph::DiagnosticError | Glyph::CardTaskDone => "x",
-        Glyph::TabModified | Glyph::TreeNewFile | Glyph::ReplaceAdded => "+",
+        Glyph::TabClose | Glyph::TerminalClose | Glyph::DiagnosticError | Glyph::CardTaskDone => {
+            "x"
+        }
+        Glyph::TabModified | Glyph::TreeNewFile | Glyph::ReplaceAdded | Glyph::TerminalNew => "+",
         Glyph::SidebarShown | Glyph::CardPrevious => "<",
         Glyph::DiagnosticWarning => "!",
         Glyph::DiagnosticInfo => "i",
@@ -651,8 +704,9 @@ const fn ascii_glyph(glyph: Glyph) -> &'static str {
         Glyph::SearchWord => "w",
         Glyph::ReplaceRemoved | Glyph::RuleHorizontal => "-",
         Glyph::CardAbove => "^",
-        // Where `cat -A` and vim's list mode mark the end of a line.
-        Glyph::ReplaceLineBreak => "$",
+        // Where `cat -A` and vim's list mode mark the end of a line, and the
+        // shell's own prompt.
+        Glyph::ReplaceLineBreak | Glyph::TerminalToggle => "$",
         Glyph::CardTaskOpen => "_",
     }
 }

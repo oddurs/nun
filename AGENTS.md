@@ -122,7 +122,7 @@ violates one is wrong even if it passes CI.
 
 1. **Dependencies point downward only.** The layering is: `nun` (binary) →
    `nun-ui`, `nun-input` → `nun-syntax`, `nun-lsp`, `nun-vcs`, `nun-workspace`,
-   `nun-theme` → `nun-core`, `nun-config`. Nothing imports from the layer above
+   `nun-term`, `nun-theme` → `nun-core`, `nun-config`. Nothing imports from the layer above
    it. If you need to, the abstraction is in the wrong crate.
 
 2. **The render path never blocks and never locks.** Editor state has one owner
