@@ -73,16 +73,13 @@
 
 ## m5 — Git and terminal
 
-`##########` 92% · 11 of 12 done · due 2026-12-03
-
-### backlog
-
-- [ ] [`0040`](https://github.com/oddurs/nun/blob/main/cairn/items/0040-diff-view.md) Diff view <sup>feature · p2</sup>
+`##########` 100% · 12 of 12 done · due 2026-12-03
 
 ### done
 
 - [x] [`0038`](https://github.com/oddurs/nun/blob/main/cairn/items/0038-git-status-and-hunk-computation.md) Git status and hunk computation <sup>feature · p0</sup>
 - [x] [`0039`](https://github.com/oddurs/nun/blob/main/cairn/items/0039-gutter-marks-and-hunk-actions.md) Gutter marks and hunk actions <sup>feature · p0</sup>
+- [x] [`0040`](https://github.com/oddurs/nun/blob/main/cairn/items/0040-diff-view.md) Diff view <sup>feature · p2</sup>
 - [x] [`0041`](https://github.com/oddurs/nun/blob/main/cairn/items/0041-integrated-terminal-panel.md) Integrated terminal panel <sup>feature · p1</sup>
 - [x] [`0042`](https://github.com/oddurs/nun/blob/main/cairn/items/0042-layered-config-with-hot-reload.md) Layered config with hot reload <sup>feature · p0</sup>
 - [x] [`0043`](https://github.com/oddurs/nun/blob/main/cairn/items/0043-session-restore.md) Session restore <sup>feature · p2</sup>
