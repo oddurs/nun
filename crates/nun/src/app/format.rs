@@ -134,7 +134,7 @@ impl App {
     }
 
     /// Whether a document's language is formatted on save.
-    fn formats_on_save(&self, id: DocId) -> bool {
+    pub(super) fn formats_on_save(&self, id: DocId) -> bool {
         self.doc_by(id)
             .filter(|document| !document.buffer.is_lossy())
             .and_then(|document| document.buffer.path())

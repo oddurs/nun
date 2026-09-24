@@ -294,14 +294,13 @@ impl App {
             return;
         }
         self.settings.asked = Some(project.fingerprint.clone());
-        self.prompt = Some(trust_prompt(project));
+        self.prompt = trust_prompt(self.settings.loaded.as_ref());
     }
 
     /// Ask again about the project's settings file, whatever was decided.
     pub(super) fn review_project(&mut self) -> Outcome {
-        let project = self.settings.loaded.as_ref().and_then(|loaded| loaded.project.as_ref());
-        match project {
-            Some(project) => self.prompt = Some(trust_prompt(project)),
+        match trust_prompt(self.settings.loaded.as_ref()) {
+            Some(prompt) => self.prompt = Some(prompt),
             None => {
                 self.message =
                     Some(format!("This project has no {} to trust.", nun_config::PROJECT_FILE));
@@ -350,10 +349,13 @@ impl App {
 }
 
 /// The question about a project file: what it would change, and the buttons.
+/// `None` when there is no project file to ask about.
 ///
 /// Enter views the file rather than trusting it, so a keystroke meant for
 /// the text as the question appears cannot trust anything.
-fn trust_prompt(project: &nun_config::Project) -> Prompt {
+fn trust_prompt(loaded: Option<&Loaded>) -> Option<Prompt> {
+    let loaded = loaded?;
+    let project = loaded.project.as_ref()?;
     // What runs a program or rewrites files first: on a narrow line, that is
     // what must not be cut off.
     let mut changes = project.would_change();
@@ -361,16 +363,26 @@ fn trust_prompt(project: &nun_config::Project) -> Prompt {
         let key = change.split(' ').next().unwrap_or_default();
         !nun_config::schema::find(key).is_some_and(|setting| setting.scope.needs_trust())
     });
-    let what = if changes.is_empty() {
+    let (mut said, mut set) = (Vec::new(), Vec::new());
+    for change in changes {
+        match in_words(&change, &loaded.config) {
+            Some(words) => said.push(words),
+            None => set.push(change),
+        }
+    }
+    if !set.is_empty() {
+        said.push(format!("set {}", set.join(", ")));
+    }
+    let what = if said.is_empty() {
         "sets nothing yet".to_string()
     } else {
-        format!("would set {}", changes.join(", "))
+        format!("would {}", said.join(", and "))
     };
     let lead = match project.trust {
         nun_config::Trust::Changed => "changed since you trusted it:",
         _ => "is not trusted:",
     };
-    Prompt {
+    Some(Prompt {
         purpose: Purpose::TrustProject,
         message: format!("{} {lead} it {what}.", nun_config::PROJECT_FILE),
         field: None,
@@ -381,7 +393,30 @@ fn trust_prompt(project: &nun_config::Project) -> Prompt {
             ("Not now", Answer::Cancel),
         ],
         anchor: None,
-    }
+    })
+}
+
+/// A change the prompt says in words rather than as `key = value`: whether a
+/// language's files are rewritten on save is the one a person most needs to
+/// see at a glance, and `lsp.rust.format_on_save = false` makes them work
+/// out which way it goes. It is short, and names the language early, so a
+/// narrow status line does not cut that off. `config` is what applies now,
+/// so a value already in force is said to be kept rather than changed.
+fn in_words(change: &str, config: &nun_config::Config) -> Option<String> {
+    let (key, value) = change.split_once(" = ")?;
+    let language = key.strip_prefix("lsp.")?.strip_suffix(".format_on_save")?;
+    let on = match value {
+        "true" => true,
+        "false" => false,
+        _ => return None,
+    };
+    let now = config.lsp.get(language).is_some_and(|server| server.format_on_save);
+    Some(match (on, now) {
+        (true, false) => format!("format {language} files on save"),
+        (false, true) => format!("stop formatting {language} files on save"),
+        (true, true) => format!("keep formatting {language} files on save"),
+        (false, false) => format!("leave {language} files unformatted on save"),
+    })
 }
 
 /// The edits that trim trailing spaces and tabs, and end the text with a
@@ -452,6 +487,8 @@ mod tests {
         );
         app.set_viewport(Rect::new(0, 0, 100, 8));
         let loaded = nun_config::resolve(files, &TrustStore::in_memory());
+        // As `main` does.
+        app.set_format_on_save(crate::format_on_save(&loaded));
         app.attach_settings(loaded, startup(), KeySet::Full, None);
         (app, dir)
     }
@@ -623,9 +660,107 @@ mod tests {
         );
         let files = nun_config::Files { user: None, project: Some(file) };
         let loaded = nun_config::resolve(&files, &nun_config::TrustStore::in_memory());
-        let prompt = trust_prompt(loaded.project.as_ref().unwrap());
+        let prompt = trust_prompt(Some(&loaded)).unwrap();
         assert!(prompt.message.contains("lsp.rust.command = \"./x\""), "{}", prompt.message);
         assert_eq!(prompt.buttons[0], ("View", Answer::Confirm), "Enter only views it");
+    }
+
+    #[test]
+    fn the_prompt_says_which_way_format_on_save_goes_in_words() {
+        let dir = Path::new("/p");
+        let files = Files {
+            user: Some(user("[lsp.python]\nformat_on_save = false\n")),
+            project: Some(project(
+                dir,
+                "[editor]\ntab_width = 2\n[lsp.rust]\nformat_on_save = false\n[lsp.python]\nformat_on_save = true\n[lsp.go]\nformat_on_save = true\n",
+            )),
+        };
+        let loaded = nun_config::resolve(&files, &TrustStore::in_memory());
+        let message = trust_prompt(Some(&loaded)).unwrap().message;
+        assert_eq!(
+            message,
+            ".nun.toml is not trusted: it would keep formatting go files on save, and format \
+             python files on save, and stop formatting rust files on save, and set \
+             editor.tab_width = 2."
+        );
+    }
+
+    /// Whether saving the file being edited would format it first.
+    fn formats(app: &App) -> bool {
+        app.formats_on_save(app.doc().id)
+    }
+
+    #[test]
+    fn a_project_turns_format_on_save_on_and_off_once_trusted_and_live() {
+        let dir = tempfile::tempdir().unwrap();
+        let user = || Some(user("[lsp.rust]\nformat_on_save = true\n"));
+        let off = Files {
+            user: user(),
+            project: Some(project(dir.path(), "[lsp.rust]\nformat_on_save = false\n")),
+        };
+        let (mut app, _file_dir) = editor("a.rs", "fn main(){}", &off);
+        assert!(formats(&app), "untrusted: the user's on stands");
+        let message = &app.prompt.as_ref().expect("asked").message;
+        assert!(message.contains("stop formatting rust files on save"), "{message}");
+
+        press(&mut app, KeyCode::Char('t'));
+        assert!(app.prompt.is_none());
+        assert!(!formats(&app), "trusted: the project's off wins");
+
+        // Saving the user's file again, still on, changes nothing.
+        let mut store = TrustStore::in_memory();
+        let fingerprint = nun_config::trust::fingerprint(off.project.as_ref().unwrap());
+        store.remember(dir.path().canonicalize().unwrap(), Decision::Trust, fingerprint);
+        let reload = |files: &Files| {
+            Event::Config(News::Settings(Box::new(nun_config::resolve(files, &store))))
+        };
+        app.handle(reload(&off));
+        assert!(!formats(&app));
+
+        // The project changes its mind. That is a risky setting changed, so
+        // it asks again, and meanwhile the project's value is withheld and
+        // the user's own applies: here that is on, so trusting keeps it on.
+        let on = Files {
+            user: user(),
+            project: Some(project(dir.path(), "[lsp.rust]\nformat_on_save = true\n")),
+        };
+        app.handle(reload(&on));
+        let message = &app.prompt.as_ref().expect("asked again").message;
+        assert!(message.starts_with(".nun.toml changed since you trusted it"), "{message}");
+        assert!(message.contains("keep formatting rust files on save"), "{message}");
+        assert!(formats(&app), "withheld: the user's on");
+        press(&mut app, KeyCode::Char('t'));
+        assert!(app.prompt.is_none());
+        assert!(formats(&app), "trusted again: the project's on");
+    }
+
+    #[test]
+    fn a_trusted_project_turns_format_on_save_on_over_the_users_off() {
+        let dir = tempfile::tempdir().unwrap();
+        let files = Files {
+            user: Some(user("[lsp.python]\nformat_on_save = false\n")),
+            project: Some(project(dir.path(), "[lsp.python]\nformat_on_save = true\n")),
+        };
+        let (mut app, _file_dir) = editor("a.py", "x=1", &files);
+        assert!(!formats(&app), "untrusted: the user's off stands");
+        let message = &app.prompt.as_ref().expect("asked").message;
+        assert!(message.contains("format python files on save"), "{message}");
+        press(&mut app, KeyCode::Char('t'));
+        assert!(formats(&app), "trusted: the project's on wins");
+    }
+
+    #[test]
+    fn an_ignored_project_leaves_format_on_save_as_the_user_has_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let files = Files {
+            user: Some(user("[lsp.python]\nformat_on_save = false\n")),
+            project: Some(project(dir.path(), "[lsp.python]\nformat_on_save = true\n")),
+        };
+        let (mut app, _file_dir) = editor("a.py", "x=1", &files);
+        assert!(!formats(&app));
+        press(&mut app, KeyCode::Char('i'));
+        assert!(app.prompt.is_none());
+        assert!(!formats(&app), "ignored: still the user's off");
     }
 
     fn spaces(app: &mut App, dir: &Path, size: usize) {

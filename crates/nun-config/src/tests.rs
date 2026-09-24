@@ -201,3 +201,70 @@ fn reading_again_keeps_what_a_broken_file_had() {
     assert_eq!(loaded.problems.len(), 1);
     assert_eq!(loaded.problems[0].line, Some(1));
 }
+
+#[test]
+fn a_trusted_project_turns_format_on_save_on_and_off_over_the_user() {
+    let files = Files {
+        user: Some(user(
+            "[lsp.rust]\nformat_on_save = true\n[lsp.python]\nformat_on_save = false\n",
+        )),
+        project: Some(project(
+            "[lsp.rust]\nformat_on_save = false\n[lsp.python]\nformat_on_save = true\n",
+        )),
+    };
+    let loaded = resolve(&files, &trusting(&files));
+    assert!(!loaded.config.lsp["rust"].format_on_save, "off, over the user's on");
+    assert!(loaded.config.lsp["python"].format_on_save, "on, over the user's off");
+    assert!(loaded.config.lsp["go"].format_on_save, "a language it does not name keeps its own");
+    let origin = loaded.origin("lsp.python.format_on_save");
+    assert_eq!(
+        origin,
+        Origin::File { layer: Layer::Project, path: "/p/.nun.toml".into(), line: 4 }
+    );
+
+    let out = loaded.describe(None);
+    assert!(out.contains("format_on_save = true    # project: /p/.nun.toml:4"), "{out}");
+    assert!(out.contains("format_on_save = false    # project: /p/.nun.toml:2"), "{out}");
+
+    let why = loaded.explain("lsp.python.format_on_save", None);
+    assert!(why.starts_with("lsp.python.format_on_save = true\n"), "{why}");
+    assert!(why.contains("  false            user: /home/nun.toml:4  (overridden)"), "{why}");
+    assert!(why.contains("→ true             project: /p/.nun.toml:4"), "{why}");
+}
+
+#[test]
+fn an_untrusted_or_ignored_project_cannot_touch_format_on_save() {
+    let files = Files {
+        user: Some(user("[lsp.python]\nformat_on_save = true\n")),
+        project: Some(project(
+            "[lsp.python]\nformat_on_save = false\n[lsp.go]\nformat_on_save = false\n",
+        )),
+    };
+    let mut ignoring = TrustStore::in_memory();
+    let fingerprint = trust::fingerprint(files.project.as_ref().unwrap());
+    ignoring.remember(PathBuf::from("/p"), Decision::Ignore, fingerprint);
+    for store in [TrustStore::in_memory(), ignoring] {
+        let loaded = resolve(&files, &store);
+        assert!(loaded.config.lsp["python"].format_on_save, "the user's value stands");
+        assert!(loaded.config.lsp["go"].format_on_save, "the default stands");
+        assert_eq!(loaded.origin("lsp.python.format_on_save").layer(), Some(Layer::User));
+        assert_eq!(loaded.origin("lsp.go.format_on_save"), Origin::Default);
+        let why = loaded.explain("lsp.go.format_on_save", None);
+        assert!(why.contains("project: /p/.nun.toml:4  (not used: this project's"), "{why}");
+    }
+}
+
+#[test]
+fn changing_format_on_save_in_a_trusted_project_asks_again() {
+    let before =
+        Files { user: None, project: Some(project("[lsp.rust]\nformat_on_save = true\n")) };
+    let store = trusting(&before);
+    let after =
+        Files { user: None, project: Some(project("[lsp.rust]\nformat_on_save = false\n")) };
+    let loaded = resolve(&after, &store);
+    let project = loaded.project.as_ref().unwrap();
+    assert_eq!(project.trust, Trust::Changed);
+    assert!(project.asks());
+    assert!(loaded.config.lsp["rust"].format_on_save, "withheld: the default applies meanwhile");
+    assert_eq!(project.would_change(), ["lsp.rust.format_on_save = false"]);
+}
