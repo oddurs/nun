@@ -83,6 +83,11 @@ This file is generated from the source by `nun keys`. Do not edit it by hand.
 | Previous reference | `nav.previous_reference` | `Shift+F4` | `Shift+F4` |
 | Go to the next problem | `diagnostics.next` | `F8` | `F8` |
 | Go to the previous problem | `diagnostics.previous` | `Shift+F8` | `Shift+F8` |
+| Git: go to the next change | `git.next_change` | `F7` | `F7` |
+| Git: go to the previous change | `git.previous_change` | `Shift+F7` | `Shift+F7` |
+| Git: show what this line was | `git.show_change` | `Ctrl+K G` | `Ctrl+K G` |
+| Git: revert this change | `git.revert_change` | `Ctrl+K U` | `Ctrl+K U` |
+| Git: stage this change | `git.stage_change` | `Ctrl+K S` | `Ctrl+K S` |
 | Suggest completions | `lsp.complete` | `Ctrl+Space` | `Ctrl+Space` |
 | Rename symbol | `lsp.rename` | `Ctrl+K F2` | `Ctrl+K F2` |
 | Undo rename | `lsp.undo_rename` | `Ctrl+K Z` | `Ctrl+K Z` |

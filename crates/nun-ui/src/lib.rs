@@ -13,6 +13,7 @@
 //!   and every mark comes out of the one table in [`glyph`].
 
 mod backend;
+mod changes;
 mod clip;
 mod completion;
 mod events;
@@ -38,6 +39,7 @@ mod underline;
 mod view;
 
 pub use backend::NunBackend;
+pub use changes::{Change, ChangeRail};
 pub use clip::{clusters, text_width};
 pub use completion::{CompletionView, DocsView, MOST_DOC_LINES, MOST_SUGGESTIONS, Suggestion};
 pub use events::{CopyOutcome, Event, Events};

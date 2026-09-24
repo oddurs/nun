@@ -112,6 +112,16 @@ pub enum Command {
     NextDiagnostic,
     /// Go to the diagnostic before the caret, and say what it is.
     PreviousDiagnostic,
+    /// Go to the next change git has not staged, and show it.
+    NextHunk,
+    /// Go to the change before the caret, and show it.
+    PreviousHunk,
+    /// Show what the change on the caret's line was before.
+    ShowHunk,
+    /// Put the change on the caret's line back the way it is staged.
+    RevertHunk,
+    /// Stage the change on the caret's line, leaving the file as it is.
+    StageHunk,
     /// Ask the language server what could go at the caret.
     Complete,
     /// Rename the symbol at the caret across the project, through the
@@ -192,6 +202,11 @@ impl Command {
         Self::PreviousReference,
         Self::NextDiagnostic,
         Self::PreviousDiagnostic,
+        Self::NextHunk,
+        Self::PreviousHunk,
+        Self::ShowHunk,
+        Self::RevertHunk,
+        Self::StageHunk,
         Self::Complete,
         Self::RenameSymbol,
         Self::UndoRename,
@@ -257,6 +272,11 @@ impl Command {
             Self::PreviousReference => "nav.previous_reference",
             Self::NextDiagnostic => "diagnostics.next",
             Self::PreviousDiagnostic => "diagnostics.previous",
+            Self::NextHunk => "git.next_change",
+            Self::PreviousHunk => "git.previous_change",
+            Self::ShowHunk => "git.show_change",
+            Self::RevertHunk => "git.revert_change",
+            Self::StageHunk => "git.stage_change",
             Self::Complete => "lsp.complete",
             Self::RenameSymbol => "lsp.rename",
             Self::UndoRename => "lsp.undo_rename",
@@ -323,6 +343,11 @@ impl Command {
             Self::PreviousReference => "Previous reference",
             Self::NextDiagnostic => "Go to the next problem",
             Self::PreviousDiagnostic => "Go to the previous problem",
+            Self::NextHunk => "Git: go to the next change",
+            Self::PreviousHunk => "Git: go to the previous change",
+            Self::ShowHunk => "Git: show what this line was",
+            Self::RevertHunk => "Git: revert this change",
+            Self::StageHunk => "Git: stage this change",
             Self::Complete => "Suggest completions",
             Self::RenameSymbol => "Rename symbol",
             Self::UndoRename => "Undo rename",
@@ -439,6 +464,13 @@ const BASIC: &[(&str, Command)] = &[
     // VS Code's.
     ("f8", Command::NextDiagnostic),
     ("shift+f8", Command::PreviousDiagnostic),
+    // Beside the problems' F8, and in the same pattern. The actions on a
+    // change are chords on the prefix every file-wide operation shares.
+    ("f7", Command::NextHunk),
+    ("shift+f7", Command::PreviousHunk),
+    ("ctrl+k g", Command::ShowHunk),
+    ("ctrl+k u", Command::RevertHunk),
+    ("ctrl+k s", Command::StageHunk),
     // A legacy terminal sends Ctrl+Space as NUL, which crossterm reports as
     // exactly this.
     ("ctrl+space", Command::Complete),

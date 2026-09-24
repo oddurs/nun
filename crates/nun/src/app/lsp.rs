@@ -53,6 +53,7 @@ impl App {
         // Every way a document arrives comes through here, which makes it the
         // place to work out its whitespace too.
         self.settings_follow(id);
+        self.vcs_open(id);
         let Some(lsp) = self.lsp.as_mut() else { return };
         let Some(document) = self.docs.iter_mut().find(|document| document.id == id) else {
             return;
@@ -76,6 +77,7 @@ impl App {
 
     /// Stop following a document that has gone.
     pub(super) fn lsp_close(&mut self, id: DocId) {
+        self.vcs_close(id);
         if let Some(lsp) = self.lsp.as_mut() {
             lsp.close(id);
         }

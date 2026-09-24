@@ -37,6 +37,10 @@ In use: `default`.
 | `fold.closed` | `▸` | U+25B8 | 1 | `>` | Beside a folded region's first line |
 | `fold.hidden` | `⋯` | U+22EF | 1 | `~` | The chip after a folded line, standing in for the lines it hides |
 | `lightbulb` | `◊` | U+25CA | 1 | `*` | In the gutter, on the caret's line, when its language server has code actions there |
+| `change.added` | `▐` | U+2590 | 1 | `+` | A line git does not have yet: in the gutter, and on the rail |
+| `change.modified` | `╏` | U+254F | 1 | `~` | A line changed since git last had it: in the gutter, and on the rail |
+| `change.removed.above` | `¯` | U+00AF | 1 | `^` | Lines removed just above this one: in the gutter, and on the rail |
+| `change.removed.below` | `_` | U+005F | 1 | `_` | Lines removed after the last line, marked on it |
 
 ## Rail
 

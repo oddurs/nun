@@ -8,12 +8,18 @@ use ratatui::widgets::Widget;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
+use crate::changes::Change;
 use crate::glyph::Glyph;
 use crate::marks::Mark;
 use crate::style::Palette;
 
-/// Space between the gutter digits and the text.
-const GUTTER_PADDING: u16 = 2;
+/// Columns between the gutter digits and the text: the change bar, the fold
+/// arrows, and the code-action mark.
+///
+/// The change bar's column is there whether or not git follows the file, so
+/// the text never moves sideways when git answers, or when a file is staged
+/// clean.
+const GUTTER_PADDING: u16 = 3;
 
 /// Where one of a live snippet's tab-stops is, in char indices, and whether
 /// it is the one being edited. An empty stop marks the one cell at `start`.
@@ -39,6 +45,7 @@ pub struct EditorView<'a> {
     marks: &'a [Mark],
     stops: &'a [Stop],
     lightbulb: Option<usize>,
+    changes: &'a [(usize, Change)],
 }
 
 impl<'a> EditorView<'a> {
@@ -55,6 +62,7 @@ impl<'a> EditorView<'a> {
             marks: &[],
             stops: &[],
             lightbulb: None,
+            changes: &[],
         }
     }
 
@@ -79,6 +87,16 @@ impl<'a> EditorView<'a> {
     #[must_use]
     pub const fn with_lightbulb(mut self, line: Option<usize>) -> Self {
         self.lightbulb = line;
+        self
+    }
+
+    /// Mark these lines in the gutter as changed since git last had them, in
+    /// the column just after the line numbers. In order of line; a line may
+    /// be given twice — the last can have lines removed both above and
+    /// below it — and the first given is drawn.
+    #[must_use]
+    pub const fn with_changes(mut self, changes: &'a [(usize, Change)]) -> Self {
+        self.changes = changes;
         self
     }
 
@@ -117,6 +135,13 @@ impl<'a> EditorView<'a> {
     /// edge of the view: the first column after the line numbers.
     #[must_use]
     pub fn arrow_column(&self) -> u16 {
+        self.gutter_width() - 2
+    }
+
+    /// The gutter column the change bar is drawn in, counted from the left
+    /// edge of the view: the first after the line numbers.
+    #[must_use]
+    pub fn change_column(&self) -> u16 {
         self.gutter_width() - GUTTER_PADDING
     }
 
@@ -341,6 +366,7 @@ impl Widget for EditorView<'_> {
 
             self.draw_gutter(cells, area, y, line, is_caret_line);
             let folded_here = folded.binary_search(&line).is_ok();
+            self.draw_change(cells, area, y, line);
             self.draw_arrow(cells, area, y, line, folded_here);
             if self.lightbulb == Some(line) {
                 let x = area.left() + self.lightbulb_column();
@@ -377,6 +403,19 @@ impl EditorView<'_> {
             (false, false) => return,
         };
         cells[(x, y)].set_symbol(self.palette.glyph(glyph)).set_style(self.palette.fg(role));
+    }
+
+    /// The bar beside a changed line.
+    fn draw_change(&self, cells: &mut Cells, area: Rect, y: u16, line: usize) {
+        let at = self.changes.partition_point(|(changed, _)| *changed < line);
+        let Some(&(changed, change)) = self.changes.get(at) else { return };
+        let x = area.left() + self.change_column();
+        if changed != line || x >= area.right() {
+            return;
+        }
+        cells[(x, y)]
+            .set_symbol(self.palette.glyph(change.glyph()))
+            .set_style(self.palette.fg(change.role()));
     }
 
     /// The marker after a folded header's text, standing in for what is

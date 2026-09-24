@@ -30,6 +30,7 @@ mod completion;
 mod diagnostics;
 mod folds;
 mod format;
+mod gutter;
 mod hover;
 mod lsp;
 mod navigation;
@@ -164,6 +165,13 @@ pub enum Target {
     Rail(usize),
     /// A row of a pane's rail with marks on it.
     RailMark(usize, u16),
+    /// The bar beside a changed line: which pane, and which of its
+    /// document's hunks.
+    Change(usize, usize),
+    /// A pane's changes column of the rail, away from its marks.
+    ChangeRail(usize),
+    /// A row of a pane's changes column with changes on it.
+    ChangeRailMark(usize, u16),
     /// An underlined diagnostic in a pane: which pane, and which of its
     /// document's diagnostics. Pressed, it is the text under it.
     Diagnostic(usize, usize),
@@ -211,6 +219,10 @@ impl Target {
 
     const fn in_diagnostics(self) -> bool {
         matches!(self, Self::Rail(_) | Self::RailMark(..) | Self::StatusProblems)
+    }
+
+    const fn in_changes(self) -> bool {
+        matches!(self, Self::Change(..) | Self::ChangeRail(_) | Self::ChangeRailMark(..))
     }
 
     const fn in_tabs(self) -> bool {
@@ -386,6 +398,8 @@ pub struct App {
     syntax_deadline: Option<Instant>,
     /// Git, once it has somewhere to post its answers.
     vcs: Option<nun_vcs::Vcs>,
+    /// What git says has changed in each document.
+    changes: gutter::Changes,
     /// Searching the project, and what it has found.
     search: search::Search,
     /// The outline of the file the palette was last asked about.
@@ -489,6 +503,7 @@ impl App {
             syntax: None,
             syntax_deadline: None,
             vcs: None,
+            changes: gutter::Changes::default(),
             search: search::Search::default(),
             symbols: syntax::Outline::default(),
             sidebar_view: SidebarView::Files,
@@ -640,6 +655,7 @@ impl App {
         self.layout_panes(&mut hits);
         self.layout_panel(&mut hits);
         self.layout_diagnostics(&mut hits);
+        self.layout_changes(&mut hits);
         self.layout_card(&mut hits);
         self.layout_completion(&mut hits);
         self.layout_palette(&mut hits);
@@ -768,6 +784,7 @@ impl App {
             self.link_deadline(),
             self.hover_deadline(),
             self.bulb_deadline(),
+            self.vcs_deadline(),
             self.panel_deadline(),
             self.session_deadline(),
         ]
@@ -791,6 +808,7 @@ impl App {
         // so the parser has not been told about anything it did.
         if chord == Outcome::Redraw {
             self.lsp_flush();
+            self.vcs_follow(now);
             self.syntax_changed(now);
             if before != (self.doc().scroll, self.doc().id) {
                 self.syntax_scrolled(now);
@@ -813,6 +831,7 @@ impl App {
             .and(self.hover_tick(now))
             .and(self.bulb_follow(now))
             .and(self.bulb_tick(now))
+            .and(self.vcs_tick(now))
             .and(self.panel_tick(now))
             .and(self.session_tick(now));
         if outcome == Outcome::Redraw {
@@ -850,6 +869,7 @@ impl App {
         // now, in the order it was done, and only then is anything asked
         // about it.
         self.lsp_flush();
+        self.vcs_follow(now);
         let outcome = outcome.and(self.completion_follow()).and(self.bulb_follow(now));
         // Anything that changed the text or moved the view changes what the
         // parser should be looking at.
@@ -1097,17 +1117,7 @@ impl App {
                     self.message = Some("No other occurrence of that.".into());
                 }
             }
-            Command::AddAllOccurrences => match self.doc_mut().buffer.add_all_occurrences() {
-                nun_core::AllOccurrences::Selected(_) => {}
-                nun_core::AllOccurrences::Nothing => {
-                    self.message = Some("Nothing to select every occurrence of.".into());
-                }
-                nun_core::AllOccurrences::TooMany { limit } => {
-                    self.message = Some(format!(
-                        "More than {limit} occurrences; left the selection as it was."
-                    ));
-                }
-            },
+            Command::AddAllOccurrences => self.add_all_occurrences(),
             // The view stays where it is: the selection grows around what is
             // being looked at, and following its far end would scroll away.
             Command::Fold => return self.fold_here(),
@@ -1129,6 +1139,10 @@ impl App {
             Command::PreviousReference => return self.step_reference(-1),
             Command::NextDiagnostic => return self.step_diagnostic(true),
             Command::PreviousDiagnostic => return self.step_diagnostic(false),
+            Command::NextHunk | Command::PreviousHunk => return self.on_hunk(command),
+            Command::ShowHunk | Command::RevertHunk | Command::StageHunk => {
+                return self.on_hunk(command);
+            }
             Command::Complete => return self.complete_here(),
             Command::RenameSymbol => return self.start_rename(),
             Command::UndoRename => return self.undo_edit(),
@@ -1152,6 +1166,20 @@ impl App {
         }
         self.follow_caret();
         Outcome::Redraw
+    }
+
+    /// Select every occurrence of what is selected, or say why not.
+    fn add_all_occurrences(&mut self) {
+        match self.doc_mut().buffer.add_all_occurrences() {
+            nun_core::AllOccurrences::Selected(_) => {}
+            nun_core::AllOccurrences::Nothing => {
+                self.message = Some("Nothing to select every occurrence of.".into());
+            }
+            nun_core::AllOccurrences::TooMany { limit } => {
+                self.message =
+                    Some(format!("More than {limit} occurrences; left the selection as it was."));
+            }
+        }
     }
 
     /// An editing key: typing, moving, deleting. Not rebindable.
@@ -1407,6 +1435,11 @@ impl App {
             target if target.in_diagnostics() => {
                 self.acknowledge();
                 self.diagnostics_press(target, mouse.row)
+            }
+            target if target.in_changes() => {
+                self.acknowledge();
+                self.focus = Focus::Editor;
+                self.changes_press(target, mouse.row)
             }
             Target::StatusUndo if self.edit_undo_offered() => self.undo_edit(),
             Target::StatusUndo if self.last_undone => self.redo_file_op(),
@@ -2314,15 +2347,15 @@ mod tests {
     #[test]
     fn clicking_places_the_caret() {
         let mut app = app_over("hello\nworld\n");
-        // Gutter is one digit plus two columns of padding.
-        app.handle(click(3 + 2, 1));
+        // Gutter is one digit plus three columns of padding.
+        app.handle(click(4 + 2, 1));
         assert_eq!(app.buffer().selections().primary().head, 8, "row 1, two chars in");
     }
 
     #[test]
     fn clicking_past_a_wide_character_lands_after_it_not_inside_it() {
         let mut app = app_over("日本語\n");
-        app.handle(click(3 + 3, 0));
+        app.handle(click(4 + 3, 0));
         assert_eq!(app.buffer().selections().primary().head, 1, "after the first wide cluster");
     }
 
@@ -2333,7 +2366,7 @@ mod tests {
         let mut app = app_with(Buffer::from_text(&"x".repeat(400)));
         app.set_viewport(Rect::new(0, 0, 420, 6));
 
-        app.handle(click(3 + 300, 0));
+        app.handle(click(4 + 300, 0));
         assert_eq!(app.buffer().selections().primary().head, 300);
     }
 
@@ -2342,8 +2375,8 @@ mod tests {
         let mut app = app_with(Buffer::from_text(&"line\n".repeat(400)));
         app.set_viewport(Rect::new(0, 0, 40, 302));
 
-        // Three digits of line number plus two columns of padding.
-        app.handle(click(5 + 2, 250));
+        // Three digits of line number plus three columns of padding.
+        app.handle(click(6 + 2, 250));
         let head = app.buffer().selections().primary().head;
         assert_eq!(app.buffer().line_of(head), 250);
     }
@@ -2375,7 +2408,7 @@ mod tests {
     fn a_resize_moves_the_status_line_and_the_clicks_follow_it() {
         let mut app = app_over(&"line\n".repeat(20));
         app.handle(Event::Resize(40, 10));
-        app.handle(click(3 + 1, 5));
+        app.handle(click(4 + 1, 5));
         assert_eq!(app.buffer().line_of(app.buffer().selections().primary().head), 5);
     }
 
@@ -2458,7 +2491,7 @@ mod tests {
         harness.draw(TestView(&app));
 
         let text = harness.to_text();
-        assert!(text.starts_with("1  hello\n2  world"), "{text}");
+        assert!(text.starts_with("1   hello\n2   world"), "{text}");
         assert!(text.contains("[no name]"), "the status line is missing: {text}");
     }
 

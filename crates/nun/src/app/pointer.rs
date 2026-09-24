@@ -451,7 +451,7 @@ mod tests {
     use ratatui::layout::Rect;
 
     /// One digit of line number plus two columns of padding.
-    const GUTTER: u16 = 3;
+    const GUTTER: u16 = 4;
 
     fn app(text: &str, height: u16) -> App {
         let mut app = App::new(

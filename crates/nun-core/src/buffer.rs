@@ -142,6 +142,8 @@ pub struct Buffer {
     /// Every edit applied to the rope since it was last taken, in the order
     /// they were applied, while someone has asked for them.
     journal: Option<Vec<Edit>>,
+    /// How many edits the text has had: see [`Buffer::revision`].
+    revision: u64,
 }
 
 impl Default for Buffer {
@@ -168,6 +170,7 @@ impl Buffer {
             change: Changed::Nothing,
             folds: Folds::default(),
             journal: None,
+            revision: 0,
         }
     }
 
@@ -317,6 +320,15 @@ impl Buffer {
         std::mem::take(&mut self.change)
     }
 
+    /// A count of the edits the text has had, undo and redo included. It only
+    /// goes up, so something that last looked at revision `n` knows the text
+    /// is as it left it exactly when this is still `n` — without being told
+    /// the edits, and without comparing the text.
+    #[must_use]
+    pub const fn revision(&self) -> u64 {
+        self.revision
+    }
+
     /// Start or stop keeping every edit made to the text.
     ///
     /// [`Buffer::take_change`] says only whether one edit can be followed.
@@ -435,6 +447,7 @@ impl Buffer {
         // so this is the one place a fold has to be told the text moved, and
         // the one place a mirror of the text has to hear about it.
         self.folds.map_through(edit);
+        self.revision += 1;
         if let Some(journal) = self.journal.as_mut() {
             journal.push(edit.clone());
         }
@@ -1526,6 +1539,22 @@ mod tests {
         assert_eq!(text_of(&b), " world");
         b.edit(vec![Edit::replace(1, 6, "there")]);
         assert_eq!(text_of(&b), " there");
+    }
+
+    #[test]
+    fn the_revision_counts_every_change_and_nothing_else() {
+        let mut b = Buffer::from_text("abc");
+        assert_eq!(b.revision(), 0);
+        b.move_right(false);
+        b.set_selections(Selections::single(Range::caret(1)));
+        assert_eq!(b.revision(), 0, "moving the caret is not a change");
+        b.insert("x");
+        let typed = b.revision();
+        assert!(typed > 0);
+        assert!(b.undo());
+        assert!(b.revision() > typed, "an undo is a change too, though the text is as before");
+        assert_eq!(b.apply_batch(vec![Edit::replace(0, 1, "a")]), Ok(false));
+        assert_eq!(b.revision(), typed + 1, "a batch that changes nothing is not a change");
     }
 
     #[test]

@@ -226,22 +226,7 @@ impl Widget for Rail<'_> {
             return;
         }
         let x = area.left();
-        let thumb = if self.view.is_empty() {
-            None
-        } else {
-            let first = Self::row_of(self.view.start, self.lines, area.height);
-            let last = Self::row_of(self.view.end - 1, self.lines, area.height);
-            Some(first..=last)
-        };
-        let ground = |row: u16| {
-            if self.hovered == Some(row) {
-                Role::LineStrong
-            } else if thumb.as_ref().is_some_and(|thumb| thumb.contains(&row)) {
-                Role::Line
-            } else {
-                Role::Ground
-            }
-        };
+        let ground = ground(&self.view, self.lines, area.height, self.hovered);
         for row in 0..area.height {
             cells[(x, area.top() + row)]
                 .set_char(' ')
@@ -251,6 +236,29 @@ impl Widget for Rail<'_> {
             let style = self.palette.on(ground(bucket.row), bucket.worst.role());
             let glyph = Self::glyph(bucket.count).map_or(" ", |glyph| self.palette.glyph(glyph));
             cells[(x, area.top() + bucket.row)].set_symbol(glyph).set_style(style);
+        }
+    }
+}
+
+/// What each row of a rail `height` rows tall is drawn on: the thumb over
+/// `view`, the lines in view, and the hovered row stronger still. Shared by
+/// every column of the rail, so they read as one scrollbar.
+pub(crate) fn ground(
+    view: &Range<usize>,
+    lines: usize,
+    height: u16,
+    hovered: Option<u16>,
+) -> impl Fn(u16) -> Role {
+    let thumb = (!view.is_empty()).then(|| {
+        Rail::row_of(view.start, lines, height)..=Rail::row_of(view.end - 1, lines, height)
+    });
+    move |row: u16| {
+        if hovered == Some(row) {
+            Role::LineStrong
+        } else if thumb.as_ref().is_some_and(|thumb| thumb.contains(&row)) {
+            Role::Line
+        } else {
+            Role::Ground
         }
     }
 }
