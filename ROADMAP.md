@@ -119,7 +119,7 @@
 
 ## m6 — Polish until it is boring
 
-`##········` 17% · 3 of 18 done · due 2026-12-17
+`##········` 16% · 3 of 19 done · due 2026-12-17
 
 ### backlog
 
@@ -131,6 +131,7 @@
 - [ ] [`603fedda`](https://github.com/oddurs/nun/blob/main/cairn/items/603fedda-fa4a-4a62-a4c3-4b6d82082c08-copy-cut-and-paste-in-the-editor.md) Copy, cut and paste in the editor <sup>feature · p0</sup>
 - [ ] [`6079f5ce`](https://github.com/oddurs/nun/blob/main/cairn/items/6079f5ce-0c3c-4694-b2ed-3c16766ec192-session-restore-keep-untitled-buffers-unsaved-edits-and-the-sidebar.md) Session restore: keep untitled buffers, unsaved edits and the sidebar <sup>feature · p2</sup>
 - [ ] [`6378e359`](https://github.com/oddurs/nun/blob/main/cairn/items/0086-custom-glyphs-drawn-as-cell-images.md) Custom glyphs drawn as cell images <sup>feature · p3</sup>
+- [ ] [`70bb75d5`](https://github.com/oddurs/nun/blob/main/cairn/items/70bb75d5-3ed1-4ff9-8981-37e7e9bb8592-terminal-panel-open-the-pty-close-on-exec-atomically.md) Terminal panel: open the pty close-on-exec atomically <sup>bug · p3</sup>
 - [ ] [`77bfba6f`](https://github.com/oddurs/nun/blob/main/cairn/items/0046-terminal-support-matrix.md) Terminal support matrix <sup>docs · p0</sup>
 - [ ] [`818434a4`](https://github.com/oddurs/nun/blob/main/cairn/items/0091-lsp-watch-single-paths-a-server-names-outside-the-project.md) LSP: watch single paths a server names outside the project <sup>feature · p3</sup>
 - [ ] [`9d2f5de0`](https://github.com/oddurs/nun/blob/main/cairn/items/9d2f5de0-7787-49c0-92a6-b4eabaf4d99c-config-small-gaps-in-watching-and-matching.md) Config: small gaps in watching and matching <sup>chore · p3</sup>
