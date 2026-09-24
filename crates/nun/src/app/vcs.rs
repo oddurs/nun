@@ -33,6 +33,10 @@ impl App {
 
     /// Something git worked out.
     pub(super) fn vcs_reply(&mut self, reply: Reply) -> Outcome {
+        let reply = match self.diff_vcs(reply) {
+            Ok(outcome) => return outcome,
+            Err(reply) => reply,
+        };
         let reply = match self.gutter_reply(reply) {
             Ok(outcome) => return outcome,
             Err(reply) => reply,

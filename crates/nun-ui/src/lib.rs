@@ -16,6 +16,7 @@ mod backend;
 mod changes;
 mod clip;
 mod completion;
+mod diff;
 mod events;
 pub mod glyph;
 mod harness;
@@ -42,6 +43,10 @@ pub use backend::NunBackend;
 pub use changes::{Change, ChangeRail};
 pub use clip::{clusters, text_width};
 pub use completion::{CompletionView, DocsView, MOST_DOC_LINES, MOST_SUGGESTIONS, Suggestion};
+pub use diff::{
+    DiffHunk, DiffLayout, DiffRow, DiffSide, DiffSpot, DiffView, Emphasis, align as align_diff,
+    header_row as diff_header_row, line_count as diff_line_count, row_of_after as diff_row_of,
+};
 pub use events::{CopyOutcome, Event, Events};
 pub use glyph::{Glyph, Glyphs};
 pub use harness::{Harness, changed_cells, changed_rows};

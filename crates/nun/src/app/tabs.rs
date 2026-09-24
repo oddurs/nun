@@ -595,7 +595,9 @@ impl App {
         let whole = self.panes_area_in(area);
         for (pane, rect) in self.panes.rects(whole) {
             let (strip, text) = self.parts_of(pane, rect);
-            if let Some(doc) = self
+            if self.render_diff(pane, text, cells) {
+                // The diff stands in for the text, rail and all.
+            } else if let Some(doc) = self
                 .panes
                 .get(pane)
                 .and_then(super::panes::Pane::current)

@@ -589,6 +589,10 @@ impl App {
 
     /// Run one of the commands about the change at the caret.
     pub(super) fn on_hunk(&mut self, command: Command) -> Outcome {
+        // The diff view, while it has the keyboard, is where the changes are.
+        if let Some(outcome) = self.diff_on_hunk(command) {
+            return outcome;
+        }
         match command {
             Command::NextHunk => self.step_hunk(true),
             Command::PreviousHunk => self.step_hunk(false),

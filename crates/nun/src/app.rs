@@ -28,6 +28,7 @@ mod card;
 mod code_actions;
 mod completion;
 mod diagnostics;
+mod diff;
 mod folds;
 mod format;
 mod gutter;
@@ -202,6 +203,8 @@ pub enum Target {
     TermScreen(nun_term::Id),
     /// The status line's button that opens the terminal panel.
     StatusTerminal,
+    /// Somewhere in the diff view.
+    Diff(nun_ui::DiffSpot),
 }
 
 impl Target {
@@ -309,6 +312,9 @@ pub enum Focus {
     /// A terminal in the panel, where every key goes to the program but the
     /// one bound to `terminal.toggle`.
     Terminal,
+    /// The diff view, which scrolls and steps between changes but types
+    /// nothing.
+    Diff,
 }
 
 /// One open file: its text, and where the view on it is.
@@ -439,6 +445,8 @@ pub struct App {
     settings: settings::Live,
     /// The terminal panel.
     panel: panel::Panel,
+    /// The diff view, when one is open.
+    diffing: diff::Diffing,
 }
 
 impl App {
@@ -523,6 +531,7 @@ impl App {
             code_actions: code_actions::CodeActions::default(),
             settings: settings::Live::default(),
             panel: panel::Panel::default(),
+            diffing: diff::Diffing::default(),
         };
         app.relayout();
         app
@@ -656,6 +665,7 @@ impl App {
         self.layout_panel(&mut hits);
         self.layout_diagnostics(&mut hits);
         self.layout_changes(&mut hits);
+        self.layout_diff(&mut hits);
         self.layout_card(&mut hits);
         self.layout_completion(&mut hits);
         self.layout_palette(&mut hits);
@@ -787,6 +797,7 @@ impl App {
             self.vcs_deadline(),
             self.panel_deadline(),
             self.session_deadline(),
+            self.diff_deadline(),
         ]
         .into_iter()
         .flatten()
@@ -833,7 +844,8 @@ impl App {
             .and(self.bulb_tick(now))
             .and(self.vcs_tick(now))
             .and(self.panel_tick(now))
-            .and(self.session_tick(now));
+            .and(self.session_tick(now))
+            .and(self.diff_tick(now));
         if outcome == Outcome::Redraw {
             self.relayout();
             self.session_changed(now);
@@ -863,8 +875,10 @@ impl App {
         } else {
             Outcome::Continue
         };
+        let edited = !matches!(&event, Event::Mouse(mouse) if mouse.kind == MouseEventKind::Moved);
         let outcome = self.dispatch(event, now).and(unlinked);
         self.panel_focus_follow();
+        self.diff_follow(now, edited);
         // Whatever the event did to the text goes to the language servers
         // now, in the order it was done, and only then is anything asked
         // about it.
@@ -905,6 +919,8 @@ impl App {
                 Outcome::Redraw
             }
             Event::Paste(text) if self.focus == Focus::Terminal => self.terminal_paste(&text),
+            // The text is behind the view, out of sight.
+            Event::Paste(_) if self.focus == Focus::Diff => Outcome::Continue,
             Event::Paste(text) => {
                 // A paste is not the second half of a chord.
                 self.chords.cancel();
@@ -1009,6 +1025,7 @@ impl App {
                     Focus::Search => self.search_key(event, Instant::now()),
                     Focus::Sidebar => self.sidebar_key(event),
                     Focus::EditPreview => self.edit_preview_key(event),
+                    Focus::Diff => self.diff_key(event),
                     Focus::Editor | Focus::Terminal => Outcome::Continue,
                 }
             }
@@ -1029,6 +1046,10 @@ impl App {
                 Some(event) if self.focus == Focus::EditPreview => {
                     self.acknowledge();
                     self.edit_preview_key(event)
+                }
+                Some(event) if self.focus == Focus::Diff => {
+                    self.acknowledge();
+                    self.diff_key(event)
                 }
                 Some(event) if self.focus == Focus::Sidebar => {
                     self.acknowledge();
@@ -1163,6 +1184,7 @@ impl App {
             | Command::HideTerminal => return self.terminal_command(command),
             Command::NextTab => return self.step_tab(1),
             Command::PreviousTab => return self.step_tab(-1),
+            Command::Diff(action) => return self.diff_command(action),
         }
         self.follow_caret();
         Outcome::Redraw
@@ -1283,6 +1305,11 @@ impl App {
                 if target.is_some_and(Target::in_completion) =>
             {
                 self.completion_scroll(mouse.kind == MouseEventKind::ScrollDown)
+            }
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+                if matches!(target, Some(Target::Diff(_))) =>
+            {
+                self.diff_scroll(mouse.kind == MouseEventKind::ScrollDown)
             }
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
                 if matches!(target, Some(Target::EditPreview(_))) =>
@@ -1452,6 +1479,7 @@ impl App {
                 self.acknowledge();
                 self.edit_preview_press(spot)
             }
+            Target::Diff(spot) => self.diff_press(spot),
             target if target.in_search() => {
                 self.acknowledge();
                 self.search_press(target, mouse.column, now)

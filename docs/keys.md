@@ -100,3 +100,6 @@ This file is generated from the source by `nun keys`. Do not edit it by hand.
 | Terminal: next | `terminal.next` | `Ctrl+K Tab` | `Ctrl+K Tab` |
 | Terminal: close | `terminal.close` | `Ctrl+K Shift+X` | `Ctrl+K Shift+X` |
 | Terminal: hide the panel | `terminal.hide` | `` Ctrl+K ` `` | `` Ctrl+K ` `` |
+| Diff: show the file's changes, or hide them | `diff.toggle` | `Ctrl+K Shift+G` | `Ctrl+K Shift+G` |
+| Diff: side by side or unified | `diff.toggle_layout` | `Ctrl+K Shift+U` | `Ctrl+K Shift+U` |
+| Diff: compare with the index or HEAD | `diff.toggle_base` | `Ctrl+K Shift+B` | `Ctrl+K Shift+B` |

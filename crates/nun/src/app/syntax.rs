@@ -473,6 +473,9 @@ impl App {
 
     /// The parser has something to say.
     pub(super) fn syntax_reply(&mut self, reply: Reply) -> Outcome {
+        if let Some(outcome) = self.diff_syntax(&reply) {
+            return outcome;
+        }
         match reply {
             Reply::Highlights { id, version, spans, .. } => {
                 let Some(document) = self.docs.iter_mut().find(|document| document.id == id) else {
