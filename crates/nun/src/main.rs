@@ -1,6 +1,7 @@
 //! The `nun` binary.
 
 mod app;
+mod clipboard;
 mod commands;
 mod hints;
 mod reload;
@@ -292,6 +293,12 @@ fn edit(path: &Path, lsp_log: Option<&Path>) -> io::Result<()> {
         if let Some(underlines) = app.take_underlines() {
             // A failure costs one frame drawn twice, not the session.
             let _ = screen.set_underlines(underlines);
+        }
+        for escape in app.take_escapes() {
+            // The copy was only ever said to have been sent: a terminal that
+            // cannot be written to has not been sent it, and the next frame
+            // fails louder than this would.
+            let _ = screen.send(&escape);
         }
         match outcome {
             Outcome::Quit => break,
@@ -628,6 +635,10 @@ fn capabilities_report(settings: &Loaded, startup: &terminal::Startup) -> String
     let _ = writeln!(out, "diagnostics: {drawn} ({why})");
     let ctrl_click = hints::CtrlClick::detect(probe.version(), startup.kitty_keyboard);
     let _ = writeln!(out, "ctrl-click: {}", ctrl_click.describe());
+    let place = clipboard::Place::new(startup.takes_osc52(), probe.version(), |name| {
+        std::env::var_os(name).is_some()
+    });
+    let _ = writeln!(out, "{}", clipboard::describe(settings.config.clipboard, place));
     out
 }
 
@@ -945,6 +956,7 @@ mod tests {
             palette: Probe::builtin_dark(),
             kitty_keyboard: Some(false),
             underlines,
+            attributes: vec![1, 2],
         };
         let report = capabilities_report(&Loaded::defaults(), &startup);
         assert!(report.contains("terminal: tmux 3.5a"), "{report}");

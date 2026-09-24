@@ -37,12 +37,12 @@ pub enum Event {
     Lsp(nun_lsp::Event),
     /// A program in the terminal panel wrote something, or ended.
     Term(nun_term::Report),
-    /// Text was put on the clipboard, or could not be.
+    /// Text was put on the clipboard, or sent to be, or could not be.
     Copied {
         /// How much.
         chars: usize,
-        /// Why it could not be, when it could not.
-        problem: Option<String>,
+        /// Where it went.
+        outcome: CopyOutcome,
     },
     /// Something changed inside a watched directory, or watching one failed.
     Files {
@@ -57,6 +57,27 @@ pub enum Event {
     Config(nun_config::News),
     /// The terminal closed, or reading from it failed.
     Closed,
+}
+
+/// Where a copy went, as far as can be known.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CopyOutcome {
+    /// A clipboard program took it.
+    Taken,
+    /// Handed to something that never says whether it arrived: to the
+    /// place this names, as in "sent 4 characters to …".
+    Sent(String),
+    /// To be written to the terminal nun is drawn on, as `bytes`, which only
+    /// the thread that draws may do. It never says whether it took it: `to`
+    /// names where it goes, as [`CopyOutcome::Sent`] does.
+    Escape {
+        /// The escape to write.
+        bytes: String,
+        /// Where it goes.
+        to: String,
+    },
+    /// Nothing took it, for this reason.
+    Failed(String),
 }
 
 /// The editor's single input channel.

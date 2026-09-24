@@ -11,6 +11,10 @@
 //! followed by a Primary Device Attributes query, `CSI c`, which every terminal
 //! answers. Replies come back in the order asked, so once the attributes reply
 //! arrives, a missing keyboard reply means "no", not "not yet".
+//!
+//! The attributes reply is kept, too, because it says more than that it
+//! arrived: its parameters list what the terminal can do, and parameter 52
+//! is the one honest way a terminal says it accepts a copy through OSC 52.
 
 /// The bytes to write: the keyboard query, then the sentinel.
 pub const KEYBOARD_QUERY: &str = "\x1b[?u\x1b[c";
@@ -22,6 +26,7 @@ pub struct KeyboardProbe {
     params: Vec<u8>,
     flags: Option<u16>,
     attributes_seen: bool,
+    attributes: Vec<u16>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -76,6 +81,13 @@ impl KeyboardProbe {
             }
             b'c' if self.params.first() == Some(&b'?') => {
                 self.attributes_seen = true;
+                // `?62;22;52c`, and kitty's `?62;52;c` with an empty last
+                // field: the empty ones are dropped.
+                self.attributes = std::str::from_utf8(&self.params[1..])
+                    .unwrap_or_default()
+                    .split(';')
+                    .filter_map(|param| param.parse().ok())
+                    .collect();
                 self.reset();
             }
             _ => {
@@ -102,6 +114,14 @@ impl KeyboardProbe {
     #[must_use]
     pub const fn is_complete(&self) -> bool {
         self.attributes_seen
+    }
+
+    /// The parameters of the terminal's device-attributes reply, in order:
+    /// its conformance level first, then what it can do. Empty until the
+    /// reply arrives.
+    #[must_use]
+    pub fn attributes(&self) -> &[u16] {
+        &self.attributes
     }
 
     /// Whether the terminal has the protocol, as far as is known.
@@ -169,6 +189,21 @@ mod tests {
         let rest = probe.feed(b"a\x1b[A\x1b[?0ub\x1b[?62c");
         assert_eq!(rest, b"a\x1b[Ab");
         assert_eq!(probe.supported(), Some(true));
+    }
+
+    #[test]
+    fn the_attributes_are_kept_for_what_they_say() {
+        let mut probe = KeyboardProbe::new();
+        probe.feed(b"\x1b[?62;22;52c");
+        assert_eq!(probe.attributes(), [62, 22, 52]);
+    }
+
+    #[test]
+    fn an_empty_last_attribute_is_dropped() {
+        // kitty 0.43 ends its list with a separator.
+        let mut probe = KeyboardProbe::new();
+        probe.feed(b"\x1b[?62;52;c");
+        assert_eq!(probe.attributes(), [62, 52]);
     }
 
     #[test]

@@ -7,7 +7,8 @@
 //!   at startup and drawn from the next frame.
 //! - **keys** — the keymap is built again, over the key set the terminal
 //!   negotiated at startup.
-//! - **ui** — the pointer and hover settings and `undercurl` apply at once.
+//! - **ui** — the pointer and hover settings, `undercurl` and `clipboard`
+//!   apply at once.
 //!   `mouse`, `alternate_screen` and `keyboard_enhancement` are how the
 //!   terminal was entered, so they say they will apply at the next start.
 //! - **lsp** — a language whose server changed has its documents moved to
@@ -20,7 +21,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 
 use nun_config::{
-    Charset, Decision, EditorConfig, EndOfLine, IndentStyle, Loaded, News, Whitespace,
+    Charset, Clipboard, Decision, EditorConfig, EndOfLine, IndentStyle, Loaded, News, Whitespace,
 };
 use nun_core::{Edit, LineEnding};
 use nun_ui::{Palette, Underlines};
@@ -87,6 +88,25 @@ impl App {
             self.settings_follow(id);
         }
         self.ask_about_project();
+    }
+
+    /// Where a copy should go: `ui.clipboard`.
+    pub(super) fn clipboard_setting(&self) -> Clipboard {
+        self.settings
+            .loaded
+            .as_ref()
+            .map_or_else(Clipboard::default, |loaded| loaded.config.clipboard)
+    }
+
+    /// Where nun is running, as far as a copy is concerned, from what the
+    /// terminal said and the environment variables `set` says are there.
+    pub(super) fn clipboard_place(&self, set: impl Fn(&str) -> bool) -> crate::clipboard::Place {
+        let startup = self.settings.startup.as_ref();
+        crate::clipboard::Place::new(
+            startup.is_some_and(Startup::takes_osc52),
+            startup.and_then(|startup| startup.underlines.version()),
+            set,
+        )
     }
 
     /// Underlines the screen should switch to, once.
@@ -463,6 +483,7 @@ mod tests {
             palette: Probe::builtin_dark(),
             kitty_keyboard: Some(true),
             underlines: UnderlineProbe::new(),
+            attributes: vec![62, 22],
         }
     }
 

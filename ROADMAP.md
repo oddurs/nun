@@ -73,7 +73,7 @@
 
 ## m5 — Git and terminal
 
-`####······` 33% · 4 of 12 done · due 2026-12-03
+`#####·····` 42% · 5 of 12 done · due 2026-12-03
 
 ### backlog
 
@@ -82,7 +82,6 @@
 - [ ] [`0040`](https://github.com/oddurs/nun/blob/main/cairn/items/0040-diff-view.md) Diff view <sup>feature · p2</sup>
 - [ ] [`0043`](https://github.com/oddurs/nun/blob/main/cairn/items/0043-session-restore.md) Session restore <sup>feature · p2</sup>
 - [ ] [`0088`](https://github.com/oddurs/nun/blob/main/cairn/items/0088-terminal-panel-restore-its-tabs-and-directories-with-the-session.md) Terminal panel: restore its tabs and directories with the session <sup>feature · p2</sup>
-- [ ] [`0089`](https://github.com/oddurs/nun/blob/main/cairn/items/0089-terminal-panel-copy-through-osc-52-where-the-system-clipboard-cannot.md) Terminal panel: copy through OSC 52 where the system clipboard cannot <sup>feature · p2</sup>
 - [ ] [`0090`](https://github.com/oddurs/nun/blob/main/cairn/items/0090-terminal-panel-detect-true-colour-and-answer-pixel-size-queries.md) Terminal panel: detect true colour, and answer pixel-size queries <sup>feature · p3</sup>
 
 ### in progress
@@ -95,6 +94,7 @@
 - [x] [`0075`](https://github.com/oddurs/nun/blob/main/cairn/items/0075-format-on-save-per-project.md) Format on save per project <sup>feature · p2</sup>
 - [x] [`0078`](https://github.com/oddurs/nun/blob/main/cairn/items/0078-rename-carry-out-file-operations-a-server-asks-for.md) Rename: carry out file operations a server asks for <sup>feature · p2</sup>
 - [x] [`0087`](https://github.com/oddurs/nun/blob/main/cairn/items/0087-lsp-tell-servers-about-files-that-change-on-disk.md) LSP: tell servers about files that change on disk <sup>feature · p2</sup>
+- [x] [`0089`](https://github.com/oddurs/nun/blob/main/cairn/items/0089-terminal-panel-copy-through-osc-52-where-the-system-clipboard-cannot.md) Terminal panel: copy through OSC 52 where the system clipboard cannot <sup>feature · p2</sup>
 
 ## perf — Fast on anything
 

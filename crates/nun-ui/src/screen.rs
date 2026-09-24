@@ -62,6 +62,19 @@ impl Screen {
         Ok(())
     }
 
+    /// Write an escape that draws nothing — a copy through OSC 52 — to the
+    /// terminal, between frames, so it cannot land inside one.
+    ///
+    /// # Errors
+    ///
+    /// If writing to the terminal fails.
+    pub fn send(&mut self, escape: &str) -> io::Result<()> {
+        use std::io::Write as _;
+        let backend = self.terminal.backend_mut();
+        backend.write_all(escape.as_bytes())?;
+        backend.flush()
+    }
+
     /// Report pointer motion with no button held, for as long as something on
     /// screen reacts to hover.
     ///
