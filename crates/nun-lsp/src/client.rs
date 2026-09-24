@@ -12,13 +12,15 @@
 //! plenty — all of it is waiting on pipes — and it keeps an idle editor's
 //! language servers costing one parked thread.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use lsp_types::{MessageType, Position, TextDocumentIdentifier, TextDocumentPositionParams};
+use lsp_types::{
+    FileChangeType, MessageType, Position, TextDocumentIdentifier, TextDocumentPositionParams,
+};
 use nun_core::Edit;
 use ropey::Rope;
 use serde_json::Value;
@@ -79,6 +81,7 @@ enum Command {
         id: RequestId,
         doc: DocId,
     },
+    FilesChanged(Vec<(PathBuf, FileChangeType)>),
     AnswerEdit {
         server: ServerId,
         run: u64,
@@ -126,6 +129,9 @@ pub enum Handled {
     /// A server wants an edit made, and waits to hear whether it was: answer
     /// it with [`Lsp::answer_edit`], always.
     ApplyEdit(EditRequest),
+    /// The folders the servers want watched changed: watch these, and only
+    /// these, passing what changes in them to [`Lsp::files_changed`].
+    Watch(Vec<PathBuf>),
 }
 
 /// A document, as the editor's side knows it.
@@ -200,6 +206,8 @@ pub struct Lsp {
     servers: HashMap<ServerId, Known>,
     pending: HashMap<RequestId, DocId>,
     diagnostics: HashMap<PathBuf, Published>,
+    /// The folders each server wants watched for it.
+    watching: HashMap<ServerId, Vec<PathBuf>>,
 }
 
 impl Lsp {
@@ -257,6 +265,7 @@ impl Lsp {
             servers: HashMap::new(),
             pending: HashMap::new(),
             diagnostics: HashMap::new(),
+            watching: HashMap::new(),
         })
     }
 
@@ -439,6 +448,30 @@ impl Lsp {
         }
     }
 
+    /// Files changed on disk: created, changed or deleted, spelled any way.
+    /// Every server hears of those among them it registered to watch,
+    /// spelled the way it spells its folders, in one notification.
+    ///
+    /// Both what the editor itself did — a save, a file operation — and what
+    /// the folders of [`Handled::Watch`] saw come through here.
+    pub fn files_changed(&mut self, changes: Vec<(PathBuf, FileChangeType)>) {
+        if !changes.is_empty() && !self.watching.is_empty() {
+            self.send(Command::FilesChanged(changes));
+        }
+    }
+
+    /// Every folder a server wants watched, each once, none inside another.
+    fn watched_folders(&self) -> Vec<PathBuf> {
+        let all: BTreeSet<&PathBuf> = self.watching.values().flatten().collect();
+        let mut folders: Vec<PathBuf> = Vec::new();
+        for folder in all {
+            if !folders.iter().any(|outer| folder.starts_with(outer)) {
+                folders.push(folder.clone());
+            }
+        }
+        folders
+    }
+
     /// Whether `id` has been asked and neither answered nor cancelled.
     #[must_use]
     pub fn is_pending(&self, id: RequestId) -> bool {
@@ -496,6 +529,16 @@ impl Lsp {
                 if shown { Handled::Redraw } else { Handled::Nothing }
             }
             Event::ApplyEdit(request) => Handled::ApplyEdit(request),
+            Event::Watching { server, folders } => {
+                let before = self.watched_folders();
+                if folders.is_empty() {
+                    self.watching.remove(&server);
+                } else {
+                    self.watching.insert(server, folders);
+                }
+                let after = self.watched_folders();
+                if after == before { Handled::Nothing } else { Handled::Watch(after) }
+            }
             Event::Message { server, kind, text } => {
                 // Errors and warnings are for the person; the rest is chatter,
                 // and is in the log for anyone who wants it.
@@ -711,6 +754,19 @@ struct Router {
     docs: HashMap<DocId, usize>,
 }
 
+/// A path through no symbolic link. One that is gone — deleted, or moved
+/// away — has its folder resolved instead, which is still there.
+fn resolved(path: PathBuf) -> PathBuf {
+    if let Ok(path) = std::fs::canonicalize(&path) {
+        return path;
+    }
+    let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else { return path };
+    match std::fs::canonicalize(parent) {
+        Ok(parent) => parent.join(name),
+        Err(_) => std::path::absolute(&path).unwrap_or(path),
+    }
+}
+
 /// What `name` calls itself in the status line: its command, without a path.
 fn name_of(spec: &Spec) -> String {
     Path::new(&spec.command)
@@ -771,6 +827,16 @@ impl Router {
             running.inbox.send(ToServer::Open { doc, uri, language: language.id, version, text });
     }
 
+    /// Pass changes on disk to every server, resolved: through no symbolic
+    /// link, the way the servers' folders are resolved to match them.
+    fn files_changed(&self, changes: Vec<(PathBuf, FileChangeType)>) {
+        let changes: Arc<[(PathBuf, FileChangeType)]> =
+            changes.into_iter().map(|(path, typ)| (resolved(path), typ)).collect();
+        for running in self.servers.iter().filter(|running| !running.retired) {
+            let _ = running.inbox.send(ToServer::FilesChanged { changes: changes.clone() });
+        }
+    }
+
     /// Route until shut down, then shut every server down by the deadline.
     async fn run(mut self, mut commands: UnboundedReceiver<Command>) {
         let mut deadline = None;
@@ -805,6 +871,7 @@ impl Router {
                     self.deliver(doc, ToServer::Notify { method, params });
                 }
                 Command::Cancel { id, doc } => self.deliver(doc, ToServer::Cancel { id }),
+                Command::FilesChanged(changes) => self.files_changed(changes),
                 Command::AnswerEdit { server, run, id, result } => {
                     if let Some(running) = self.servers.iter().find(|running| running.id == server)
                     {
@@ -1195,6 +1262,55 @@ mod tests {
             assert!(Instant::now() < deadline, "the log says the server was killed:\n{text}");
             std::thread::sleep(Duration::from_millis(20));
         }
+    }
+
+    /// A folder reached through a symbolic link — every macOS temporary
+    /// folder is one — is resolved for the server, and a change named through
+    /// the link reaches it resolved, as the server knows the file.
+    #[test]
+    #[cfg(unix)]
+    fn a_change_named_through_a_link_reaches_the_server_as_it_spells_the_file() {
+        let (mut editor, seen) = with_fake(Script::default());
+        let real = std::fs::canonicalize(editor.dir.path()).unwrap().join("real");
+        std::fs::create_dir(&real).unwrap();
+        let link = editor.dir.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        std::fs::write(real.join("main.rs"), "").unwrap();
+        editor.lsp.open(1, &link.join("main.rs"), &Rope::new());
+        editor.until_ready(1);
+        editor
+            .lsp
+            .request_raw(1, "test/register", json!([{ "globPattern": "**/*.rs" }]), None)
+            .unwrap();
+        let Handled::Watch(folders) = editor.until(|handled| matches!(handled, Handled::Watch(_)))
+        else {
+            unreachable!()
+        };
+        assert_eq!(folders, std::slice::from_ref(&real));
+
+        std::fs::remove_file(real.join("main.rs")).unwrap();
+        editor.lsp.files_changed(vec![
+            (link.join("main.rs"), FileChangeType::DELETED),
+            (link.join("notes.txt"), FileChangeType::CREATED),
+        ]);
+        let deadline = Instant::now() + Duration::from_secs(20);
+        let told = loop {
+            let told: Vec<Value> = seen
+                .received
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(method, _)| method == "workspace/didChangeWatchedFiles")
+                .map(|(_, params)| params["changes"].clone())
+                .collect();
+            if !told.is_empty() {
+                break told;
+            }
+            assert!(Instant::now() < deadline, "the server was told");
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        let uri = crate::uri::from_path(&real.join("main.rs")).unwrap();
+        assert_eq!(told, [json!([{ "uri": uri.as_str(), "type": 3 }])]);
     }
 
     /// Against the real thing, when it is installed: `cargo test -- --ignored`.

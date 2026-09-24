@@ -19,9 +19,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use lsp_types::{
-    ApplyWorkspaceEditParams, InitializeResult, ProgressParams, ProgressParamsValue,
-    PublishDiagnosticsParams, ServerCapabilities, ShowMessageParams, TextDocumentSyncCapability,
-    TextDocumentSyncKind, TextDocumentSyncSaveOptions, Uri, WorkDoneProgress,
+    ApplyWorkspaceEditParams, FileChangeType, InitializeResult, ProgressParams,
+    ProgressParamsValue, PublishDiagnosticsParams, RegistrationParams, ServerCapabilities,
+    ShowMessageParams, TextDocumentSyncCapability, TextDocumentSyncKind,
+    TextDocumentSyncSaveOptions, UnregistrationParams, Uri, WorkDoneProgress,
 };
 use nun_core::Edit;
 use ropey::Rope;
@@ -38,6 +39,7 @@ use crate::log::{Direction, Log};
 use crate::position::Encoding;
 use crate::rpc::{self, Failure, Message, ReadError};
 use crate::sync::{Shadow, SyncKind};
+use crate::watched::Watched;
 
 /// How to start a server.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -188,6 +190,11 @@ pub(crate) enum ToServer {
     Cancel {
         id: RequestId,
     },
+    /// Files changed on disk, each spelled resolved: the server hears of
+    /// those it registered to watch.
+    FilesChanged {
+        changes: Arc<[(PathBuf, FileChangeType)]>,
+    },
     /// The editor's answer to a `workspace/applyEdit` of run `run`: whether
     /// the edit was made, or why not.
     AnswerEdit {
@@ -265,7 +272,12 @@ struct Session {
     /// The server's `workspace/applyEdit` requests the editor has not
     /// answered yet, by their wire ids.
     edits_asked: Vec<Value>,
+    /// The files this run has asked to hear about.
+    watched: Watched,
 }
+
+/// The method a server registers to have files watched for it.
+const WATCHED_FILES: &str = "workspace/didChangeWatchedFiles";
 
 /// The wire id of `initialize`, which is always the first request of a run.
 const INITIALIZE: i64 = 0;
@@ -413,6 +425,8 @@ impl Server {
             ToServer::Save { .. }
             | ToServer::Notify { .. }
             | ToServer::Cancel { .. }
+            // A run that has not started will read the disk as it finds it.
+            | ToServer::FilesChanged { .. }
             // The run that asked has gone, and nobody is waiting any more.
             | ToServer::AnswerEdit { .. }
             | ToServer::Restart
@@ -524,6 +538,10 @@ impl Server {
         }
         for document in self.docs.values_mut() {
             document.opened = false;
+        }
+        // What it registered goes with it; the next run registers afresh.
+        if !session.watched.folders().is_empty() {
+            (self.shared.report)(Event::Watching { server: self.id, folders: Vec::new() });
         }
         session.outgoing = None;
         if let Some(child) = child
@@ -677,6 +695,13 @@ impl Server {
                     self.notify(session, "$/cancelRequest", json!({ "id": wire }));
                 }
             }
+            ToServer::FilesChanged { changes } => {
+                let changes = session.watched.events(&changes);
+                if ready && !changes.is_empty() {
+                    let params = json!({ "changes": changes });
+                    self.notify(session, "workspace/didChangeWatchedFiles", params);
+                }
+            }
             ToServer::AnswerEdit { run, id, result } => {
                 if run != self.runs {
                     return;
@@ -739,6 +764,13 @@ impl Server {
             Message::Request { id, method, params } if method == "workspace/applyEdit" => {
                 self.edit_asked(session, id, params);
             }
+            Message::Request { id, method, params }
+                if method == "client/registerCapability"
+                    || method == "client/unregisterCapability" =>
+            {
+                self.registration(session, &method, params);
+                self.send(session, &Message::Response { id, result: Ok(Value::Null) });
+            }
             Message::Request { id, method, params } => {
                 let result = self.server_request(&method, &params);
                 self.send(session, &Message::Response { id, result });
@@ -794,6 +826,8 @@ impl Server {
     /// answer, even if it is "no": a server waiting on one may wait for ever.
     fn server_request(&self, method: &str, params: &Value) -> Result<Value, Failure> {
         match method {
+            // Registrations are taken in `registration`; anything else a
+            // server registers is accepted and goes unused.
             "window/workDoneProgress/create"
             | "client/registerCapability"
             | "client/unregisterCapability" => Ok(Value::Null),
@@ -813,6 +847,36 @@ impl Server {
                 code: rpc::METHOD_NOT_FOUND,
                 message: format!("nun does not handle `{method}`"),
             }),
+        }
+    }
+
+    /// The server registers, or unregisters, capabilities. Only watched
+    /// files are taken in: every other registration is accepted and unused,
+    /// as nun declares no other dynamic registration. The editor hears which
+    /// folders to watch whenever they change.
+    fn registration(&self, session: &mut Session, method: &str, params: Value) {
+        let before = session.watched.folders();
+        if method == "client/registerCapability" {
+            let Ok(params) = serde_json::from_value::<RegistrationParams>(params) else { return };
+            for registration in params.registrations {
+                if registration.method == WATCHED_FILES {
+                    let options = registration.register_options;
+                    session.watched.register(&registration.id, options, &self.root);
+                }
+            }
+        } else {
+            let Ok(params) = serde_json::from_value::<UnregistrationParams>(params) else { return };
+            // The protocol misspells the field, and so do servers.
+            for unregistration in params.unregisterations {
+                if unregistration.method == WATCHED_FILES {
+                    session.watched.unregister(&unregistration.id);
+                }
+            }
+        }
+        let folders = session.watched.folders();
+        if folders != before {
+            self.note(&format!("watching {folders:?} for it"));
+            (self.shared.report)(Event::Watching { server: self.id, folders });
         }
     }
 
@@ -968,6 +1032,7 @@ impl Session {
             progress_said: None,
             progress_at: None,
             edits_asked: Vec::new(),
+            watched: Watched::default(),
         }
     }
 
@@ -1050,6 +1115,13 @@ fn initialize_params(root: &Path) -> Value {
             "workspace": {
                 "configuration": true,
                 "workspaceFolders": true,
+                // The editor watches the folders a server registers, minus
+                // what the ignore rules leave out, and tells it of the files
+                // its patterns choose: see `registration`.
+                "didChangeWatchedFiles": {
+                    "dynamicRegistration": true,
+                    "relativePatternSupport": true,
+                },
                 // Answered once the editor has made the edit, or decided not
                 // to: see `edit_asked`.
                 "applyEdit": true,

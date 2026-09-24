@@ -394,6 +394,8 @@ pub struct App {
     session: crate::session::Session,
     /// The language servers, once there is somewhere to post their news.
     lsp: Option<nun_lsp::Lsp>,
+    /// Watches the folders the language servers ask to have watched.
+    disk: lsp::Disk,
     /// Formatting asked of them, and where it happens on save.
     formatting: format::Formatting,
     /// Definitions, references, and the way back from them.
@@ -486,6 +488,7 @@ impl App {
             search_deadline: None,
             session: crate::session::Session::default(),
             lsp: None,
+            disk: lsp::Disk::default(),
             formatting: format::Formatting::default(),
             navigation: navigation::Navigation::default(),
             diagnostics: diagnostics::Diagnostics::default(),
@@ -894,6 +897,7 @@ impl App {
             Event::Syntax(reply) => self.syntax_reply(reply),
             Event::Found(found) => self.search_found(found),
             Event::Lsp(event) => self.lsp_event(event),
+            Event::Disk(news) => self.disk_news(news),
             Event::Config(news) => self.config_news(news),
             Event::Term(report) => self.terminal_report(report),
             Event::Copied { chars, problem } => self.copied(chars, problem),

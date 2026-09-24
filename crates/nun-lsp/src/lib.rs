@@ -30,6 +30,7 @@ mod server;
 pub mod snippet;
 mod sync;
 pub mod uri;
+mod watched;
 
 #[cfg(test)]
 mod fake;

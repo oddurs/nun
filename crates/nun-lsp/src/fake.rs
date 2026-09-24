@@ -246,6 +246,30 @@ impl Fake {
                 }));
                 self.hanging.push(id);
             }
+            // Registers, or with `unregister` set unregisters, watchers for
+            // `params`, as a server that has its client watch files does.
+            "test/register" | "test/unregister" => {
+                let registration = if method == "test/register" {
+                    json!({ "registrations": [{
+                        "id": "watch",
+                        "method": "workspace/didChangeWatchedFiles",
+                        "registerOptions": { "watchers": params },
+                    }]})
+                } else {
+                    json!({ "unregisterations": [{
+                        "id": "watch",
+                        "method": "workspace/didChangeWatchedFiles",
+                    }]})
+                };
+                let method = format!("client/{}Capability", &method[5..]);
+                self.send(json!({
+                    "jsonrpc": "2.0",
+                    "id": "fake-register",
+                    "method": method,
+                    "params": registration,
+                }));
+                self.reply(&id, &Value::Null);
+            }
             // Everything else hangs, as a busy server would.
             _ => self.hanging.push(id),
         }
@@ -706,6 +730,67 @@ mod tests {
         fake.ask("test/edit", json!({ "edit": 7 }), None);
         fake.settle().await;
         assert_eq!(*fake.seen.answers.lock().unwrap(), [Value::Null], "an error, not a result");
+    }
+
+    fn watched(seen: &Seen) -> Vec<Value> {
+        seen.received
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(method, _)| method == "workspace/didChangeWatchedFiles")
+            .map(|(_, params)| params["changes"].clone())
+            .collect()
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn files_are_told_of_as_the_registered_patterns_choose() {
+        let mut fake = start(Script::default(), timing());
+        fake.open(1, "", 0);
+        fake.ready().await;
+        // The registration comes before the answer, so the answer is not
+        // waited for: waiting would pass over it.
+        fake.ask("test/register", json!([{ "globPattern": "**/*.rs", "kind": 3 }]), None);
+        let watching = fake.until(|event| matches!(event, Event::Watching { .. })).await;
+        let Event::Watching { folders, .. } = watching else { unreachable!() };
+        assert_eq!(folders, [PathBuf::from("/tmp/project")]);
+
+        let changes: Arc<[(PathBuf, lsp_types::FileChangeType)]> = Arc::from([
+            (PathBuf::from("/tmp/project/src/new.rs"), lsp_types::FileChangeType::CREATED),
+            (PathBuf::from("/tmp/project/README.md"), lsp_types::FileChangeType::CREATED),
+            (PathBuf::from("/tmp/project/src/old.rs"), lsp_types::FileChangeType::DELETED),
+            (PathBuf::from("/tmp/project/src/main.rs"), lsp_types::FileChangeType::CHANGED),
+        ]);
+        fake.send(ToServer::FilesChanged { changes: changes.clone() });
+        fake.settle().await;
+        assert_eq!(
+            watched(&fake.seen),
+            [json!([
+                { "uri": "file:///tmp/project/src/new.rs", "type": 1 },
+                { "uri": "file:///tmp/project/src/main.rs", "type": 2 },
+            ])],
+            "one notification, holding what the pattern chose"
+        );
+        assert_eq!(fake.seen.answers.lock().unwrap().first(), Some(&Value::Null), "accepted");
+
+        fake.ask("test/unregister", Value::Null, None);
+        let watching = fake.until(|event| matches!(event, Event::Watching { .. })).await;
+        assert!(matches!(watching, Event::Watching { folders, .. } if folders.is_empty()));
+        fake.send(ToServer::FilesChanged { changes });
+        fake.settle().await;
+        assert_eq!(watched(&fake.seen).len(), 1, "nothing more once unregistered");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_run_that_ends_takes_its_watchers_with_it() {
+        let mut fake = start(Script::default(), timing());
+        fake.open(1, "", 0);
+        fake.ready().await;
+        fake.ask("test/register", json!([{ "globPattern": "**/*.rs" }]), None);
+        fake.until(|event| matches!(event, Event::Watching { folders, .. } if !folders.is_empty()))
+            .await;
+        fake.ask("test/crash", Value::Null, None);
+        fake.until(|event| matches!(event, Event::Watching { folders, .. } if folders.is_empty()))
+            .await;
     }
 
     #[tokio::test(start_paused = true)]

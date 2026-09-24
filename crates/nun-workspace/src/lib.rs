@@ -37,10 +37,15 @@
 //!   directory, that something in one of them changed. It never touches the
 //!   tree itself: the editor state has one owner on the main thread, so the
 //!   watcher posts a message and the owner calls [`FileTree::refresh_dir`].
+//! - [`DiskWatcher`] watches whole folders, minus what the ignore rules leave
+//!   out, and reports in batches which files in them were created, changed or
+//!   deleted: what a language server that trusts its client to watch for it
+//!   needs to hear.
 //!
 //! No terminal dependency; all of this is unit tested directly against temporary
 //! directories.
 
+pub mod disk;
 pub mod grep;
 pub mod jobs;
 pub mod labels;
@@ -54,6 +59,7 @@ pub mod search;
 pub mod tree;
 pub mod watch;
 
+pub use disk::{ChangeKind, DiskChange, DiskNews, DiskWatcher};
 pub use grep::{Case, Found, Grep, Hit, MOST_CHARS, Options};
 pub use jobs::{Done, Job, Jobs, trash_or_temp};
 pub use labels::{UNNAMED, tab_labels};

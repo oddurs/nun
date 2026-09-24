@@ -73,7 +73,7 @@
 
 ## m5 — Git and terminal
 
-`###·······` 25% · 3 of 12 done · due 2026-12-03
+`####······` 33% · 4 of 12 done · due 2026-12-03
 
 ### backlog
 
@@ -81,7 +81,6 @@
 - [ ] [`0039`](https://github.com/oddurs/nun/blob/main/cairn/items/0039-gutter-marks-and-hunk-actions.md) Gutter marks and hunk actions <sup>feature · p0</sup>
 - [ ] [`0040`](https://github.com/oddurs/nun/blob/main/cairn/items/0040-diff-view.md) Diff view <sup>feature · p2</sup>
 - [ ] [`0043`](https://github.com/oddurs/nun/blob/main/cairn/items/0043-session-restore.md) Session restore <sup>feature · p2</sup>
-- [ ] [`0087`](https://github.com/oddurs/nun/blob/main/cairn/items/0087-lsp-tell-servers-about-files-that-change-on-disk.md) LSP: tell servers about files that change on disk <sup>feature · p2</sup>
 - [ ] [`0088`](https://github.com/oddurs/nun/blob/main/cairn/items/0088-terminal-panel-restore-its-tabs-and-directories-with-the-session.md) Terminal panel: restore its tabs and directories with the session <sup>feature · p2</sup>
 - [ ] [`0089`](https://github.com/oddurs/nun/blob/main/cairn/items/0089-terminal-panel-copy-through-osc-52-where-the-system-clipboard-cannot.md) Terminal panel: copy through OSC 52 where the system clipboard cannot <sup>feature · p2</sup>
 - [ ] [`0090`](https://github.com/oddurs/nun/blob/main/cairn/items/0090-terminal-panel-detect-true-colour-and-answer-pixel-size-queries.md) Terminal panel: detect true colour, and answer pixel-size queries <sup>feature · p3</sup>
@@ -95,6 +94,7 @@
 - [x] [`0042`](https://github.com/oddurs/nun/blob/main/cairn/items/0042-layered-config-with-hot-reload.md) Layered config with hot reload <sup>feature · p0</sup>
 - [x] [`0075`](https://github.com/oddurs/nun/blob/main/cairn/items/0075-format-on-save-per-project.md) Format on save per project <sup>feature · p2</sup>
 - [x] [`0078`](https://github.com/oddurs/nun/blob/main/cairn/items/0078-rename-carry-out-file-operations-a-server-asks-for.md) Rename: carry out file operations a server asks for <sup>feature · p2</sup>
+- [x] [`0087`](https://github.com/oddurs/nun/blob/main/cairn/items/0087-lsp-tell-servers-about-files-that-change-on-disk.md) LSP: tell servers about files that change on disk <sup>feature · p2</sup>
 
 ## perf — Fast on anything
 
@@ -125,7 +125,7 @@
 
 ## m6 — Polish until it is boring
 
-`###·······` 30% · 3 of 10 done · due 2026-12-17
+`###·······` 27% · 3 of 11 done · due 2026-12-17
 
 ### backlog
 
@@ -136,6 +136,7 @@
 - [ ] [`0082`](https://github.com/oddurs/nun/blob/main/cairn/items/0082-a-key-pressed-right-after-escape-types-its-escape-sequence-as-text.md) A key pressed right after Escape types its escape sequence as text <sup>bug · p1</sup>
 - [ ] [`0085`](https://github.com/oddurs/nun/blob/main/cairn/items/0085-nerd-font-glyph-preset.md) Nerd Font glyph preset <sup>feature · p2</sup>
 - [ ] [`0086`](https://github.com/oddurs/nun/blob/main/cairn/items/0086-custom-glyphs-drawn-as-cell-images.md) Custom glyphs drawn as cell images <sup>feature · p3</sup>
+- [ ] [`0091`](https://github.com/oddurs/nun/blob/main/cairn/items/0091-lsp-watch-single-paths-a-server-names-outside-the-project.md) LSP: watch single paths a server names outside the project <sup>feature · p3</sup>
 
 ### done
 
