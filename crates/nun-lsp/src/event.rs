@@ -226,6 +226,14 @@ pub enum Event {
     },
     /// A server asked for an edit to be made, and is waiting for the answer.
     ApplyEdit(EditRequest),
+    /// The folders a server wants watched for it changed: these, resolved,
+    /// and nothing when it has stopped wanting any.
+    Watching {
+        /// Which.
+        server: ServerId,
+        /// The folders.
+        folders: Vec<PathBuf>,
+    },
     /// A server asked for something to be shown: `window/showMessage`.
     Message {
         /// Which.

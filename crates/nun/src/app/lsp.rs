@@ -10,8 +10,10 @@
 
 use std::time::Duration;
 
+use nun_lsp::types::FileChangeType;
 use nun_lsp::{Handled, Lsp};
 use nun_theme::Role;
+use nun_workspace::{ChangeKind, DiskNews};
 use ratatui::buffer::Buffer as Cells;
 use ratatui::layout::Rect;
 
@@ -22,6 +24,15 @@ use super::{App, Outcome, Target};
 /// killed. Waited for after the terminal is back, so it is never a frozen
 /// screen — at worst a prompt that takes a moment to come back.
 pub const SHUTDOWN: Duration = Duration::from_secs(2);
+
+/// The watcher of the folders the servers ask to have watched for them.
+#[derive(Debug, Default)]
+pub(super) struct Disk {
+    watcher: Option<nun_workspace::DiskWatcher>,
+    /// Whether it has said it could not watch something. Said once: a watch
+    /// limit reached fails for every folder after it.
+    warned: bool,
+}
 
 impl App {
     /// Start talking to language servers, for the documents already open and
@@ -124,6 +135,12 @@ impl App {
                 self.code_action_answer(&response)
             }
             Handled::ApplyEdit(request) => self.server_edit(request),
+            Handled::Watch(folders) => {
+                if let Some(watcher) = &self.disk.watcher {
+                    watcher.watch(folders);
+                }
+                Outcome::Continue
+            }
             Handled::Nothing => Outcome::Continue,
             Handled::Response(response) => {
                 self.navigation_answered(&response).unwrap_or(Outcome::Continue)
@@ -138,6 +155,44 @@ impl App {
             self.refresh_diagnostics();
         }
         outcome
+    }
+
+    /// Watch the folders servers ask to have watched with `disk`.
+    pub fn attach_disk_watcher(&mut self, disk: nun_workspace::DiskWatcher) {
+        self.disk.watcher = Some(disk);
+    }
+
+    /// Files changed in a watched folder: the servers that asked hear of
+    /// them. Nothing on screen changes until they say something back.
+    pub(super) fn disk_news(&mut self, news: DiskNews) -> Outcome {
+        match news {
+            DiskNews::Changed(changes) => {
+                let changes = changes
+                    .into_iter()
+                    .map(|change| {
+                        let typ = match change.kind {
+                            ChangeKind::Created => FileChangeType::CREATED,
+                            ChangeKind::Changed => FileChangeType::CHANGED,
+                            ChangeKind::Deleted => FileChangeType::DELETED,
+                        };
+                        (change.path, typ)
+                    })
+                    .collect();
+                if let Some(lsp) = self.lsp.as_mut() {
+                    lsp.files_changed(changes);
+                }
+                Outcome::Continue
+            }
+            DiskNews::Failed(why) if !self.disk.warned => {
+                self.disk.warned = true;
+                self.warn(format!(
+                    "Some files cannot be watched for the language servers, \
+                     which will not hear when they change: {why}"
+                ));
+                Outcome::Redraw
+            }
+            DiskNews::Failed(_) => Outcome::Continue,
+        }
     }
 
     /// Restart the server of the file being edited.
@@ -300,6 +355,110 @@ mod tests {
         }
         let (label, trouble) = app.lsp_label().unwrap();
         assert!(trouble, "{label}");
+    }
+
+    /// A server that leaves watching to its client: once initialized it
+    /// registers `**/*.rs`, and it writes what it reads to `$1`, one message
+    /// a line.
+    const WATCHING: &str = r#"
+log="$1"
+send() { printf 'Content-Length: %s\r\n\r\n%s' "${#1}" "$1"; }
+while :; do
+  len=
+  while IFS= read -r line; do
+    line=$(printf '%s' "$line" | tr -d '\r')
+    [ -z "$line" ] && break
+    case "$line" in Content-Length:*) len=${line#Content-Length: } ;; esac
+  done
+  [ -z "$len" ] && exit 0
+  body=$(dd bs=1 count="$len" 2>/dev/null)
+  printf '%s\n' "$body" >> "$log"
+  id=$(printf '%s' "$body" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  case "$body" in
+    *'"method":"initialize"'*) result='{"capabilities":{"textDocumentSync":1}}' ;;
+    *'"method":"initialized"'*)
+      send '{"jsonrpc":"2.0","id":"r1","method":"client/registerCapability","params":{"registrations":[{"id":"w","method":"workspace/didChangeWatchedFiles","registerOptions":{"watchers":[{"globPattern":"**/*.rs"}]}}]}}'
+      continue ;;
+    *'"method":"shutdown"'*) result=null ;;
+    *'"method":"exit"'*) exit 0 ;;
+    *) continue ;;
+  esac
+  send "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":$result}"
+done
+"#;
+
+    /// Files changed from outside nun — made, moved, and made where the
+    /// ignore rules say not to look — as the server hears of them.
+    #[test]
+    #[cfg(unix)]
+    fn a_change_outside_nun_reaches_the_server_that_watches_for_it() {
+        let log = tempfile::NamedTempFile::new().unwrap();
+        let log_path = log.path().display().to_string();
+        let (mut app, events, dir) = editor("sh", &["-c", WATCHING, "server", &log_path]);
+        // Every macOS temporary folder is reached through a link: the server
+        // knows the files by their resolved names, and hears them so.
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        std::fs::write(root.join(".ignore"), "target/\n").unwrap();
+        std::fs::create_dir_all(root.join("target")).unwrap();
+        std::fs::write(root.join("other.rs"), "").unwrap();
+        let (sender, disk) = channel();
+        app.attach_disk_watcher(
+            nun_workspace::DiskWatcher::new(Box::new(move |news| {
+                let _ = sender.send(news);
+            }))
+            .unwrap(),
+        );
+        let told = |wanted: &str| {
+            let uri = nun_lsp::uri::from_path(&root.join(wanted)).unwrap();
+            std::fs::read_to_string(log.path())
+                .unwrap()
+                .lines()
+                .any(|line| line.contains("didChangeWatchedFiles") && line.contains(uri.as_str()))
+        };
+        // Whether `done` came true within `within`, handing the editor
+        // what the server and the watcher say meanwhile.
+        let pump = |app: &mut App, done: &dyn Fn() -> bool, within: Duration| {
+            let deadline = Instant::now() + within;
+            while !done() {
+                if Instant::now() >= deadline {
+                    return false;
+                }
+                while let Ok(event) = events.try_recv() {
+                    app.handle(Event::Lsp(event));
+                }
+                while let Ok(news) = disk.try_recv() {
+                    app.handle(Event::Disk(news));
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            true
+        };
+
+        // Until the watch is up, a new file each time, the way a person
+        // would keep saving.
+        let mut attempt = 0;
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            attempt += 1;
+            let name = format!("warm-{attempt}.rs");
+            std::fs::write(root.join(&name), "").unwrap();
+            if pump(&mut app, &|| told(&name), Duration::from_millis(1500)) {
+                break;
+            }
+            assert!(Instant::now() < deadline, "the server was never told of a new file");
+        }
+
+        std::fs::write(root.join("target/built.rs"), "").unwrap();
+        std::fs::create_dir(root.join("net")).unwrap();
+        std::fs::rename(root.join("other.rs"), root.join("net/mod.rs")).unwrap();
+        assert!(
+            pump(&mut app, &|| told("net/mod.rs") && told("other.rs"), Duration::from_secs(1)),
+            "the move was told within a second"
+        );
+        assert!(!told("target/built.rs"), "the ignore rules say not to look there");
+        let text = std::fs::read_to_string(log.path()).unwrap();
+        let line = text.lines().rev().find(|line| line.contains("net/mod.rs")).unwrap();
+        assert!(line.contains(r#""type":3"#) && line.contains(r#""type":1"#), "in one: {line}");
     }
 
     #[test]

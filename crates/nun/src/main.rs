@@ -271,13 +271,7 @@ fn edit(path: &Path, lsp_log: Option<&Path>) -> io::Result<()> {
 
     attach_terminal(&mut app, &events, path, folder)?;
 
-    let sender = events.sender();
-    match nun_workspace::Watcher::new(Box::new(move |change| {
-        let _ = sender.send(nun_ui::Event::Files { dir: change.dir, error: change.watch_error });
-    })) {
-        Ok(watcher) => app.attach_watcher(watcher),
-        Err(error) => app.warn(format!("The file tree will not update on its own: {error}")),
-    }
+    attach_watchers(&mut app, &events);
 
     app.set_viewport(screen.area()?);
     screen.draw(AppView(&app))?;
@@ -383,6 +377,30 @@ fn wind_down(app: &mut App, ctrl_click: Option<hints::Unseen>) {
     // Last, and bounded: a server that will not exit is killed at the
     // deadline rather than waited for.
     app.shutdown_lsp();
+}
+
+/// Watch the disk: the tree's expanded folders, and whatever folders the
+/// language servers ask to have watched for them.
+fn attach_watchers(app: &mut App, events: &Events) {
+    let sender = events.sender();
+    match nun_workspace::Watcher::new(Box::new(move |change| {
+        let _ = sender.send(nun_ui::Event::Files { dir: change.dir, error: change.watch_error });
+    })) {
+        Ok(watcher) => app.attach_watcher(watcher),
+        Err(error) => app.warn(format!("The file tree will not update on its own: {error}")),
+    }
+
+    // Language servers that leave watching the disk to their client register
+    // the folders they want watched; this watches them. Idle until one does.
+    let sender = events.sender();
+    match nun_workspace::DiskWatcher::new(Box::new(move |news| {
+        let _ = sender.send(nun_ui::Event::Disk(news));
+    })) {
+        Ok(disk) => app.attach_disk_watcher(disk),
+        Err(error) => app.warn(format!(
+            "The language servers will not hear of files changed outside nun: {error}"
+        )),
+    }
 }
 
 /// Start the language server runtime, posting to `events`.

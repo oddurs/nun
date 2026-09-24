@@ -36,9 +36,10 @@
 //! and opened under the new. The server is not asked `willRenameFiles` and is
 //! not told `didRenameFiles`, since it asked for the move itself. It is told
 //! `didChangeWatchedFiles` of every file created, moved, deleted or written on
-//! disk, both ways: nun watches no files for it, and a server that leaves
-//! watching to its client would otherwise go on believing a module's file is
-//! where it was.
+//! disk that it registered to watch, both ways, at once rather than when the
+//! watcher gets round to it: a server that leaves watching to its client
+//! would otherwise go on believing, for a moment or for good, that a module's
+//! file is where it was.
 //!
 //! **Straight in, or previewed.** A rename is always previewed: it writes
 //! files nobody has open, the second most destructive thing the editor does
@@ -113,10 +114,8 @@ use std::path::{Path, PathBuf};
 
 use crossterm::event::{KeyCode, KeyEvent};
 use nun_core::Edit;
-use nun_lsp::types::notification::DidChangeWatchedFiles;
 use nun_lsp::types::{
-    DidChangeWatchedFilesParams, DocumentChangeOperation, DocumentChanges, FileChangeType,
-    FileEvent, OneOf, TextEdit, WorkspaceEdit,
+    DocumentChangeOperation, DocumentChanges, FileChangeType, OneOf, TextEdit, WorkspaceEdit,
 };
 use nun_lsp::{EditRequest, Encoding};
 use nun_ui::{Glyph, HitState, SearchRow, SearchView};
@@ -343,9 +342,6 @@ pub(super) struct Edits {
     offer: Option<String>,
     /// Numbers the worker's jobs, so an answer finds its question.
     tags: u64,
-    /// The document that was in front of the person when the edit in hand
-    /// arrived, whose server hears about the files it changes on disk.
-    about: Option<DocId>,
 }
 
 impl Edits {
@@ -546,8 +542,6 @@ struct Applied {
     /// The file operations that take back the ones it carried out, in the
     /// order to carry them out: the last one done, first.
     files: Vec<FileOp>,
-    /// The document whose server hears about files changed on disk.
-    about: Option<DocId>,
 }
 
 /// One open file an edit changed.
@@ -610,7 +604,6 @@ impl App {
             self.edits_done(Err("another edit came first".into()));
         }
         self.edits.after = after;
-        self.edits.about = Some(self.doc().id);
         match self.plan(encoding, edit) {
             Ok((files, disk, sorted)) if disk.is_empty() && sorted.ops.is_empty() => {
                 let mut files: Vec<FilePlan> =
@@ -1055,8 +1048,7 @@ impl App {
         }
         self.follow_caret();
 
-        let about = self.edits.about;
-        let applied = Applied { subject, buffers, disk: Vec::new(), files: Vec::new(), about };
+        let applied = Applied { subject, buffers, disk: Vec::new(), files: Vec::new() };
         if planned.is_empty() {
             return self.run_file_ops(applied, ops);
         }
@@ -1125,7 +1117,7 @@ impl App {
             return Outcome::Redraw;
         }
         let changed = done.iter().map(|rewrite| (rewrite.path.clone(), FileChangeType::CHANGED));
-        self.tell_servers(applied.about, changed.collect());
+        self.tell_servers(changed.collect());
 
         applied.disk = done
             .iter()
@@ -1227,7 +1219,7 @@ impl App {
     /// Bring the tree and the open files up to date with the operations that
     /// happened, and sort them into what happened, what stopped the run and
     /// why, and what was never tried — each in words.
-    fn followed(&mut self, about: Option<DocId>, ops: &[(FileOp, Carried)]) -> Carrying {
+    fn followed(&mut self, ops: &[(FileOp, Carried)]) -> Carrying {
         let mut carrying = Carrying::default();
         let mut events = Vec::new();
         for (op, carried) in ops {
@@ -1248,25 +1240,17 @@ impl App {
                 }
             }
         }
-        self.tell_servers(about, events);
+        self.tell_servers(events);
         carrying
     }
 
-    /// Tell the server of `about` — or, if that has closed, of the document
-    /// in front — that files changed on disk. nun does not watch files for a
-    /// server, so a server that trusts its client to say is otherwise never
-    /// told of a file the edit moved, or of one written that is not open.
-    fn tell_servers(&mut self, about: Option<DocId>, events: Vec<(PathBuf, FileChangeType)>) {
-        let doc = about.filter(|id| self.doc_by(*id).is_some()).unwrap_or(self.doc().id);
-        let changes: Vec<FileEvent> = events
-            .into_iter()
-            .filter_map(|(path, typ)| Some(FileEvent { uri: nun_lsp::uri::from_path(&path)?, typ }))
-            .collect();
-        if changes.is_empty() {
-            return;
-        }
+    /// Tell the servers that files changed on disk, each server of those
+    /// it registered to watch. The watcher would say so too, a moment later,
+    /// but it may not be running, and a server that heard of a move late
+    /// could answer the next question about the old file.
+    fn tell_servers(&mut self, events: Vec<(PathBuf, FileChangeType)>) {
         if let Some(lsp) = self.lsp.as_mut() {
-            lsp.notify::<DidChangeWatchedFiles>(doc, DidChangeWatchedFilesParams { changes });
+            lsp.files_changed(events);
         }
     }
 
@@ -1311,7 +1295,7 @@ impl App {
 
     /// The file operations ran, as far as they got.
     fn moved(&mut self, mut applied: Applied, ops: &[(FileOp, Carried)]) -> Outcome {
-        let mut carrying = self.followed(applied.about, ops);
+        let mut carrying = self.followed(ops);
         carrying.reverses.reverse();
         applied.files = std::mem::take(&mut carrying.reverses);
         let written: Vec<PathBuf> =
@@ -1358,7 +1342,7 @@ impl App {
     /// The file operations were taken back, as far as that got. The files
     /// follow once all of them are.
     fn moved_back(&mut self, mut applied: Applied, ops: &[(FileOp, Carried)]) -> Outcome {
-        let carrying = self.followed(applied.about, ops);
+        let carrying = self.followed(ops);
         applied.files = carrying.left;
         let Some(failed) = carrying.failed else {
             return self.rewrite_back(applied, carrying.did);
@@ -1501,7 +1485,7 @@ impl App {
             .map(|(path, _)| path.clone())
             .collect();
         let changed = restored.iter().map(|path| (path.clone(), FileChangeType::CHANGED));
-        self.tell_servers(applied.about, changed.collect());
+        self.tell_servers(changed.collect());
         if restored.len() == applied.disk.len() {
             return self.taken_back(&applied, &restored, did);
         }

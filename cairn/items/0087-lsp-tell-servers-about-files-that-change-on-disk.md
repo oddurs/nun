@@ -2,10 +2,12 @@
 id: 87
 title: 'LSP: tell servers about files that change on disk'
 type: feature
-status: backlog
+status: done
 milestone: m5
+assignee: Oddur Sigurdsson
 created: 2026-09-23
-updated: 2026-09-23
+updated: 2026-09-24
+closed_at: 2026-09-24
 priority: p2
 effort: m
 area: lsp
@@ -34,6 +36,6 @@ server spells them.
 
 ## Acceptance criteria
 
-- [ ] A file moved in the tree is reported to the server that watches it
-- [ ] A change made outside nun is reported, coalesced, within a second
-- [ ] Reported paths match how the server spells them, including through a symbolic link
+- [x] A file moved in the tree is reported to the server that watches it
+- [x] A change made outside nun is reported, coalesced, within a second
+- [x] Reported paths match how the server spells them, including through a symbolic link
