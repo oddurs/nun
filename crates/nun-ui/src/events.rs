@@ -42,6 +42,8 @@ pub enum Event {
         /// Why the directory could not be watched, when that is the news.
         error: Option<String>,
     },
+    /// A configuration file changed, or a file's `.editorconfig` was read.
+    Config(nun_config::News),
     /// The terminal closed, or reading from it failed.
     Closed,
 }

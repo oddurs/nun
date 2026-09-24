@@ -67,9 +67,35 @@ command = "rust-analyzer"  # the default; any language's server can be changed
 args = []                  # or turned off with `enabled = false`
 ```
 
-A bad value names the line and falls back rather than taking the editor down,
-and an unknown key is reported rather than silently ignored. Run `nun config` to
-see what actually took effect.
+A bad value names its line and is left out while the rest of the file still
+applies; a file that is not TOML at all keeps the settings it had until it
+reads again. An unknown key is reported rather than silently ignored. Saving
+any settings file applies it at once, theme included; `mouse`,
+`alternate_screen` and `keyboard_enhancement` say they apply at the next start,
+because they are how nun entered the terminal.
+
+### Layers
+
+Settings come in four layers, each over the one before: nun's defaults, your
+`nun.toml`, the `.editorconfig` sections that match a file, and a project's own
+`.nun.toml`. `nun config` prints the result with the file and line of every
+value that is not a default; `nun config <file>` includes that file's
+`.editorconfig`, and `nun config --explain editor.tab_width [<file>]` walks the
+layers for one setting and says which won.
+
+A project's `.nun.toml` is inert until you trust it, because a file in a
+repository you just cloned should not pick your formatter or point a language
+server at a program of its choosing. nun asks the first time it sees one, says
+what it would change, and remembers the answer per directory in
+`$XDG_STATE_HOME/nun/trust`. Editing its harmless settings (`[editor]`) applies
+at once; changing anything under `[lsp]` asks again. A project can set only
+`[editor]` and `[lsp]`: the theme, keys, glyphs and `[ui]` stay yours.
+"Review the project's settings" in the palette asks again.
+
+From `.editorconfig`, nun follows `indent_style`, `indent_size`, `tab_width`,
+`end_of_line`, `charset` (UTF-8 with or without a mark),
+`trim_trailing_whitespace` and `insert_final_newline`. The same names work
+under `[editor]` in `nun.toml`.
 
 ### Glyphs
 

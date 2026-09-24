@@ -88,6 +88,11 @@ enum Command {
     Restart {
         server: ServerId,
     },
+    /// Stop every server started for this spec: the configuration no longer
+    /// asks for it.
+    Retire {
+        spec: Spec,
+    },
     Shutdown {
         deadline: std::time::Instant,
     },
@@ -539,6 +544,35 @@ impl Lsp {
         self.send(Command::AnswerEdit { server, run, id, result });
     }
 
+    /// Take a new configuration: `servers`, by language, as for
+    /// [`Lsp::start`]. Returns the languages whose server changed — added,
+    /// removed, or started differently — for the caller to open their
+    /// documents again, which moves them to the new server. A server no
+    /// language asks for any more is stopped.
+    pub fn reconfigure(&mut self, servers: BTreeMap<String, ServerSpec>) -> Vec<String> {
+        let changed: Vec<String> = self
+            .specs
+            .keys()
+            .chain(servers.keys())
+            .filter(|language| self.specs.get(*language) != servers.get(*language))
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let spec = |server: &ServerSpec| Spec {
+            command: server.command.clone(),
+            args: server.args.clone(),
+        };
+        let wanted: Vec<Spec> = servers.values().map(spec).collect();
+        let gone: Vec<Spec> =
+            self.specs.values().map(spec).filter(|old| !wanted.contains(old)).collect();
+        self.specs = servers;
+        for spec in gone {
+            self.send(Command::Retire { spec });
+        }
+        changed
+    }
+
     /// Stop and start again the server of a document — after a crash, after
     /// giving up, or to pick up a newly installed one. Its name, if it has a
     /// server.
@@ -660,6 +694,9 @@ impl Drop for Lsp {
 struct Running {
     spec: Spec,
     root: PathBuf,
+    /// Stopped because the configuration changed; never handed a document
+    /// again, even if the configuration changes back.
+    retired: bool,
     id: ServerId,
     inbox: UnboundedSender<ToServer>,
     task: tokio::task::JoinHandle<()>,
@@ -690,8 +727,10 @@ impl Router {
 
     /// The server for `spec` in `root`, started if it is not running.
     fn server(&mut self, spec: Spec, root: PathBuf, optional: bool) -> usize {
-        if let Some(index) =
-            self.servers.iter().position(|running| running.spec == spec && running.root == root)
+        if let Some(index) = self
+            .servers
+            .iter()
+            .position(|running| !running.retired && running.spec == spec && running.root == root)
         {
             return index;
         }
@@ -707,7 +746,7 @@ impl Router {
             self.shared.clone(),
         );
         let task = tokio::spawn(server.run());
-        self.servers.push(Running { spec, root, id, inbox, task });
+        self.servers.push(Running { spec, root, retired: false, id, inbox, task });
         self.servers.len() - 1
     }
 
@@ -776,6 +815,15 @@ impl Router {
                     if let Some(running) = self.servers.iter().find(|running| running.id == server)
                     {
                         let _ = running.inbox.send(ToServer::Restart);
+                    }
+                }
+                Command::Retire { spec } => {
+                    let deadline = tokio::time::Instant::now() + self.shared.timing.reap;
+                    for running in self.servers.iter_mut().filter(|running| running.spec == spec) {
+                        if !running.retired {
+                            running.retired = true;
+                            let _ = running.inbox.send(ToServer::Shutdown { deadline });
+                        }
                     }
                 }
                 Command::Shutdown { deadline: when } => {
@@ -873,6 +921,25 @@ mod tests {
                 self.lsp.handle(event);
             }
         }
+    }
+
+    #[test]
+    fn a_new_configuration_moves_only_the_languages_it_changed() {
+        let (mut editor, seen) = with_fake(Script::default());
+        let path = editor.file("main.rs");
+        editor.lsp.open(1, &path, &Rope::new());
+        editor.until_ready(1);
+        assert_eq!(editor.lsp.reconfigure(specs("fake", &[], true)), Vec::<String>::new());
+
+        let changed = editor.lsp.reconfigure(specs("fake", &["--other"], true));
+        assert_eq!(changed, ["rust"]);
+        editor.lsp.open(1, &path, &Rope::new());
+        editor.until_ready(1);
+        assert_eq!(seen.launches.load(std::sync::atomic::Ordering::SeqCst), 2, "a new server");
+
+        let gone = editor.lsp.reconfigure(BTreeMap::new());
+        assert_eq!(gone, ["rust"]);
+        assert!(!editor.lsp.open(1, &path, &Rope::new()), "no server for it any more");
     }
 
     #[test]

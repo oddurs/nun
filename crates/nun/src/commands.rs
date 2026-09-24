@@ -125,6 +125,8 @@ pub enum Command {
     /// Offer the language server's code actions at the caret: quick fixes
     /// for the problems there first.
     CodeActions,
+    /// Ask again whether to trust the project's `.nun.toml`.
+    ReviewProjectSettings,
 }
 
 impl Command {
@@ -182,6 +184,7 @@ impl Command {
         Self::UndoRename,
         Self::ShowHover,
         Self::CodeActions,
+        Self::ReviewProjectSettings,
     ];
 
     /// The name used in `[keys]` in `nun.toml`.
@@ -240,6 +243,7 @@ impl Command {
             Self::UndoRename => "lsp.undo_rename",
             Self::ShowHover => "lsp.hover",
             Self::CodeActions => "lsp.code_actions",
+            Self::ReviewProjectSettings => "config.review_project",
         }
     }
 
@@ -299,6 +303,7 @@ impl Command {
             Self::UndoRename => "Undo rename",
             Self::ShowHover => "Show hover",
             Self::CodeActions => "Code actions",
+            Self::ReviewProjectSettings => "Review the project's settings",
         }
     }
 
@@ -415,6 +420,7 @@ const BASIC: &[(&str, Command)] = &[
     // Ctrl+. is VS Code's, and only the Kitty protocol reports it; the chord
     // is the same key after the prefix every terminal can send.
     ("ctrl+k .", Command::CodeActions),
+    ("ctrl+k t", Command::ReviewProjectSettings),
 ];
 
 /// Bindings that need the Kitty keyboard protocol, added over [`BASIC`].

@@ -31,6 +31,8 @@ pub(super) enum Purpose {
     RenameSymbol,
     /// Unsaved changes are about to be left; then close this tab of this pane.
     UnsavedThenClose(usize, usize),
+    /// A project's settings file is waiting to be trusted, or ignored.
+    TrustProject,
 }
 
 /// How the prompt was answered.
@@ -42,6 +44,8 @@ pub(super) enum Answer {
     Discard,
     /// Never mind.
     Cancel,
+    /// Go ahead with what the question is about: trust the project.
+    Accept,
 }
 
 /// A question on screen.
@@ -172,6 +176,17 @@ impl App {
         let control = key.modifiers.contains(KeyModifiers::CONTROL)
             || key.modifiers.contains(KeyModifiers::SUPER);
 
+        // A question with no field takes each button's first letter too, so
+        // every answer is a key away, not only Enter's and Esc's.
+        if let (KeyCode::Char(ch), None, Purpose::TrustProject) =
+            (key.code, &prompt.field, &prompt.purpose)
+            && !control
+            && let Some(&(_, answer)) = prompt.buttons.iter().find(|(label, _)| {
+                label.chars().next().is_some_and(|first| first.eq_ignore_ascii_case(&ch))
+            })
+        {
+            return self.answer(answer);
+        }
         match key.code {
             KeyCode::Enter => return self.answer(Answer::Confirm),
             KeyCode::Esc => return self.answer(Answer::Cancel),
@@ -206,6 +221,8 @@ impl App {
         let name = name.trim();
 
         match (prompt.purpose, answer) {
+            (Purpose::TrustProject, answer) => return self.trust_answered(answer),
+            (_, Answer::Accept) => {}
             (Purpose::RenameSymbol, answer) => {
                 return self.rename_named(answer == Answer::Confirm, name);
             }

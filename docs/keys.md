@@ -79,3 +79,4 @@ This file is generated from the source by `nun keys`. Do not edit it by hand.
 | Undo rename | `lsp.undo_rename` | `Ctrl+K Z` | `Ctrl+K Z` |
 | Show hover | `lsp.hover` | `Ctrl+K H`, `Ctrl+K Ctrl+I` | `Ctrl+K H` |
 | Code actions | `lsp.code_actions` | `Ctrl+.`, `Cmd+.`, `Ctrl+K .` | `Ctrl+K .` |
+| Review the project's settings | `config.review_project` | `Ctrl+K T` | `Ctrl+K T` |

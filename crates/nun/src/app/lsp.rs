@@ -39,6 +39,9 @@ impl App {
     /// project; a document with no server is not followed, and its buffer
     /// keeps no edits for one.
     pub(super) fn lsp_open(&mut self, id: DocId) {
+        // Every way a document arrives comes through here, which makes it the
+        // place to work out its whitespace too.
+        self.settings_follow(id);
         let Some(lsp) = self.lsp.as_mut() else { return };
         let Some(document) = self.docs.iter_mut().find(|document| document.id == id) else {
             return;

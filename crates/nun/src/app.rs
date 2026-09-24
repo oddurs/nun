@@ -39,6 +39,7 @@ mod pointer;
 mod prompt;
 mod rename;
 mod search;
+mod settings;
 mod sidebar;
 mod syntax;
 mod tabs;
@@ -383,6 +384,8 @@ pub struct App {
     edits: workspace_edit::Edits,
     /// Quick fixes and code actions offered, and asked for.
     code_actions: code_actions::CodeActions,
+    /// The configuration in force, and what follows it as it changes.
+    settings: settings::Live,
 }
 
 impl App {
@@ -461,6 +464,7 @@ impl App {
             hovering: hover::Hovering::default(),
             edits: workspace_edit::Edits::default(),
             code_actions: code_actions::CodeActions::default(),
+            settings: settings::Live::default(),
         };
         app.relayout();
         app
@@ -843,6 +847,7 @@ impl App {
             Event::Syntax(reply) => self.syntax_reply(reply),
             Event::Found(found) => self.search_found(found),
             Event::Lsp(event) => self.lsp_event(event),
+            Event::Config(news) => self.config_news(news),
             Event::Focus(true) => Outcome::Continue,
             // The pointer may be anywhere by the time focus comes back.
             Event::Focus(false) => {
@@ -1034,6 +1039,7 @@ impl App {
             Command::UnfoldAll => return self.unfold_all(),
             Command::GrowSelection => return self.grow_selection(),
             Command::RestartLanguageServer => return self.lsp_restart(),
+            Command::ReviewProjectSettings => return self.review_project(),
             Command::FormatDocument => return self.format_document(),
             Command::GoToDefinition => return self.go_to_definition(navigation::Open::Here),
             Command::OpenDefinitionBeside => {
@@ -1092,7 +1098,7 @@ impl App {
                 self.doc_mut().buffer.insert(ch.encode_utf8(&mut text));
             }
             KeyCode::Enter => self.doc_mut().buffer.insert("\n"),
-            KeyCode::Tab => self.doc_mut().buffer.insert("\t"),
+            KeyCode::Tab => self.type_tab(),
             KeyCode::Backspace => self.doc_mut().buffer.delete_backward(),
             KeyCode::Delete => self.doc_mut().buffer.delete_forward(),
 
@@ -1417,6 +1423,9 @@ impl App {
 
     /// Write a document to disk, and say how that went.
     fn write(&mut self, id: panes::DocId) -> Result<String, String> {
+        if self.doc_by(id).is_some_and(|document| !document.buffer.is_lossy()) {
+            self.tidy_before_save(id);
+        }
         let Some(document) = self.docs.iter_mut().find(|document| document.id == id) else {
             return Err("That file is no longer open.".into());
         };
@@ -1653,7 +1662,12 @@ impl App {
             cells[(x, area.y)].set_char(' ').set_style(style);
         }
         let text = prompt.text();
-        write_at(cells, area, area.x, &text, style);
+        // The words stop a column short of the first button, so a question
+        // longer than the line never shows through the gaps between them.
+        let first = prompt.button_areas(area).into_iter().find(|button| button.width > 0);
+        let words = first
+            .map_or(area, |button| Rect { width: button.x.saturating_sub(area.x + 1), ..area });
+        write_at(cells, words, area.x, &text, style);
         // The field's caret, just after what has been typed.
         if prompt.field.is_some() {
             let x = area.x + u16::try_from(text_width(&text)).unwrap_or(0);
