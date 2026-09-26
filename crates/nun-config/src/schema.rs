@@ -221,7 +221,7 @@ pub const SETTINGS: &[Setting] = &[
         "glyphs.preset",
         Kind::Text,
         Scope::User,
-        "Which set of glyphs to start from: default or ascii.",
+        "Which set of glyphs to start from: default, ascii, nerd or nerd-mono.",
     ),
     setting("glyphs.**", Kind::Text, Scope::User, "One glyph role, over the preset."),
     setting(
