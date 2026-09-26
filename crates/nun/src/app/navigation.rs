@@ -31,7 +31,7 @@ use nun_lsp::types::{
 };
 use nun_lsp::{Encoding, RequestId, Response};
 use nun_theme::Role;
-use nun_ui::{Glyph, HitState, PaletteEntry, ReferencesView, SearchRow};
+use nun_ui::{Glyph, HitState, PaletteEntry, ReferencesView, SearchRow, lead_in};
 use nun_workspace::Job;
 use ratatui::buffer::Buffer as Cells;
 use ratatui::layout::Rect;
@@ -52,7 +52,7 @@ const SETTLE: Duration = Duration::from_millis(80);
 /// thought, not an afternoon.
 const MOST_JUMPS: usize = 100;
 
-/// Chars of a long line shown before the reference in it, when the line has to
+/// Cells of a long line shown before the reference in it, when the line has to
 /// be cut to bring the reference into the panel.
 const LEAD: usize = 24;
 
@@ -1187,8 +1187,12 @@ fn fill_lines(group: &mut Group, lines: &[(u32, String)], ellipsis: &str) {
 /// otherwise be far along a long line, with those chars' range in what is
 /// kept. `ellipsis` stands in for what was cut, and the range moves by the
 /// chars it is made of, which need not be one.
+///
+/// The cut is made where the panel clips, a whole cluster at a time and
+/// counted in cells: counted in chars it could start on an accent with its
+/// letter cut away, and a lead of wide characters would be twice as long.
 fn window(text: &str, from: usize, to: usize, ellipsis: &str) -> (String, Range<u32>) {
-    let cut = from.saturating_sub(LEAD);
+    let cut = lead_in(text, from, LEAD);
     let mut shown = String::new();
     let (mut from, mut to) = (from, to);
     if cut > 0 {
@@ -1392,6 +1396,37 @@ mod tests {
         let picked: String =
             shown.chars().skip(matched.start as usize).take(matched.len()).collect();
         assert_eq!(picked, "needle");
+    }
+
+    #[test]
+    fn a_long_line_is_never_cut_between_a_letter_and_its_accent() {
+        // The char LEAD before the reference is the accent on `é`: counted
+        // in chars, the shown line started with the accent alone.
+        let line = format!("{}e\u{301}{}needle", "x".repeat(10), "y".repeat(LEAD - 1));
+        let from = 10 + 2 + LEAD - 1;
+        let (shown, matched) = window(&line, from, from + 6, "…");
+        assert!(shown.starts_with("…e\u{301}"), "{shown:?}");
+        let picked: String =
+            shown.chars().skip(matched.start as usize).take(matched.len()).collect();
+        assert_eq!(picked, "needle");
+    }
+
+    #[test]
+    fn a_lead_of_wide_characters_is_as_wide_as_one_of_narrow_ones() {
+        let line = format!("{}needle", "中".repeat(LEAD));
+        let (shown, matched) = window(&line, LEAD, LEAD + 6, "…");
+        assert_eq!(shown, format!("…{}needle", "中".repeat(LEAD / 2)));
+        assert_eq!(nun_ui::text_width(&shown[..shown.len() - "needle".len()]), 1 + LEAD);
+        let picked: String =
+            shown.chars().skip(matched.start as usize).take(matched.len()).collect();
+        assert_eq!(picked, "needle");
+
+        // An emoji is several chars and one cluster, and goes whole.
+        let family = "👨\u{200d}👩\u{200d}👧";
+        let line = format!("{family}{}needle", "x".repeat(LEAD - 1));
+        let from = family.chars().count() + LEAD - 1;
+        let (shown, _) = window(&line, from, from + 6, "…");
+        assert!(shown.starts_with(&format!("…{}", "x".repeat(LEAD - 1))), "{shown:?}");
     }
 
     #[test]

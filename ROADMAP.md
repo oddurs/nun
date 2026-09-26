@@ -119,11 +119,10 @@
 
 ## m6 — Polish until it is boring
 
-`##········` 16% · 3 of 19 done · due 2026-12-17
+`###·······` 21% · 4 of 19 done · due 2026-12-17
 
 ### backlog
 
-- [ ] [`07905151`](https://github.com/oddurs/nun/blob/main/cairn/items/07905151-1fc4-4fdc-9d18-77ace93aa6c3-text-width-edge-cases-left-from-the-glyph-review.md) Text width edge cases left from the glyph review <sup>bug · p3</sup>
 - [ ] [`0f009610`](https://github.com/oddurs/nun/blob/main/cairn/items/0f009610-3700-4cd5-8b3e-a2777b510637-status-line-notices-bury-each-other-and-get-cut-short.md) Status line notices bury each other and get cut short <sup>bug · p1</sup>
 - [ ] [`21d111ce`](https://github.com/oddurs/nun/blob/main/cairn/items/0049-freeze-and-ship-0-1.md) Freeze and ship 0.1 <sup>chore · p0</sup>
 - [ ] [`22d537c7`](https://github.com/oddurs/nun/blob/main/cairn/items/0048-one-command-install.md) One-command install <sup>chore · p1</sup>
@@ -142,6 +141,7 @@
 
 ### done
 
+- [x] [`07905151`](https://github.com/oddurs/nun/blob/main/cairn/items/07905151-1fc4-4fdc-9d18-77ace93aa6c3-text-width-edge-cases-left-from-the-glyph-review.md) Text width edge cases left from the glyph review <sup>bug · p3</sup>
 - [x] [`3c95455c`](https://github.com/oddurs/nun/blob/main/cairn/items/0054-install-nun-from-the-working-copy-with-one-command.md) Install nun from the working copy with one command <sup>chore · p2</sup>
 - [x] [`567291ce`](https://github.com/oddurs/nun/blob/main/cairn/items/0084-glyphs-come-from-semantic-roles-overridable-in-nun-toml.md) Glyphs come from semantic roles, overridable in nun.toml <sup>feature · p1</sup>
 - [x] [`56ce6fa8`](https://github.com/oddurs/nun/blob/main/cairn/items/0083-show-the-github-repository-as-the-file-tree-s-title.md) Show the GitHub repository as the file tree's title <sup>feature · p2</sup>

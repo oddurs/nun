@@ -24,6 +24,8 @@ use ratatui::buffer::CellWidth;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
+mod unassigned;
+
 /// Where a glyph appears, for grouping them in `nun glyphs` and the docs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Area {
@@ -808,6 +810,10 @@ pub enum Rejection {
     Control(char),
     /// A noncharacter, which Unicode promises never to assign.
     Noncharacter(char),
+    /// A code point with no character assigned to it yet, which terminals
+    /// draw at whatever width they guess, and which a later Unicode may make
+    /// into anything.
+    Unassigned(char),
     /// A variation selector, which asks for text or emoji presentation, and
     /// which terminals disagree about the width of.
     VariationSelector(char),
@@ -838,6 +844,12 @@ impl fmt::Display for Rejection {
                 code_point(*ch)
             ),
             Self::Noncharacter(ch) => write!(f, "{} is a noncharacter", code_point(*ch)),
+            Self::Unassigned(ch) => write!(
+                f,
+                "{} is not a character yet: Unicode has not assigned it, so terminals guess its \
+                 width",
+                code_point(*ch)
+            ),
             Self::VariationSelector(ch) => write!(
                 f,
                 "{} is a variation selector, and terminals disagree about how wide it makes a \
@@ -891,6 +903,9 @@ pub fn check(glyph: Glyph, text: &str) -> Result<Checked, Rejection> {
     }
     if let Some(ch) = text.chars().find(|&ch| is_noncharacter(ch)) {
         return Err(Rejection::Noncharacter(ch));
+    }
+    if let Some(ch) = text.chars().find(|&ch| unassigned::is_unassigned(ch)) {
+        return Err(Rejection::Unassigned(ch));
     }
     if let Some(ch) = text.chars().find(|&ch| matches!(ch, '\u{fe0e}' | '\u{fe0f}')) {
         return Err(Rejection::VariationSelector(ch));
@@ -1264,9 +1279,10 @@ impl Resolution {
              ```\n\n\
              A glyph must be one character as a terminal draws it, exactly as many\n\
              cells wide as its role takes, which is one for every role here. nun\n\
-             refuses control characters, a glyph that draws nothing, emoji, and\n\
-             variation selectors, whose width terminals disagree about; it draws the\n\
-             preset's glyph instead and `nun config` says why. Cells says \"2 in CJK\"\n\
+             refuses control characters, a glyph that draws nothing, and anything\n\
+             whose width terminals disagree about: emoji, variation selectors, and\n\
+             code points Unicode has not assigned yet. It draws the preset's glyph\n\
+             instead and `nun config` says why. Cells says \"2 in CJK\"\n\
              where a terminal that draws ambiguous-width characters wide, as most\n\
              Chinese, Japanese and Korean setups do, would give the glyph two cells;\n\
              the `ascii` preset has none of those.\n\n\
@@ -1567,6 +1583,45 @@ mod tests {
     }
 
     #[test]
+    fn unassigned_code_points_are_refused() {
+        // Gaps in Greek, in the Hebrew block, past the CJK compatibility
+        // supplement, in plane 3 after Extension J, among the tags, and
+        // just short of a plane's noncharacters.
+        for ch in ['\u{378}', '\u{5c8}', '\u{2fa1e}', '\u{3347a}', '\u{e0080}', '\u{1fffd}'] {
+            assert_eq!(check(Glyph::Ellipsis, &ch.to_string()), Err(Rejection::Unassigned(ch)));
+        }
+        // Behind a letter it would draw beside, it is still found.
+        assert_eq!(check(Glyph::Ellipsis, "a\u{378}"), Err(Rejection::Unassigned('\u{378}')));
+    }
+
+    #[test]
+    fn private_use_characters_are_assigned_and_pass() {
+        // Where icon fonts put their icons: the BMP's private use area, as
+        // Nerd Fonts' codicons use it, and plane 15, as its Material Design
+        // icons do. Terminals draw them one cell wide unless told otherwise.
+        for text in ["\u{e000}", "\u{ea61}", "\u{ea76}", "\u{eab6}", "\u{f8ff}", "\u{f0335}"] {
+            assert!(
+                check(Glyph::Ellipsis, text).is_ok(),
+                "{text:?}: {:?}",
+                check(Glyph::Ellipsis, text)
+            );
+        }
+        let resolved = resolve("default", &[("fold.open", "\u{f0335}")]);
+        assert!(resolved.problems.is_empty(), "{:?}", resolved.problems);
+        assert_eq!(resolved.glyphs.get(Glyph::FoldOpen), "\u{f0335}");
+    }
+
+    #[test]
+    fn a_character_new_in_unicode_17_is_not_mistaken_for_unassigned() {
+        // U+088F and U+323B0 were assigned in 17.0, the version the width
+        // tables measure with; a table from an older Unicode would refuse
+        // them as nothing.
+        for ch in ['\u{88f}', '\u{323b0}'] {
+            assert_ne!(check(Glyph::Ellipsis, &ch.to_string()), Err(Rejection::Unassigned(ch)));
+        }
+    }
+
+    #[test]
     fn variation_selectors_are_refused_either_way() {
         // U+2764 is a text heart by default and an emoji with VS16; which one
         // a terminal draws, and at what width, is its own business.
@@ -1657,6 +1712,7 @@ mod tests {
             (Rejection::Empty, "empty"),
             (Rejection::Control('\t'), "U+0009 is a control or format character"),
             (Rejection::Noncharacter('\u{ffff}'), "U+FFFF is a noncharacter"),
+            (Rejection::Unassigned('\u{378}'), "U+0378 is not a character yet"),
             (Rejection::VariationSelector('\u{fe0f}'), "U+FE0F is a variation selector"),
             (Rejection::Emoji('😀'), "U+1F600 is an emoji"),
             (Rejection::ZeroWidth, "draws nothing"),
