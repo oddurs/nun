@@ -619,8 +619,25 @@ impl Preset {
         table: ascii_glyph,
     };
 
+    /// Nerd Font icons that stay inside their cell in every variant of the
+    /// font.
+    pub const NERD: Self = Self {
+        name: "nerd",
+        about: "Nerd Font icons where one reads better and stays inside its cell in any \
+                Nerd Font: chevrons, a lightbulb, a close cross",
+        table: nerd_glyph,
+    };
+
+    /// Nerd Font icons throughout, for the Mono variant of the font.
+    pub const NERD_MONO: Self = Self {
+        name: "nerd-mono",
+        about: "Nerd Font icons throughout, for a Nerd Font Mono, or a terminal that shrinks \
+                an icon to its cell as Ghostty, kitty and WezTerm do",
+        table: nerd_mono_glyph,
+    };
+
     /// Every preset, the default first.
-    pub const ALL: [Self; 2] = [Self::DEFAULT, Self::ASCII];
+    pub const ALL: [Self; 4] = [Self::DEFAULT, Self::ASCII, Self::NERD, Self::NERD_MONO];
 
     /// The preset called `name`.
     #[must_use]
@@ -796,6 +813,84 @@ const fn ascii_glyph(glyph: Glyph) -> &'static str {
         // shell's own prompt.
         Glyph::ReplaceLineBreak | Glyph::TerminalToggle => "$",
         Glyph::CardTaskOpen | Glyph::ChangeRemovedBelow => "_",
+    }
+}
+
+/// The `nerd` preset.
+///
+/// A Nerd Font comes in two variants that share code points. In the Mono one
+/// every icon is scaled into a cell. In the other, which is the one most
+/// people install, most icons are drawn about a cell and a half wide on a
+/// one-cell advance, and a terminal that does not shrink them paints the
+/// overflow over the next character. So this preset takes only icons whose
+/// outline stays inside the cell in the regular variant too, measured in
+/// the Nerd Font 3 builds of `JetBrains Mono`, `Fira Code` and `Hack`. That leaves
+/// out the folder and the magnifier; `nerd-mono` has them.
+///
+/// A terminal cannot say which font it draws with, so nothing picks this
+/// preset but `glyphs.preset`. Every role not named here keeps the default's
+/// glyph, which is why the match falls through rather than being exhaustive:
+/// a new role starts as the default draws it.
+const fn nerd_glyph(glyph: Glyph) -> &'static str {
+    match glyph {
+        // md-chevron-down, md-chevron-right: codicons' own chevron-down
+        // overhangs its cell by a few percent in the regular variant.
+        Glyph::FoldOpen | Glyph::TreeExpanded | Glyph::TerminalHide => "\u{f0140}",
+        Glyph::FoldClosed | Glyph::TreeCollapsed | Glyph::CardNext => "\u{f0142}",
+        Glyph::CardPrevious => "\u{f0141}",
+        // md-lightbulb: the mark the lozenge stands in for in the default.
+        Glyph::Lightbulb => "\u{f0335}",
+        // cod-close, cod-circle-filled: what VS Code draws on a tab.
+        Glyph::TabClose | Glyph::TerminalClose | Glyph::DiffClose => "\u{ea76}",
+        Glyph::TabModified => "\u{ea71}",
+        // md-plus.
+        Glyph::TreeNewFile | Glyph::TerminalNew => "\u{f0415}",
+        other => default_glyph(other),
+    }
+}
+
+/// The `nerd-mono` preset: codicons, the icons VS Code draws, wherever one
+/// fits the role, on the understanding that each is drawn inside its cell.
+///
+/// Built on `nerd` and falling through to it, so the two agree wherever this
+/// one has nothing better. What stays with the default is what is drawn as a
+/// line or a bar rather than read as an icon: the rail, the change bars, the
+/// rules, the diff's signs and hatching, and the ellipsis cut into text.
+const fn nerd_mono_glyph(glyph: Glyph) -> &'static str {
+    match glyph {
+        Glyph::FoldOpen | Glyph::TreeExpanded | Glyph::TerminalHide | Glyph::CardBelow => {
+            "\u{eab4}"
+        }
+        Glyph::FoldClosed | Glyph::TreeCollapsed | Glyph::CardNext => "\u{eab6}",
+        Glyph::CardPrevious => "\u{eab5}",
+        Glyph::CardAbove => "\u{eab7}",
+        Glyph::FoldHidden => "\u{ea7c}",
+        Glyph::Lightbulb => "\u{ea61}",
+        Glyph::SidebarShown => "\u{ebf3}",
+        Glyph::SidebarHidden => "\u{ec02}",
+        Glyph::DiagnosticError => "\u{ea87}",
+        Glyph::DiagnosticWarning => "\u{ea6c}",
+        Glyph::DiagnosticInfo => "\u{ea74}",
+        Glyph::TreeNewFile => "\u{ea7f}",
+        Glyph::TreeNewFolder => "\u{ea80}",
+        // An eye, shut while ignored files are hidden: the same pairing as
+        // the default's rings, and the same mark on the search's toggle.
+        Glyph::TreeIgnoredHidden | Glyph::SearchIgnored => "\u{eae7}",
+        Glyph::TreeIgnoredShown => "\u{ea70}",
+        Glyph::TreeSymlink => "\u{eaee}",
+        Glyph::SearchIcon => "\u{ea6d}",
+        Glyph::SearchReplace => "\u{ea9c}",
+        Glyph::SearchBack => "\u{eb86}",
+        Glyph::SearchApply => "\u{eb3c}",
+        Glyph::SearchRegex => "\u{eb38}",
+        Glyph::SearchCase => "\u{eab1}",
+        Glyph::SearchWord => "\u{eb7e}",
+        Glyph::ReplaceIncluded => "\u{eab2}",
+        Glyph::ReplaceLineBreak => "\u{ebea}",
+        Glyph::TerminalToggle => "\u{ea85}",
+        Glyph::TerminalNew => "\u{ea60}",
+        Glyph::TerminalSplit => "\u{eb56}",
+        other => nerd_glyph(other),
     }
 }
 
@@ -1134,10 +1229,9 @@ impl Glyphs {
         let mut problems = Vec::new();
         let mut notes = Vec::new();
         let preset = Preset::named(preset).unwrap_or_else(|| {
-            let names: Vec<_> = Preset::ALL.iter().map(|preset| preset.name()).collect();
             problems.push(format!(
                 "glyphs.preset: no preset called `{preset}`; there are {}",
-                names.join(" and ")
+                preset_names()
             ));
             Preset::DEFAULT
         });
@@ -1171,6 +1265,16 @@ impl Glyphs {
             }
         }
         Resolution { glyphs, problems, notes }
+    }
+}
+
+/// `default, ascii and nerd`: every preset's name, as prose.
+fn preset_names() -> String {
+    let names: Vec<_> = Preset::ALL.iter().map(|preset| preset.name()).collect();
+    match names.split_last() {
+        Some((last, [])) => (*last).to_string(),
+        Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
+        None => String::new(),
     }
 }
 
@@ -1274,9 +1378,15 @@ impl Resolution {
              changes any of them:\n\n\
              ```toml\n\
              [glyphs]\n\
-             preset = \"ascii\"   # or \"default\"\n\
+             preset = \"ascii\"   # or \"default\", \"nerd\", \"nerd-mono\"\n\
              lightbulb = \"?\"    # any role below; the rest keep the preset's glyph\n\
              ```\n\n\
+             The two Nerd Font presets need a Nerd Font, and nun cannot tell\n\
+             whether the terminal draws with one, so it never picks them itself.\n\
+             `nerd` is safe with any Nerd Font. `nerd-mono` has an icon for nearly\n\
+             every role, but most of its icons are drawn wider than a cell by the\n\
+             regular variant of the font; use it with a Nerd Font Mono, or in\n\
+             Ghostty, kitty or WezTerm, which shrink an icon to fit its cell.\n\n\
              A glyph must be one character as a terminal draws it, exactly as many\n\
              cells wide as its role takes, which is one for every role here. nun\n\
              refuses control characters, a glyph that draws nothing, and anything\n\
@@ -1499,15 +1609,72 @@ mod tests {
 
     #[test]
     fn an_unknown_preset_falls_back_to_the_default_and_names_the_real_ones() {
-        let resolved = resolve("nerd", &[]);
+        let resolved = resolve("nerdfont", &[]);
         assert_eq!(resolved.glyphs, Glyphs::default());
         assert_eq!(resolved.problems.len(), 1);
         assert!(
-            resolved.problems[0].contains("no preset called `nerd`"),
+            resolved.problems[0].contains("no preset called `nerdfont`"),
             "{:?}",
             resolved.problems
         );
-        assert!(resolved.problems[0].contains("default and ascii"), "{:?}", resolved.problems);
+        assert!(
+            resolved.problems[0].contains("there are default, ascii, nerd and nerd-mono"),
+            "{:?}",
+            resolved.problems
+        );
+    }
+
+    #[test]
+    fn the_nerd_presets_are_taken_only_when_asked_for() {
+        assert_eq!(Glyphs::default().preset_in_use(), Preset::DEFAULT);
+        for (name, preset) in [("nerd", Preset::NERD), ("nerd-mono", Preset::NERD_MONO)] {
+            let resolved = resolve(name, &[]);
+            assert!(resolved.problems.is_empty(), "{:?}", resolved.problems);
+            assert_eq!(resolved.glyphs.preset_in_use(), preset);
+        }
+    }
+
+    #[test]
+    fn the_nerd_presets_draw_icons_where_they_have_them_and_the_default_elsewhere() {
+        let icon = |text: &str| text.chars().all(is_private_use);
+        for (glyph, nerd, mono) in [
+            (Glyph::Lightbulb, "\u{f0335}", "\u{ea61}"),
+            (Glyph::TabClose, "\u{ea76}", "\u{ea76}"),
+            (Glyph::FoldClosed, "\u{f0142}", "\u{eab6}"),
+            (Glyph::SearchIcon, "⌕", "\u{ea6d}"),
+            (Glyph::TreeNewFolder, "▪", "\u{ea80}"),
+        ] {
+            assert_eq!(Preset::NERD.get(glyph), nerd, "nerd {}", glyph.key());
+            assert_eq!(Preset::NERD_MONO.get(glyph), mono, "nerd-mono {}", glyph.key());
+        }
+        // Marks drawn as lines and bars stay what the default draws, so the
+        // rail and the gutter read the same whatever the preset.
+        for glyph in [
+            Glyph::Rail1,
+            Glyph::ChangeAdded,
+            Glyph::RuleVertical,
+            Glyph::Ellipsis,
+            Glyph::DiffFiller,
+        ] {
+            for preset in [Preset::NERD, Preset::NERD_MONO] {
+                assert_eq!(preset.get(glyph), Preset::DEFAULT.get(glyph), "{}", glyph.key());
+            }
+        }
+        // Anything `nerd` changes, it changes to an icon.
+        for glyph in Glyph::ALL {
+            let text = Preset::NERD.get(glyph);
+            assert!(text == Preset::DEFAULT.get(glyph) || icon(text), "{}", glyph.key());
+        }
+    }
+
+    /// The Private Use Areas, where every Nerd Font icon lives.
+    fn is_private_use(ch: char) -> bool {
+        matches!(u32::from(ch), 0xe000..=0xf8ff | 0xf_0000..=0xf_fffd | 0x10_0000..=0x10_fffd)
+    }
+
+    #[test]
+    fn preset_names_read_as_a_list() {
+        assert_eq!(preset_names(), "default, ascii, nerd and nerd-mono");
     }
 
     #[test]

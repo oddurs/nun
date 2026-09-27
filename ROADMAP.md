@@ -134,10 +134,13 @@
 - [ ] [`77bfba6f`](https://github.com/oddurs/nun/blob/main/cairn/items/0046-terminal-support-matrix.md) Terminal support matrix <sup>docs · p0</sup>
 - [ ] [`818434a4`](https://github.com/oddurs/nun/blob/main/cairn/items/0091-lsp-watch-single-paths-a-server-names-outside-the-project.md) LSP: watch single paths a server names outside the project <sup>feature · p3</sup>
 - [ ] [`9d2f5de0`](https://github.com/oddurs/nun/blob/main/cairn/items/9d2f5de0-7787-49c0-92a6-b4eabaf4d99c-config-small-gaps-in-watching-and-matching.md) Config: small gaps in watching and matching <sup>chore · p3</sup>
-- [ ] [`b5747a9d`](https://github.com/oddurs/nun/blob/main/cairn/items/0085-nerd-font-glyph-preset.md) Nerd Font glyph preset <sup>feature · p2</sup>
 - [ ] [`d0f6bd3c`](https://github.com/oddurs/nun/blob/main/cairn/items/d0f6bd3c-2ca0-4ba1-96b7-68dde549dadc-a-carriage-return-before-crlf-is-folded-into-the-line-break-on-load.md) A carriage return before CRLF is folded into the line break on load <sup>bug · p2</sup>
 - [ ] [`f7a245a5`](https://github.com/oddurs/nun/blob/main/cairn/items/0082-a-key-pressed-right-after-escape-types-its-escape-sequence-as-text.md) A key pressed right after Escape types its escape sequence as text <sup>bug · p1</sup>
 - [ ] [`f8a1110c`](https://github.com/oddurs/nun/blob/main/cairn/items/0047-first-run.md) First run <sup>feature · p1</sup>
+
+### in progress
+
+- [ ] [`b5747a9d`](https://github.com/oddurs/nun/blob/main/cairn/items/0085-nerd-font-glyph-preset.md) Nerd Font glyph preset <sup>feature · p2</sup>
 
 ### done
 
