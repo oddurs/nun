@@ -13,9 +13,10 @@ lightbulb = "?"    # any role below; the rest keep the preset's glyph
 
 A glyph must be one character as a terminal draws it, exactly as many
 cells wide as its role takes, which is one for every role here. nun
-refuses control characters, a glyph that draws nothing, emoji, and
-variation selectors, whose width terminals disagree about; it draws the
-preset's glyph instead and `nun config` says why. Cells says "2 in CJK"
+refuses control characters, a glyph that draws nothing, and anything
+whose width terminals disagree about: emoji, variation selectors, and
+code points Unicode has not assigned yet. It draws the preset's glyph
+instead and `nun config` says why. Cells says "2 in CJK"
 where a terminal that draws ambiguous-width characters wide, as most
 Chinese, Japanese and Korean setups do, would give the glyph two cells;
 the `ascii` preset has none of those.

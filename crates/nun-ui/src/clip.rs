@@ -37,6 +37,39 @@ pub fn text_width(text: &str) -> usize {
     clusters(text).map(|(_, cells)| cells).sum()
 }
 
+/// Where to start showing `text` so that what comes before char `at` takes
+/// at most `lead` cells: a char index, always where a cluster starts, so the
+/// cut never parts a combining mark from its letter or halves a wide
+/// character. It is `at` itself when there is no room for a lead, or the
+/// start of the cluster `at` falls inside, and zero when all of it fits.
+///
+/// This clips the head of a line the way [`write`] clips its tail, for a
+/// line shown from somewhere along it.
+#[must_use]
+pub fn lead_in(text: &str, at: usize, lead: usize) -> usize {
+    let over = clusters_before(text, at).map(|(_, cluster)| text_width(cluster)).sum::<usize>();
+    let mut over = over.saturating_sub(lead);
+    let mut start = 0;
+    for (from, cluster) in clusters_before(text, at) {
+        if over == 0 {
+            return from;
+        }
+        over = over.saturating_sub(text_width(cluster));
+        start = from + cluster.chars().count();
+    }
+    start
+}
+
+/// The clusters of `text` that end at or before char `at`, each with the
+/// char it starts at.
+fn clusters_before(text: &str, at: usize) -> impl Iterator<Item = (usize, &str)> {
+    text.graphemes(true).scan(0, move |chars, cluster| {
+        let from = *chars;
+        *chars += cluster.chars().count();
+        (*chars <= at).then_some((from, cluster))
+    })
+}
+
 /// Write `text` at `(x, y)` in at most `room` columns, clipping at a cluster
 /// rather than splitting one, and ending with `ellipsis` when it had to clip.
 pub(crate) fn write(
@@ -182,6 +215,48 @@ mod tests {
     #[test]
     fn an_ellipsis_of_several_chars_is_drawn_whole() {
         assert_eq!(line(3, "hello", "~\u{301}"), "he~\u{301}");
+    }
+
+    /// `text` from where [`lead_in`] starts it.
+    fn led(text: &str, at: usize, lead: usize) -> &str {
+        let start = lead_in(text, at, lead);
+        text.char_indices().nth(start).map_or("", |(byte, _)| &text[byte..])
+    }
+
+    #[test]
+    fn a_lead_that_fits_keeps_the_whole_line() {
+        assert_eq!(lead_in("abc needle", 4, 4), 0);
+        assert_eq!(lead_in("abc needle", 4, 10), 0);
+        assert_eq!(lead_in("needle", 0, 0), 0);
+    }
+
+    #[test]
+    fn a_long_lead_is_cut_to_the_cells_it_is_allowed() {
+        assert_eq!(led("abcdef needle", 7, 3), "ef needle");
+        assert_eq!(led("abcdef needle", 7, 0), "needle");
+    }
+
+    #[test]
+    fn a_lead_in_never_starts_on_a_combining_mark() {
+        // Chars: a e ◌́ b. Counting chars back one from `b` would start on
+        // the accent; one cell back is the whole é.
+        assert_eq!(led("ae\u{301}b", 3, 1), "e\u{301}b");
+        assert_eq!(led("xe\u{301}\u{301}needle", 4, 1), "e\u{301}\u{301}needle");
+        // A place inside a cluster keeps the cluster it is in.
+        assert_eq!(led("ae\u{301}b", 2, 0), "e\u{301}b");
+    }
+
+    #[test]
+    fn a_lead_in_is_measured_in_cells_not_chars() {
+        // Three wide characters are six cells: four cells of lead keep two.
+        assert_eq!(led("中文字x", 3, 4), "文字x");
+        // A wide character that would half fit is left out whole.
+        assert_eq!(led("中文字x", 3, 3), "字x");
+        // An emoji is one cluster of several chars, and two cells.
+        let family = "👨\u{200d}👩\u{200d}👧";
+        let line = format!("ab{family}x");
+        assert_eq!(led(&line, 7, 2), format!("{family}x"));
+        assert_eq!(led(&line, 7, 1), "x");
     }
 
     #[test]

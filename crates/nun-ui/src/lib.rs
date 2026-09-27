@@ -41,7 +41,7 @@ mod view;
 
 pub use backend::NunBackend;
 pub use changes::{Change, ChangeRail};
-pub use clip::{clusters, text_width};
+pub use clip::{clusters, lead_in, text_width};
 pub use completion::{CompletionView, DocsView, MOST_DOC_LINES, MOST_SUGGESTIONS, Suggestion};
 pub use diff::{
     DiffHunk, DiffLayout, DiffRow, DiffSide, DiffSpot, DiffView, Emphasis, align as align_diff,
