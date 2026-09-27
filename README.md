@@ -9,10 +9,18 @@ will mostly never open.
 
 ## Status
 
-Early. The editor is being built one milestone at a time; the roadmap lives in
-[`cairn/`](cairn/) and is the source of truth.
+Pre-release. `0.1.0-alpha.1` has everything from milestones 1 to 5: editing,
+the mouse, tree, tabs and splits, search, syntax, language servers, git and a
+terminal. It is not 0.1 yet: that is the scope freeze, and the work left
+before it lives in [`cairn/`](cairn/), which is the source of truth.
 
-What works today — milestones 1 and 2, and the start of 3:
+```sh
+cargo install --locked --git https://github.com/oddurs/nun --tag v0.1.0-alpha.1 nun
+```
+
+It needs Rust 1.98 or later. There are no prebuilt binaries yet.
+
+What it does:
 
 ```sh
 nun <file>         # open it, edit it, save it
@@ -102,7 +110,11 @@ under `[editor]` in `nun.toml`.
 Every mark nun draws has a role, the way every colour does: `fold.open`,
 `tab.close`, `lightbulb`, `rail.1` and forty-odd more. The `default` preset is
 box drawing and geometric shapes; `ascii` is for a font or console with none of
-that. Any role can be changed on top of either:
+that. With a [Nerd Font](https://www.nerdfonts.com), `nerd` swaps in icons that
+stay inside their cell in any Nerd Font, and `nerd-mono` uses icons nearly
+everywhere, for a Nerd Font Mono or a terminal that shrinks icons to fit, as
+Ghostty and kitty do. nun cannot tell which font the terminal draws with, so it
+never picks either for you. Any role can be changed on top of any preset:
 
 ```toml
 [glyphs]
@@ -197,10 +209,29 @@ name starts it again. A server that stops answering costs its answers, never
 the editor's. `nun --lsp-log <path> <file>` writes the whole conversation to a
 file, for a bug report.
 
-Not there yet: what the servers are for — diagnostics, completion, hover, go to
-definition, rename — and git. Those are the rest of milestones 4 and 5.
+What the servers know shows up where you are looking. Problems are underlined
+in the text and marked on the scrollbar, and hovering either opens a card with
+the message; the status line counts them. Completion opens on the server's
+trigger characters, such as `.` or `::`, or on `Ctrl+Space`, and filters as you
+type; a snippet's tab stops are marked. Hovering a name shows its
+documentation. Ctrl-click goes to a definition (F12 where the terminal keeps
+Ctrl-click for itself), and references are listed in the sidebar. Rename
+previews every file it will touch, including files the server asks to create,
+move or delete. A mark in the gutter shows when the caret's line has code
+actions, and format on save can be set per language and per project.
 
-Do not install this yet.
+Git is in the gutter: a bar beside every added or changed line and a mark where
+lines were removed. Click one to see the hunk, then revert or stage it from
+there. The diff view puts a file beside what git has, and stays level as you
+scroll.
+
+The terminal panel runs your shell under the editor, in tabs and side-by-side
+splits, and clicking a path or a link in its output opens it. The session comes
+back as you left it: files, splits, carets, folds, and the panel's terminals
+with their directories; the sidebar, untitled buffers and unsaved edits are not
+restored yet. Changing `nun.toml` applies at once, without a restart, except
+for the few settings that decide how the terminal is entered, which say they
+apply next time.
 
 ## Why
 

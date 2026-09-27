@@ -13,14 +13,14 @@ workspace = true
 
 [dependencies]
 crossterm = "0.29.0"
-nun-config = { version = "0.1.0", path = "../nun-config" }
-nun-core = { version = "0.1.0", path = "../nun-core" }
-nun-lsp = { version = "0.1.0", path = "../nun-lsp" }
-nun-syntax = { version = "0.1.0", path = "../nun-syntax" }
-nun-term = { version = "0.1.0", path = "../nun-term" }
-nun-theme = { version = "0.1.0", path = "../nun-theme" }
-nun-vcs = { version = "0.1.0", path = "../nun-vcs" }
-nun-workspace = { version = "0.1.0", path = "../nun-workspace" }
+nun-config = { version = "0.1.0-alpha.1", path = "../nun-config" }
+nun-core = { version = "0.1.0-alpha.1", path = "../nun-core" }
+nun-lsp = { version = "0.1.0-alpha.1", path = "../nun-lsp" }
+nun-syntax = { version = "0.1.0-alpha.1", path = "../nun-syntax" }
+nun-term = { version = "0.1.0-alpha.1", path = "../nun-term" }
+nun-theme = { version = "0.1.0-alpha.1", path = "../nun-theme" }
+nun-vcs = { version = "0.1.0-alpha.1", path = "../nun-vcs" }
+nun-workspace = { version = "0.1.0-alpha.1", path = "../nun-workspace" }
 pulldown-cmark = { version = "0.13.4", default-features = false }
 ratatui = "0.30.2"
 ropey = { version = "1.6.1", default-features = false, features = ["simd"] }

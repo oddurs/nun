@@ -16,7 +16,7 @@ workspace = true
 # directory walk, ignore rules and gix's copy of imara-diff, which the hunks
 # use too; `parallel` lets a large tree's status use more than one core.
 gix = { version = "0.87.1", default-features = false, features = ["status", "sha1", "parallel"] }
-nun-core = { version = "0.1.0", path = "../nun-core" }
+nun-core = { version = "0.1.0-alpha.1", path = "../nun-core" }
 ropey = { version = "1.6.1", default-features = false, features = ["simd"] }
 
 [dev-dependencies]

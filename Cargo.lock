@@ -2138,7 +2138,7 @@ dependencies = [
 
 [[package]]
 name = "nun"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "crossterm",
  "nun-config",
@@ -2164,7 +2164,7 @@ dependencies = [
 
 [[package]]
 name = "nun-config"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "sha2",
  "tempfile",
@@ -2173,7 +2173,7 @@ dependencies = [
 
 [[package]]
 name = "nun-core"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "proptest",
  "ropey",
@@ -2185,14 +2185,14 @@ dependencies = [
 
 [[package]]
 name = "nun-input"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "proptest",
 ]
 
 [[package]]
 name = "nun-lsp"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "globset",
  "lsp-types",
@@ -2207,7 +2207,7 @@ dependencies = [
 
 [[package]]
 name = "nun-syntax"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "ropey",
  "tree-sitter",
@@ -2223,7 +2223,7 @@ dependencies = [
 
 [[package]]
 name = "nun-term"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "alacritty_terminal",
  "proptest",
@@ -2232,14 +2232,14 @@ dependencies = [
 
 [[package]]
 name = "nun-theme"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "thiserror 2.0.20",
 ]
 
 [[package]]
 name = "nun-ui"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "crossterm",
  "nun-config",
@@ -2262,7 +2262,7 @@ dependencies = [
 
 [[package]]
 name = "nun-vcs"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "gix",
  "nun-core",
@@ -2273,7 +2273,7 @@ dependencies = [
 
 [[package]]
 name = "nun-workspace"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "grep-matcher",
  "grep-regex",

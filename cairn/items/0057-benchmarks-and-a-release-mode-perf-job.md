@@ -5,7 +5,7 @@ type: chore
 status: backlog
 milestone: perf
 created: 2026-09-22
-updated: 2026-09-22
+updated: 2026-09-26
 priority: p0
 effort: m
 area: perf
@@ -51,3 +51,7 @@ A new dependency (criterion or similar) needs its case made in the PR; a small
 - [ ] CI runs it as a separate job and fails when a ceiling is crossed
 - [ ] No test under `cargo test` asserts on elapsed time
 - [ ] Reference inputs are committed, generated deterministically, or both
+
+## 2026-09-26
+
+2026-09-26: nun-syntax typing_into_a_large_file_reparses_within_a_frame failed 5 runs in 5 on main (1a96690) at a load average of ~185 from other builds on the machine, and blocked the pre-push check for #76. The panic is 'the language is not disabled': the cold parse overran its budget, so highlighting switched itself off before the 16 ms assertion was reached. It passed in the checks for #75 and #76 earlier the same day, under lighter load.
