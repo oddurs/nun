@@ -119,11 +119,12 @@
 
 ## m6 — Polish until it is boring
 
-`###·······` 21% · 4 of 19 done · due 2026-12-17
+`##········` 20% · 4 of 20 done · due 2026-12-17
 
 ### backlog
 
 - [ ] [`0f009610`](https://github.com/oddurs/nun/blob/main/cairn/items/0f009610-3700-4cd5-8b3e-a2777b510637-status-line-notices-bury-each-other-and-get-cut-short.md) Status line notices bury each other and get cut short <sup>bug · p1</sup>
+- [ ] [`193064b6`](https://github.com/oddurs/nun/blob/main/cairn/items/193064b6-e0e9-41a3-bd20-1323bf22d9d8-refuse-u-10eeee-as-a-glyph-override.md) Refuse U+10EEEE as a glyph override <sup>bug · p3</sup>
 - [ ] [`21d111ce`](https://github.com/oddurs/nun/blob/main/cairn/items/0049-freeze-and-ship-0-1.md) Freeze and ship 0.1 <sup>chore · p0</sup>
 - [ ] [`22d537c7`](https://github.com/oddurs/nun/blob/main/cairn/items/0048-one-command-install.md) One-command install <sup>chore · p1</sup>
 - [ ] [`2be43025`](https://github.com/oddurs/nun/blob/main/cairn/items/2be43025-2478-4315-b647-3356a0394364-gutter-follow-outside-index-changes-and-draw-both-marks-on-the-last-line.md) Gutter: follow outside index changes, and draw both marks on the last line <sup>bug · p2</sup>
