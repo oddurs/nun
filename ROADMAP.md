@@ -119,7 +119,7 @@
 
 ## m6 — Polish until it is boring
 
-`##········` 20% · 4 of 20 done · due 2026-12-17
+`##········` 19% · 4 of 21 done · due 2026-12-17
 
 ### backlog
 
@@ -141,6 +141,7 @@
 
 ### in progress
 
+- [ ] [`145f09d8`](https://github.com/oddurs/nun/blob/main/cairn/items/145f09d8-5c98-4cfd-a8e8-4966f34aabc5-publish-0-1-0-alpha-1.md) Publish 0.1.0-alpha.1 <sup>chore · p1</sup>
 - [ ] [`b5747a9d`](https://github.com/oddurs/nun/blob/main/cairn/items/0085-nerd-font-glyph-preset.md) Nerd Font glyph preset <sup>feature · p2</sup>
 
 ### done
